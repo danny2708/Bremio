@@ -1,3 +1,13 @@
-// @bremio/workspace — git worktree isolation per task; collects diff + logs.
-// Implemented after schema review (see docs/06 Phase 1 checkpoint).
-export {};
+/**
+ * @bremio/workspace — git worktree isolation per task, plus per-task log files.
+ * One worktree per task under `<repo>/.bremio/worktrees/`; the diff is captured
+ * by committing on the task branch and the worktree is left for manual review.
+ */
+export {
+  WorktreeManager,
+  type TaskWorktree,
+  type CollectResult,
+  type WorktreeManagerOptions,
+} from "./worktree";
+
+export { TaskLog, formatEvent } from "./logs";
