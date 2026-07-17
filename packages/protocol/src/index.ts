@@ -1,0 +1,51 @@
+/**
+ * @bremio/protocol — the source of truth for Bremio's data shapes.
+ * Zod schemas + inferred types only, no logic. Every other package imports
+ * from here; a change here is a breaking change.
+ *
+ * The three backbone schemas: PlanSchema (what a lead returns),
+ * TaskSchema (a unit of work handed off), TaskResult (what an agent returns),
+ * plus AgentEvent (the normalized adapter stream).
+ */
+export {
+  TaskSchema,
+  TaskIdSchema,
+  TaskKindSchema,
+  RequiredCapabilitySchema,
+  RiskSchema,
+  type Task,
+  type TaskId,
+  type TaskKind,
+  type RequiredCapability,
+  type Risk,
+} from "./task";
+
+export { PlanSchema, type Plan } from "./plan";
+
+export {
+  TaskResultSchema,
+  TaskStatusSchema,
+  FindingSchema,
+  TestRunSchema,
+  type TaskResult,
+  type TaskStatus,
+  type Finding,
+  type TestRun,
+} from "./result";
+
+export {
+  AgentEventSchema,
+  RunOutcomeSchema,
+  RunStartedEventSchema,
+  MessageEventSchema,
+  ThinkingEventSchema,
+  ToolUseEventSchema,
+  ToolResultEventSchema,
+  LogEventSchema,
+  UsageEventSchema,
+  ErrorEventSchema,
+  RunCompletedEventSchema,
+  type AgentEvent,
+  type AgentEventType,
+  type RunOutcome,
+} from "./event";
