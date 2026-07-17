@@ -5,13 +5,19 @@ import { planJsonSchema } from "./plan-schema";
 // here (e.g. a missing additionalProperties:false) makes the real lead 400 and
 // fail, which unit-testing the orchestrator otherwise wouldn't catch.
 describe("planJsonSchema is strict-structured-output compliant", () => {
-  const props = planJsonSchema.properties as Record<string, { items?: unknown }>;
-  const item = (props.tasks.items ?? {}) as {
-    additionalProperties?: unknown;
-    required?: string[];
-    properties?: Record<string, unknown>;
-    minItems?: unknown;
+  const properties = planJsonSchema.properties as {
+    tasks: {
+      minItems?: unknown;
+      items?: {
+        additionalProperties?: unknown;
+        required?: string[];
+        properties?: Record<string, unknown>;
+        minItems?: unknown;
+      };
+    };
   };
+  const tasks = properties.tasks;
+  const item = tasks.items ?? {};
 
   it("sets additionalProperties:false at every object level", () => {
     expect(planJsonSchema.additionalProperties).toBe(false);
@@ -24,7 +30,7 @@ describe("planJsonSchema is strict-structured-output compliant", () => {
   });
 
   it("omits array-size keywords unsupported by strict mode", () => {
-    expect((props.tasks as { minItems?: unknown }).minItems).toBeUndefined();
+    expect(tasks.minItems).toBeUndefined();
     expect(item.minItems).toBeUndefined();
   });
 });

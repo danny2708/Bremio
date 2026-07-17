@@ -12,9 +12,41 @@ aggregates the results back into one place. ROI goal: **get the most out of
 the models with the least quota.**
 
 ## Status
-**Design phase** — no code yet. Full design lives in [`docs/`](docs/).
-Start at [`docs/README.md`](docs/README.md); read
-[`docs/99`](docs/99-risks-and-open-questions.md) before writing any code.
+**Phase 1 (vertical slice) implemented** — Claude (Agent SDK) + Codex
+(`codex exec --json`) as swappable lead/worker, a validator, a sequential
+scheduler, git-worktree isolation, and the `bremio run` CLI. Full design lives
+in [`docs/`](docs/); start at [`docs/README.md`](docs/README.md). Out of scope
+for Phase 1 (see [`docs/06`](docs/06-roadmap.md)): Antigravity, quota/routing,
+parallelism, auto-merge, quality gates, dashboard.
+
+## Quickstart
+Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
+`PATH` and logged in (`codex login`), and Claude auth for the Agent SDK
+(`ANTHROPIC_API_KEY` or a Claude Code login).
+
+```sh
+corepack pnpm install
+corepack pnpm test          # 32 tests (incl. a mock-adapter end-to-end run)
+corepack pnpm typecheck
+
+# check adapter health / lead-eligibility
+corepack pnpm bremio doctor
+
+# one prompt -> lead plans -> orchestrator hands a task to the OTHER agent,
+# which edits code in its own git worktree; results aggregate into one report
+corepack pnpm bremio run --lead codex --repo /path/to/repo "add a health endpoint"
+corepack pnpm bremio run --lead claude --repo /path/to/repo "fix the failing test"
+```
+
+Each task runs in `.<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
+`bremio/<taskId>-<agent>`; per-task logs and `report.json` land in
+`<repo>/.bremio/runs/<runId>/`. Worktrees are **left for manual review — no
+auto-merge**. Press **Ctrl+C** to cancel an in-flight run.
+
+## Packages
+`protocol` (Zod contracts) · `adapter-sdk` (the `AgentAdapter` interface) ·
+`adapter-claude` · `adapter-codex` · `orchestrator` (lead-manager, validator,
+router, scheduler, aggregator) · `workspace` (worktrees + logs) · `apps/cli`.
 
 ## Core principles
 - Orchestrator is provider-agnostic — Claude is only the *default lead*.
