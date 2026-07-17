@@ -1,26 +1,39 @@
 import type { Plan, Task } from "@bremio/protocol";
 
 /**
- * A lenient-but-guiding JSON Schema for the lead's plan output, passed to
- * adapters as `outputSchema` (Codex `--output-schema`, Claude `outputFormat`).
- * It steers the model toward the right shape; the authoritative validation is
- * still `PlanSchema.parse` in the lead-manager, so provider quirks in schema
- * enforcement never corrupt the result.
+ * JSON Schema for the lead's plan output, passed to adapters as `outputSchema`
+ * (Codex `--output-schema`, Claude `outputFormat`).
+ *
+ * Codex enforces OpenAI **strict** structured output: every object must set
+ * `additionalProperties: false` and list every property in `required`, and
+ * array-size keywords (minItems) are unsupported. So this schema is strict —
+ * all fields required, no optional `description`. The authoritative validation
+ * is still `PlanSchema.parse` in the lead-manager (which fills array defaults).
  */
 export const planJsonSchema: Record<string, unknown> = {
   type: "object",
+  additionalProperties: false,
   required: ["summary", "leadAgentId", "tasks"],
   properties: {
     summary: { type: "string" },
     leadAgentId: { type: "string" },
     tasks: {
       type: "array",
-      minItems: 1,
       items: {
         type: "object",
-        required: ["id", "title", "kind", "risk"],
+        additionalProperties: false,
+        required: [
+          "id",
+          "title",
+          "kind",
+          "risk",
+          "requiredCapabilities",
+          "preferredAgents",
+          "dependencies",
+          "acceptanceCriteria",
+        ],
         properties: {
-          id: { type: "string", description: "e.g. TASK-001" },
+          id: { type: "string" },
           title: { type: "string" },
           kind: {
             type: "string",
@@ -45,7 +58,6 @@ export const planJsonSchema: Record<string, unknown> = {
           preferredAgents: { type: "array", items: { type: "string" } },
           dependencies: { type: "array", items: { type: "string" } },
           acceptanceCriteria: { type: "array", items: { type: "string" } },
-          description: { type: "string" },
         },
       },
     },
@@ -70,7 +82,7 @@ export function buildPlanningPrompt(userPrompt: string): string {
     "PLAN RULES:",
     "- Decompose into a SMALL number of concrete tasks (1-4). Prefer fewer tasks.",
     "- Include at least one `implementation` task that another agent can execute to make the actual code change.",
-    "- Each task needs: id (e.g. \"TASK-001\"), title, kind (analysis|implementation|review|test|documentation|other), risk (low|medium|high), requiredCapabilities (subset of repository.read, repository.write, shell, test, review, browser, vision), preferredAgents (e.g. [\"codex\"]), dependencies (ids of prerequisite tasks, [] if none), acceptanceCriteria (concrete, checkable strings). Optionally add `description` with implementation context.",
+    "- Each task needs: id (e.g. \"TASK-001\"), title, kind (analysis|implementation|review|test|documentation|other), risk (low|medium|high), requiredCapabilities (subset of repository.read, repository.write, shell, test, review, browser, vision), preferredAgents (e.g. [\"codex\"]), dependencies (ids of prerequisite tasks, [] if none), acceptanceCriteria (concrete, checkable strings). Provide every field (use [] for empty arrays).",
     "- Order tasks so that any task's dependencies appear before it.",
     "- Set leadAgentId to your own provider id.",
     "",
