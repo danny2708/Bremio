@@ -1,3 +1,2 @@
-// @bremio/adapter-claude — Claude Agent SDK adapter.
-// Implemented after schema review (see docs/06 Phase 1 checkpoint).
-export {};
+// @bremio/adapter-claude — AgentAdapter over the Claude Agent SDK.
+export { ClaudeAdapter, type ClaudeAdapterOptions } from "./claude-adapter";
