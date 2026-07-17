@@ -84,6 +84,11 @@ export class ClaudeAdapter implements AgentAdapter {
     this.controllers.set(req.runId, abort);
     const onExternalAbort = () => abort.abort();
     req.signal?.addEventListener("abort", onExternalAbort, { once: true });
+    // A signal already aborted before we attached the listener won't fire it.
+    if (req.signal?.aborted) {
+      this.cancelled.add(req.runId);
+      abort.abort();
+    }
 
     const hermetic = req.role === "lead" || req.role === "planner";
     const settingSources: SettingSource[] = hermetic ? [] : ["project"];

@@ -124,6 +124,8 @@ export class CodexAdapter implements AgentAdapter {
     // Compose external cancellation with `cancelRun`.
     const onAbort = () => void this.cancelRun(req.runId);
     req.signal?.addEventListener("abort", onAbort, { once: true });
+    // A signal already aborted before we attached the listener won't fire it.
+    if (req.signal?.aborted) void this.cancelRun(req.runId);
 
     const exit = new Promise<number | null>((resolve) => {
       child.on("close", (code) => resolve(code));
