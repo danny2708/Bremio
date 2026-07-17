@@ -1,3 +1,3 @@
-// @bremio/adapter-codex — `codex exec --json` adapter.
-// Implemented after schema review (see docs/06 Phase 1 checkpoint).
-export {};
+// @bremio/adapter-codex — AgentAdapter over `codex exec --json`.
+export { CodexAdapter, type CodexAdapterOptions } from "./codex-adapter";
+export { mapCodexLine } from "./events";

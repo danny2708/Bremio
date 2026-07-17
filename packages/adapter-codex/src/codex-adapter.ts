@@ -1,0 +1,199 @@
+import { randomBytes } from "node:crypto";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import readline from "node:readline";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import type {
+  AgentAdapter,
+  AgentCapabilities,
+  AgentHealth,
+  AgentRunRequest,
+  ModelDescriptor,
+  QuotaSnapshot,
+} from "@bremio/adapter-sdk";
+import type { AgentEvent } from "@bremio/protocol";
+import { mapCodexLine } from "./events";
+import { spawnCodex } from "./spawn";
+
+export interface CodexAdapterOptions {
+  /** Path/name of the codex binary. Default: "codex" (resolved on PATH). */
+  bin?: string;
+}
+
+const CAPABILITIES: AgentCapabilities = {
+  planning: true,
+  structuredOutput: true, // native via `--output-schema`
+  repositoryRead: true,
+  repositoryWrite: true,
+  shell: true,
+  testing: true,
+  browser: false,
+  vision: false,
+  resumableSessions: true,
+};
+
+export class CodexAdapter implements AgentAdapter {
+  readonly id = "codex";
+  readonly provider = "openai";
+
+  private readonly bin: string;
+  private readonly children = new Map<string, ChildProcessWithoutNullStreams>();
+  private readonly cancelled = new Set<string>();
+
+  constructor(options: CodexAdapterOptions = {}) {
+    this.bin = options.bin ?? "codex";
+  }
+
+  async getCapabilities(): Promise<AgentCapabilities> {
+    return CAPABILITIES;
+  }
+
+  async getQuota(): Promise<QuotaSnapshot> {
+    // Quota is out of scope for Phase 1 (consumed from AI-Quota-Tray later).
+    return { status: "unknown", source: "estimated", confidence: "low" };
+  }
+
+  async listModels(): Promise<ModelDescriptor[]> {
+    // Informational; runs use codex's configured default unless a model is set.
+    return [
+      { id: "gpt-5.6-sol", displayName: "GPT-5.6 Sol (flagship)" },
+      { id: "gpt-5.6-terra", displayName: "GPT-5.6 Terra (workhorse)", default: true },
+      { id: "gpt-5.6-luna", displayName: "GPT-5.6 Luna (fast)" },
+    ];
+  }
+
+  async healthCheck(): Promise<AgentHealth> {
+    try {
+      const code = await new Promise<number | null>((resolve, reject) => {
+        const child = spawnCodex(this.bin, ["--version"], process.cwd());
+        child.on("error", reject);
+        child.on("close", resolve);
+      });
+      return code === 0
+        ? { status: "ok" }
+        : { status: "degraded", detail: `codex --version exited ${code}` };
+    } catch (err) {
+      return {
+        status: "unavailable",
+        detail: `codex not runnable: ${(err as Error).message}`,
+      };
+    }
+  }
+
+  async *startRun(req: AgentRunRequest): AsyncIterable<AgentEvent> {
+    const now = () => Date.now();
+    yield { type: "started", runId: req.runId, ts: now() };
+
+    const token = randomBytes(4).toString("hex");
+    const outFile = path.join(os.tmpdir(), `bremio-codex-${req.runId}-${token}.txt`);
+    let schemaFile: string | undefined;
+    if (req.outputSchema) {
+      schemaFile = path.join(os.tmpdir(), `bremio-codex-${req.runId}-${token}.schema.json`);
+      await fs.writeFile(schemaFile, JSON.stringify(req.outputSchema), "utf8");
+    }
+
+    const sandbox = req.permission === "read-only" ? "read-only" : "workspace-write";
+    const args = [
+      "exec",
+      "--json",
+      "--color",
+      "never",
+      "-C",
+      req.cwd,
+      "-s",
+      sandbox,
+      "-o",
+      outFile,
+    ];
+    if (schemaFile) args.push("--output-schema", schemaFile);
+    if (req.model) args.push("-m", req.model);
+
+    let spawnError: Error | undefined;
+    let stderr = "";
+    const child = spawnCodex(this.bin, args, req.cwd);
+    this.children.set(req.runId, child);
+
+    child.on("error", (e) => {
+      spawnError = e;
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      stderr += d.toString();
+    });
+
+    // Compose external cancellation with `cancelRun`.
+    const onAbort = () => void this.cancelRun(req.runId);
+    req.signal?.addEventListener("abort", onAbort, { once: true });
+
+    const exit = new Promise<number | null>((resolve) => {
+      child.on("close", (code) => resolve(code));
+    });
+
+    // Feed the prompt via stdin (avoids arg-length/escaping issues).
+    child.stdin.write(req.prompt);
+    child.stdin.end();
+
+    const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+    try {
+      for await (const line of rl) {
+        for (const ev of mapCodexLine(line, req.runId)) yield ev;
+      }
+    } finally {
+      rl.close();
+      req.signal?.removeEventListener("abort", onAbort);
+    }
+
+    const code = await exit;
+    this.children.delete(req.runId);
+
+    if (stderr.trim()) {
+      yield {
+        type: "log",
+        runId: req.runId,
+        ts: now(),
+        level: code === 0 ? "debug" : "warn",
+        message: `codex stderr: ${stderr.trim().slice(-2000)}`,
+      };
+    }
+
+    let finalText: string | undefined;
+    try {
+      const raw = (await fs.readFile(outFile, "utf8")).trim();
+      finalText = raw.length > 0 ? raw : undefined;
+    } catch {
+      // no output file (e.g. crash) — leave finalText undefined.
+    }
+    await fs.rm(outFile, { force: true }).catch(() => {});
+    if (schemaFile) await fs.rm(schemaFile, { force: true }).catch(() => {});
+
+    const wasCancelled = this.cancelled.delete(req.runId);
+    const status = wasCancelled ? "cancelled" : code === 0 ? "completed" : "failed";
+    const error =
+      status === "failed"
+        ? spawnError
+          ? spawnError.message
+          : `codex exec exited with code ${code}${stderr ? `: ${stderr.trim().slice(-500)}` : ""}`
+        : undefined;
+
+    yield {
+      type: "completed",
+      runId: req.runId,
+      ts: now(),
+      outcome: { status, ...(finalText ? { finalText } : {}), ...(error ? { error } : {}) },
+    };
+  }
+
+  resumeRun(): AsyncIterable<AgentEvent> {
+    throw new Error("resumeRun is not implemented in Phase 1");
+  }
+
+  async cancelRun(runId: string): Promise<void> {
+    const child = this.children.get(runId);
+    if (!child) return;
+    this.cancelled.add(runId);
+    child.kill(); // SIGTERM (best-effort on Windows)
+    setTimeout(() => {
+      if (this.children.has(runId)) child.kill("SIGKILL");
+    }, 3000).unref?.();
+  }
+}
