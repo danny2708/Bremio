@@ -1,0 +1,19 @@
+{
+  "name": "@bremio/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "bremio": "./src/index.ts"
+  },
+  "dependencies": {
+    "@bremio/adapter-claude": "workspace:*",
+    "@bremio/adapter-codex": "workspace:*",
+    "@bremio/adapter-sdk": "workspace:*",
+    "@bremio/orchestrator": "workspace:*",
+    "@bremio/protocol": "workspace:*",
+    "@bremio/workspace": "workspace:*",
+    "pino": "^9.5.0",
+    "pino-pretty": "^13.0.0"
+  }
+}

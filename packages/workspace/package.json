@@ -1,0 +1,16 @@
+{
+  "name": "@bremio/workspace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@bremio/protocol": "workspace:*",
+    "pino": "^9.5.0",
+    "simple-git": "^3.27.0"
+  }
+}

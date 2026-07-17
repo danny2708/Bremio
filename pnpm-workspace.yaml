@@ -1,0 +1,8 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+# Allow these packages' install scripts to run (pnpm 10 blocks by default).
+onlyBuiltDependencies:
+  - "@anthropic-ai/claude-agent-sdk"
+  - "esbuild"
