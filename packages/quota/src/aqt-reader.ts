@@ -135,8 +135,11 @@ export function readAqtQuota(options: ReadAqtQuotaOptions): AqtQuotaSnapshot {
       );
 
     const providers = providerRows.map((provider): ProviderQuota => {
+      // A `retired` tombstone means AQT's latest successful fetch no longer
+      // reported that bucket, so it describes nothing current: drop it rather
+      // than let a withdrawn limit tier keep constraining the provider.
       const buckets = bucketRows
-        .filter((bucket) => bucket.provider_id === provider.id)
+        .filter((bucket) => bucket.provider_id === provider.id && bucket.severity !== "retired")
         .map(toBucket);
       // Provider-level age answers "when did AQT last successfully reach this
       // provider", which is `providers.updated_at` — written on every

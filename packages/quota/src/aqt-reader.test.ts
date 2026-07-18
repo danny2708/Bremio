@@ -85,6 +85,26 @@ describe("readAqtQuota", () => {
     expect(weekly?.fetchedAt).toBe(1000);
   });
 
+  it("drops a bucket AQT retired instead of letting it constrain the provider", async () => {
+    const databasePath = await fixture();
+    const db = new DatabaseSync(databasePath);
+    db.exec(`
+      INSERT INTO quota_snapshots VALUES
+        ('gone-old', 'codex', 'gone', 'Withdrawn tier', 95, 5, '%', 300, 3000, 1000,
+         'Codex app-server', 'official', 'critical'),
+        ('gone-tomb', 'codex', 'gone', 'Withdrawn tier', NULL, NULL, NULL, NULL, NULL, 1900,
+         'Codex app-server', 'official', 'retired');
+      UPDATE providers SET updated_at = 1950 WHERE id = 'codex';
+    `);
+    db.close();
+
+    const snapshot = readAqtQuota({ databasePath, staleAfterSeconds: 300, now: 2000 });
+    const codex = snapshot.providers.find((provider) => provider.providerId === "codex");
+    expect(codex?.buckets.map((bucket) => bucket.bucketId)).not.toContain("gone");
+    // Without retirement the withdrawn 5% tier would drive the provider critical.
+    expect(codex?.status).toBe("healthy");
+  });
+
   it("still fails a provider closed once contact itself goes stale", async () => {
     const databasePath = await fixture();
     const db = new DatabaseSync(databasePath);

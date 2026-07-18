@@ -162,6 +162,20 @@ this case but would reintroduce the original bug for steady values, since a
 steady quota and an abandoned source are indistinguishable from bucket
 timestamps alone.
 
+### Retiring withdrawn buckets (fixed 2026-07-18)
+
+Consumers read the latest row per bucket, so a bucket the provider stopped
+reporting kept serving its final value forever (observed on `codex:secondary`,
+which held a 07-12 value indefinitely). On a successful fetch that produced at
+least one bucket, AQT now writes a tombstone — NULL percentages, `fetched_at`
+now, `severity = 'retired'` — for every previously-latest bucket absent from
+the new set. History is preserved rather than deleted, and the guard on a
+non-empty result stops a partial failure from retiring everything.
+
+Bremio drops `retired` buckets entirely, so a withdrawn limit tier neither
+displays nor constrains routing. `severity` is already free-form TEXT, so this
+needs no schema change and AQT's `user_version` stays 1.
+
 ## Compatibility note
 
 The old single-window `AgentAdapter.getQuota()` placeholder has been removed.
