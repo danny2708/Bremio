@@ -127,6 +127,50 @@ export class RunRegistry {
     return this.store.listArtifacts(id);
   }
 
+  /**
+   * What a client may offer for this run.
+   *
+   * `canResume` is false because no adapter exposes a safe mid-run resume:
+   * offering it would mean silently starting over while the button claimed
+   * otherwise. Retry is honest about creating a new run.
+   */
+  recoveryOptions(id: string): {
+    canRetry: boolean;
+    canResume: boolean;
+    canOpenWorkspace: boolean;
+  } {
+    const run = this.store.getRun(id);
+    if (!run) return { canRetry: false, canResume: false, canOpenWorkspace: false };
+    return {
+      canRetry: isTerminal(run.status),
+      canResume: false,
+      canOpenWorkspace: this.store.listArtifacts(id).some((a) => a.kind === "worktree"),
+    };
+  }
+
+  /**
+   * Start a fresh run from a finished one, linked by `retryOfRunId`.
+   *
+   * The original is never overwritten: its events are the record of what went
+   * wrong, and a retry that erased them would destroy the reason for retrying.
+   */
+  retry(id: string): PersistedRun {
+    const original = this.store.getRun(id);
+    if (!original) throw new Error(`unknown run: ${id}`);
+    if (!isTerminal(original.status)) {
+      throw new Error(`run ${id} is still ${original.status}; cancel it before retrying`);
+    }
+
+    return this.start({
+      mode: original.mode,
+      repoPath: original.repositoryPath,
+      prompt: original.prompt,
+      agentId: original.leadProvider ?? "claude",
+      ...(original.workerProviders?.[0] ? { workerId: original.workerProviders[0] } : {}),
+      retryOfRunId: original.id,
+    });
+  }
+
   /** Replay from the store, then receive live events. Returns an unsubscribe. */
   subscribe(id: string, listener: Listener, afterSeq = 0): () => void {
     if (!this.store.getRun(id)) throw new Error(`unknown run: ${id}`);
