@@ -33,7 +33,8 @@ results back into one place.
   and a different agent, reports compute a fail-closed gate, and `bremio merge`
   refuses runs whose gate is missing or failed.
 - A small Phase-3/Phase-4 foundation also shipped early: confirmation-gated
-  manual merge/cleanup, a measurement-only usage ledger and `bremio stats`,
+  manual merge/cleanup, a measurement-only usage ledger and `bremio stats`
+  (including provider-reported worker token/cost data when available),
   plus read-only AQT SQLite normalization exposed through `bremio quota`.
   Quota-aware routing remains disabled pending fresh-data calibration.
 - Final two-provider re-verification is currently blocked by the Claude session

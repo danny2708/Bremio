@@ -92,11 +92,14 @@ principle already locked in `CLAUDE_master.md` (2026-07-16): escalate the
 both at once**.
 
 ## Usage ledger (the measurement tool — without it, "efficiency" is just a feeling)
-The current early implementation appends one measurement-only JSONL entry per
-task to `.bremio/ledger.jsonl` with `ts`, `runId`, `taskId`, `provider`,
-`role`, `kind`, `status`, `durationMs`, and `filesChanged`; `bremio stats`
-summarizes those entries. It deliberately records no model, token, or cost
-data and nothing routes on it. The richer target shape below belongs to Phase 4.
+The current implementation appends one measurement-only JSONL entry per task
+to `.bremio/ledger.jsonl` with `ts`, `runId`, `taskId`, `provider`, `role`,
+`kind`, `status`, `durationMs`, and `filesChanged`. Provider-reported input/
+output tokens and cost are also preserved when present and summarized by
+`bremio stats`; missing dimensions remain unknown and Bremio never estimates a
+price. Model identity and lead planning/repair overhead are not recorded yet,
+so this data is not sufficient to calculate `net_gain` and nothing routes on
+it. The richer target shape below remains the Phase-4 calibration target.
 
 ```json
 { "provider":"codex", "model":"gpt-5.6-terra", "effort":"medium",
