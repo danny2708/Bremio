@@ -91,6 +91,27 @@ describe("computeStats", () => {
     expect(stats.coordinationCancelled).toBe(0);
     expect(stats.reportedInputTokens).toBe(25);
   });
+
+  it("counts run summaries without inflating task or coordination totals", () => {
+    const stats = computeStats([
+      entry({
+        scope: "run",
+        taskId: "r1::summary",
+        provider: "bremio",
+        role: "orchestrator",
+        kind: "run-summary",
+        flowMode: "multi-agent",
+        qualityGatePassed: true,
+        filesChanged: 0,
+      }),
+      entry({ taskId: "T1", status: "completed" }),
+    ]);
+
+    expect(stats.runEntries).toBe(1);
+    expect(stats.qualityPassedRuns).toBe(1);
+    expect(stats.totalTasks).toBe(1);
+    expect(stats.coordinationEntries).toBe(0);
+  });
 });
 
 describe("readLedger", () => {
@@ -139,5 +160,13 @@ describe("LedgerEntrySchema", () => {
       requestedReasoningLevel: "high",
       actualReasoningLevel: "medium",
     });
+  });
+  it("accepts a calibration run summary", () => {
+    expect(LedgerEntrySchema.safeParse(entry({
+      scope: "run",
+      flowMode: "single-agent",
+      comparisonId: "case-1",
+      qualityGatePassed: true,
+    })).success).toBe(true);
   });
 });

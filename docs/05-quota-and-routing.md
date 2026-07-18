@@ -176,13 +176,14 @@ to `.bremio/ledger.jsonl` with `ts`, `runId`, `taskId`, `provider`, `role`,
 output tokens and cost are also preserved when present for both worker tasks
 and lead planning/repair. Planning entries use `scope:"coordination"`, remain
 separate from task completion metrics, and are recorded best-effort even when
-planning fails. `bremio stats` reports coverage; missing dimensions remain
-unknown and Bremio never estimates a price. Worker model/default identity and
-the single-agent outcome baseline remain incomplete. Provider-confirmed model
-ids are recorded when exposed (including Claude's system event), while an
-unreported Codex default remains unknown rather than inferred. This data is not
-yet sufficient to calculate `net_gain` and nothing routes on it. The richer
-target shape below remains the Phase-4 calibration target.
+planning fails. Runs that reach aggregation now add `scope:"run"` entries with the derived
+`flowMode`, fail-closed quality-gate outcome, and optional user-supplied
+`comparisonId`. `bremio stats` reports coverage and calibration blockers;
+missing dimensions remain unknown and Bremio never estimates a price.
+Provider-confirmed model ids are recorded when exposed (including Claude's
+system event), while an unreported Codex default remains unknown rather than
+inferred. This data is still insufficient to calculate `net_gain` until paired
+single-agent baselines and provider-reported cost coverage exist.
 
 ```json
 { "provider":"codex", "model":"gpt-5.6-terra", "effort":"medium",
@@ -199,6 +200,19 @@ enough samples, the ledger yields an empirical task→model map.
 - **Calibration gate** (matches Kian-Brain's human-gate philosophy): the
   router is **not** allowed to trust cheap-first until the ledger has enough
   samples proving it doesn't create escalation waste.
+
+The implemented readiness gate defaults to five controlled comparison groups,
+90% multi-agent non-inferiority, 80% actual-model coverage, 80%
+provider-reported cost coverage, and complete coordination coverage. A group is
+evaluable only when a single-agent run with the same `comparisonId` passes the
+objective quality gate. Until every threshold passes, the recommendation is
+`single-agent`; readiness means only `controlled-multi-agent`, not automatic
+optimization. Policy thresholds are programmatically configurable.
+
+This deliberately does not claim subjective quality equivalence or convert
+tokens into subscription quota. The automatic kill-switch remains open because
+provider-reported cost coverage is currently partial and a CLI single-agent
+baseline collection mode does not exist yet.
 
 ## Router scoring (Phase 4, once the ledger exists)
 The lead only describes the **need**, never picks a model name:
@@ -315,11 +329,22 @@ The safety router is opt-in through `bremio run --capacity-routing`. This is a
 calibration guard: normal runs retain the proven deterministic router until the
 ledger has enough evidence to enable optimization automatically.
 
+### 4D — Calibration readiness
+
+- [x] Record run-level flow mode and objective quality-gate outcome.
+- [x] Support explicit `comparisonId` metadata for controlled paired runs.
+- [x] Report paired evidence, non-inferiority, model/cost/coordination coverage,
+      blockers, and a fail-closed single-agent recommendation in `bremio stats`.
+- [ ] Add an explicit CLI single-agent baseline execution mode.
+- [ ] Enforce an automatic orchestration-cost kill-switch only after reported
+      cost coverage meets the calibration gate.
+
 ## Build order for this section
 1. Ledger first (log the cost of every run, even before smart routing exists).
 2. Consume quota from AI-Quota-Tray (Codex + Claude official; Antigravity per
    current AQT coverage). **Read-only observation slice shipped; router wiring
    waits for fresh-data calibration.**
-3. Single-agent-vs-multi decision + kill-switch.
-4. Scoring router + calibration gate (enable cheap-first only once the
-   ledger has enough samples).
+3. Single-agent-vs-multi evidence gate. **Readiness reporting shipped; baseline
+   execution mode and automatic kill-switch remain open.**
+4. Scoring router + calibration gate. **Capacity safety routing is opt-in;
+   cheap-first remains disabled until paired evidence passes the gate.**

@@ -45,6 +45,8 @@ export interface RunBremioOptions {
   capacityPolicy?: CapacityRoutingPolicyInput;
   /** Provider-confirmed model id for model-scoped capacity selection. */
   modelByAgent?: ReadonlyMap<string, string>;
+  /** Links controlled single/multi runs of the same request for calibration. */
+  comparisonId?: string;
   signal?: AbortSignal;
   logger?: Logger;
   hooks?: RunBremioHooks;
@@ -163,6 +165,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     ...(opts.capacityPolicy ? { capacityPolicy: opts.capacityPolicy } : {}),
     ...(opts.modelByAgent ? { modelByAgent: opts.modelByAgent } : {}),
   });
+  const flowMode = new Set(assign.values()).size <= 1 ? "single-agent" : "multi-agent";
   opts.hooks?.onPlan?.(plan, assign);
   logger?.info(
     { assignments: Object.fromEntries(assign) },
@@ -199,6 +202,12 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     JSON.stringify(report, null, 2),
     "utf8",
   );
+  await recordRunSummary({
+    ledgerPath: ledgerPathFor(repoPath),
+    report,
+    flowMode,
+    ...(opts.comparisonId ? { comparisonId: opts.comparisonId } : {}),
+  });
   logger?.info({ summary: report.summary, runDir }, "run complete");
 
   return report;
@@ -253,6 +262,13 @@ interface PlanningLedgerInput {
   usage?: UsageSummary;
 }
 
+interface RunSummaryLedgerInput {
+  ledgerPath: string;
+  report: RunReport;
+  flowMode: "single-agent" | "multi-agent";
+  comparisonId?: string;
+}
+
 /** Record orchestration overhead without ever masking the actual run outcome. */
 async function recordPlanningLedger(input: PlanningLedgerInput): Promise<void> {
   try {
@@ -279,5 +295,34 @@ async function recordPlanningLedger(input: PlanningLedgerInput): Promise<void> {
     });
   } catch {
     // measurement is best-effort; a ledger write must never replace the run result
+  }
+}
+
+/** Record the objective run outcome used by the calibration gate. */
+async function recordRunSummary(input: RunSummaryLedgerInput): Promise<void> {
+  const { report } = input;
+  const qualityGatePassed = report.qualityGate.status === "passed";
+  const status = report.summary.cancelled > 0
+    ? "cancelled"
+    : report.summary.failed > 0 || !qualityGatePassed
+      ? "failed"
+      : "completed";
+  try {
+    await appendLedgerEntry(input.ledgerPath, {
+      ts: new Date().toISOString(),
+      runId: report.runId,
+      taskId: `${report.runId}::summary`,
+      scope: "run",
+      provider: "bremio",
+      role: "orchestrator",
+      kind: "run-summary",
+      status,
+      filesChanged: 0,
+      flowMode: input.flowMode,
+      ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
+      qualityGatePassed,
+    });
+  } catch {
+    // calibration measurement is best-effort; it must never replace the run result
   }
 }

@@ -220,6 +220,7 @@ describe("runBremio end-to-end (mock adapters)", () => {
       registry,
       model: "claude-requested",
       reasoningLevel: "high",
+      comparisonId: "greeting-case",
     });
 
     // one prompt -> valid plan -> implementation + test + independent review
@@ -284,6 +285,14 @@ describe("runBremio end-to-end (mock adapters)", () => {
       requestedReasoningLevel: "high",
       actualReasoningLevel: "medium",
       usage: { inputTokens: 40, outputTokens: 10, costUsd: 0.01 },
+    });
+    expect(entries.find((entry) => entry.scope === "run")).toMatchObject({
+      provider: "bremio",
+      kind: "run-summary",
+      status: "completed",
+      flowMode: "multi-agent",
+      comparisonId: "greeting-case",
+      qualityGatePassed: true,
     });
   });
 

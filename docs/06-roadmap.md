@@ -114,6 +114,14 @@ treats stale/unknown/low-confidence data as a soft signal. Automatic enablement
 remains behind ledger calibration. Antigravity routing remains blocked until
 AQT exposes or Bremio can explicitly map verified provider model ids.
 
+**4D calibration status (2026-07-18):** aggregated runs now record derived
+single/multi flow mode and objective quality-gate outcome; `--comparison <id>`
+links controlled runs. `bremio stats` evaluates configurable minimum paired
+evidence, non-inferiority, actual-model coverage, provider-reported cost
+coverage, and coordination coverage. It recommends single-agent while evidence
+is insufficient. Automatic flow selection and the cost kill-switch remain open;
+no token-to-quota or missing-price estimate is introduced.
+
 ## Phase 5 — Parallel + VS Code extension
 Run tasks in parallel (PQueue/BullMQ), panel UI. UI is just a surface; the
 value lives in the daemon.

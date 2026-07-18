@@ -4,17 +4,17 @@ import { z } from "zod";
 import { ReasoningLevelSchema, UsageSummarySchema } from "@bremio/protocol";
 
 /**
- * One append-only usage-ledger line, written after each task completes.
- * Measurement infrastructure ONLY (Phase 4 groundwork) — no routing logic
- * reads this yet. Provider-reported usage is recorded when available; missing
- * usage remains unknown and no cost is estimated.
+ * One append-only ledger line for task, coordination, or run-level evidence.
+ * Provider-reported usage is recorded when available; missing usage remains
+ * unknown and no cost is estimated. Calibration reads only explicit run
+ * summaries and provider-confirmed fields.
  */
 export const LedgerEntrySchema = z.object({
   ts: z.string(), // ISO 8601
   runId: z.string(),
   taskId: z.string(),
   /** Missing on legacy entries, which are task entries. */
-  scope: z.enum(["task", "coordination"]).optional(),
+  scope: z.enum(["task", "coordination", "run"]).optional(),
   provider: z.string(), // the agent that ran it (TaskResult.agentId)
   role: z.string(),
   kind: z.string(),
@@ -28,6 +28,12 @@ export const LedgerEntrySchema = z.object({
   requestedReasoningLevel: ReasoningLevelSchema.optional(),
   actualReasoningLevel: ReasoningLevelSchema.optional(),
   usage: UsageSummarySchema.optional(),
+  /** Derived from the final assignment map; never inferred from token usage. */
+  flowMode: z.enum(["single-agent", "multi-agent"]).optional(),
+  /** User-supplied id linking controlled single/multi runs for the same request. */
+  comparisonId: z.string().min(1).optional(),
+  /** Objective fail-closed report gate outcome, present on scope:"run" entries. */
+  qualityGatePassed: z.boolean().optional(),
 });
 export type LedgerEntry = z.infer<typeof LedgerEntrySchema>;
 
@@ -96,6 +102,8 @@ export interface LedgerStats {
   coordinationEntries: number;
   coordinationFailed: number;
   coordinationCancelled: number;
+  runEntries: number;
+  qualityPassedRuns: number;
   usageEntries: number;
   reportedInputTokens: number;
   reportedOutputTokens: number;
@@ -122,6 +130,8 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
   let coordinationEntries = 0;
   let coordinationFailed = 0;
   let coordinationCancelled = 0;
+  let runEntries = 0;
+  let qualityPassedRuns = 0;
   let totalTasks = 0;
 
   for (const e of entries) {
@@ -131,10 +141,13 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
       coordinationEntries += 1;
       if (e.status === "failed") coordinationFailed += 1;
       else if (e.status === "cancelled") coordinationCancelled += 1;
+    } else if (scope === "run") {
+      runEntries += 1;
+      if (e.qualityGatePassed === true) qualityPassedRuns += 1;
     } else {
       totalTasks += 1;
     }
-    totalFilesChanged += e.filesChanged;
+    if (scope === "task") totalFilesChanged += e.filesChanged;
     if (scope === "task" && typeof e.durationMs === "number") {
       durationSum += e.durationMs;
       durationCount += 1;
@@ -176,6 +189,8 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
     coordinationEntries,
     coordinationFailed,
     coordinationCancelled,
+    runEntries,
+    qualityPassedRuns,
     usageEntries,
     reportedInputTokens,
     reportedOutputTokens,

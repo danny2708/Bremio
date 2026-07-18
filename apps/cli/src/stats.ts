@@ -1,4 +1,10 @@
-import { computeStats, ledgerPathFor, readLedger } from "@bremio/orchestrator";
+import {
+  computeStats,
+  evaluateCalibrationReadiness,
+  ledgerPathFor,
+  readLedger,
+  type CalibrationReadiness,
+} from "@bremio/orchestrator";
 import { c } from "./ui";
 
 export interface StatsCommandOptions {
@@ -11,12 +17,14 @@ export async function statsCommand(opts: StatsCommandOptions): Promise<number> {
   const ledgerPath = ledgerPathFor(opts.repoPath);
   const entries = await readLedger(ledgerPath, opts.since ? { since: opts.since } : {});
   const stats = computeStats(entries);
+  const calibration = evaluateCalibrationReadiness(entries);
 
   const scope = opts.since ? `since ${opts.since.toISOString().slice(0, 10)}` : "all time";
   console.log(`${c.bold("Bremio stats")} ${c.dim(`(${scope})`)}`);
 
-  if (stats.totalTasks === 0 && stats.coordinationEntries === 0) {
+  if (stats.totalTasks === 0 && stats.coordinationEntries === 0 && stats.runEntries === 0) {
     console.log(c.dim(`  no ledger entries at ${ledgerPath}`));
+    printCalibration(calibration);
     return 0;
   }
 
@@ -33,6 +41,12 @@ export async function statsCommand(opts: StatsCommandOptions): Promise<number> {
     console.log(
       `  coordination:    ${stats.coordinationEntries} planning run(s)` +
         (unsuccessful ? c.red(` (${unsuccessful})`) : ""),
+    );
+  }
+  if (stats.runEntries > 0) {
+    console.log(
+      `  run outcomes:     ${stats.runEntries} ` +
+        `${c.dim(`(${stats.qualityPassedRuns} passed the quality gate)`)}`,
     );
   }
   console.log(
@@ -55,15 +69,40 @@ export async function statsCommand(opts: StatsCommandOptions): Promise<number> {
   }
 
   const providers = Object.keys(stats.byProvider).sort();
-  if (providers.length === 0) return 0;
-  console.log(`\n  ${c.bold("by provider")}`);
-  for (const p of providers) {
-    const s = stats.byProvider[p];
-    if (!s) continue;
-    console.log(
-      `    ${p.padEnd(10)} tasks=${String(s.tasks).padEnd(4)} ` +
-        `${c.green(`✓${s.completed}`)} ${c.red(`✗${s.failed}`)} ${c.yellow(`◼${s.cancelled}`)}`,
-    );
+  if (providers.length > 0) {
+    console.log(`\n  ${c.bold("by provider")}`);
+    for (const p of providers) {
+      const s = stats.byProvider[p];
+      if (!s) continue;
+      console.log(
+        `    ${p.padEnd(10)} tasks=${String(s.tasks).padEnd(4)} ` +
+          `${c.green(`✓${s.completed}`)} ${c.red(`✗${s.failed}`)} ${c.yellow(`◼${s.cancelled}`)}`,
+      );
+    }
   }
+  printCalibration(calibration);
   return 0;
+}
+
+function printCalibration(readiness: CalibrationReadiness): void {
+  const status = readiness.status === "ready"
+    ? c.green(readiness.status)
+    : c.yellow(readiness.status);
+  console.log(`\n  ${c.bold("calibration")}: ${status}`);
+  console.log(`    recommendation: ${readiness.recommendation}`);
+  console.log(
+    `    comparisons: ${readiness.pairedComparisons} paired, ` +
+      `${readiness.evaluableComparisons} evaluable, ` +
+      `${readiness.nonInferiorComparisons} non-inferior`,
+  );
+  console.log(
+    `    coverage: model ${formatPercent(readiness.actualModelCoverage)}, ` +
+      `cost ${formatPercent(readiness.reportedCostCoverage)}, ` +
+      `coordination ${formatPercent(readiness.coordinationCoverage)}`,
+  );
+  for (const blocker of readiness.blockers) console.log(c.dim(`    - ${blocker}`));
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }

@@ -46,7 +46,7 @@ corepack pnpm bremio merge TASK-002 --repo /path/to/repo          # prompts y/N
 corepack pnpm bremio merge --run <runId> --repo /path/to/repo --yes
 corepack pnpm bremio merge --run <runId> --strategy cherry-pick --repo /path/to/repo --yes
 
-# summarize the usage ledger
+# summarize the usage ledger and fail-closed calibration readiness
 corepack pnpm bremio stats --repo /path/to/repo
 
 # inspect normalized AQT capacity with per-window freshness (read-only)
@@ -84,7 +84,11 @@ usage plus requested/provider-confirmed model and reasoning identity when
 available, summarized by
 `bremio stats [--since <date>]`.
 Planning entries are counted as coordination rather than tasks, including on
-planning failure. Missing usage remains unknown; no price is estimated.
+planning failure. Runs that reach aggregation add a run-summary with derived single/multi
+flow mode and objective quality-gate outcome. `--comparison <id>` can link
+controlled runs of the same request. Stats recommends single-agent until there
+are enough matched comparisons plus provider-reported model, cost, and
+coordination coverage. Missing usage remains unknown; no price is estimated.
 `bremio capacity` (`bremio quota` is an alias)
 reads AI-Quota-Tray's schema-v1 SQLite database in read-only mode. Unsupported
 schema versions are rejected. Aging snapshots lose confidence, while stale,

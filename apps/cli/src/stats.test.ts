@@ -31,6 +31,8 @@ describe("statsCommand", () => {
       expect(await statsCommand({ repoPath: repo })).toBe(0);
       expect(lines.join("\n")).toContain("tasks:           0");
       expect(lines.join("\n")).toContain("coordination:    1 planning run(s) (1 failed)");
+      expect(lines.join("\n")).toContain("calibration: insufficient-evidence");
+      expect(lines.join("\n")).toContain("recommendation: single-agent");
       expect(lines.join("\n")).not.toContain("no ledger entries");
     } finally {
       await fs.rm(repo, { recursive: true, force: true });

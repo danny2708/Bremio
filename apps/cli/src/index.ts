@@ -43,6 +43,7 @@ ${c.bold("run")}      plan + delegate + execute in isolated worktrees (left for 
   --timeout <seconds>      Hard timeout for each lead attempt and worker task.
   --capacity-routing      Opt in to conservative AQT-backed capacity routing.
   --db <path>             Override the AQT database used for capacity routing.
+  --comparison <id>      Link this run to a controlled single/multi experiment.
   --json                  Print the report as JSON (suppresses progress).
   --verbose               Emit structured operational logs to stderr.
 
@@ -82,6 +83,7 @@ function parseCli() {
       "aging-after": { type: "string" },
       "stale-after": { type: "string" },
       "capacity-routing": { type: "boolean", default: false },
+      comparison: { type: "string" },
       json: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
@@ -140,6 +142,9 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   const reasoningLevels = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh"]);
   if (values.reasoning && !reasoningLevels.has(values.reasoning as ReasoningLevel)) {
     errors.push("--reasoning must be 'low', 'medium', 'high', or 'xhigh'");
+  }
+  if (values.comparison !== undefined && values.comparison.trim().length === 0) {
+    errors.push("--comparison must be a non-empty experiment id");
   }
   const capacityTiming = parseCapacityTiming(values);
   if (values["capacity-routing"] && capacityTiming.error) {
@@ -217,6 +222,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         : {}),
       ...(timeoutSeconds !== undefined ? { taskTimeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
       ...(capacitySnapshots ? { capacitySnapshots } : {}),
+      ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
     });
 
     if (json) console.log(JSON.stringify(report, null, 2));
