@@ -3,7 +3,13 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { Logger } from "pino";
 import type { AgentCapabilities } from "@bremio/adapter-sdk";
-import type { AgentEvent, Plan, Task, UsageSummary } from "@bremio/protocol";
+import type {
+  AgentEvent,
+  Plan,
+  ReasoningLevel,
+  Task,
+  UsageSummary,
+} from "@bremio/protocol";
 import { WorktreeManager, getCurrentBranch } from "@bremio/workspace";
 import { buildReport, type RunReport } from "./aggregator";
 import { createPlan, LeadPlanError } from "./lead-manager";
@@ -26,6 +32,8 @@ export interface RunBremioOptions {
   registry: AgentRegistry;
   /** Model for the lead's planning run (workers use their adapter defaults). */
   model?: string;
+  /** Reasoning level for the lead; workers keep their adapter/config defaults. */
+  reasoningLevel?: ReasoningLevel;
   /** Hard timeout for each lead attempt and worker task. */
   taskTimeoutMs?: number;
   signal?: AbortSignal;
@@ -81,11 +89,13 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
 
   const planningStarted = Date.now();
   let leadUsage: UsageSummary | undefined;
-  let observedLeadModel: string | undefined;
+  const observedLeadModels = new Set<string>();
+  const observedLeadReasoningLevels = new Set<ReasoningLevel>();
   const onLeadEvent = (event: AgentEvent): void => {
     if (event.type === "usage") {
       leadUsage = addUsage(leadUsage, event);
-      if (event.model) observedLeadModel = event.model;
+      if (event.model) observedLeadModels.add(event.model);
+      if (event.reasoningLevel) observedLeadReasoningLevels.add(event.reasoningLevel);
     }
     opts.hooks?.onLeadEvent?.(event);
   };
@@ -97,7 +107,8 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
       cwd: repoPath,
       runId,
       runDir,
-      ...(observedLeadModel ?? opts.model ? { model: observedLeadModel ?? opts.model } : {}),
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
       ...(opts.taskTimeoutMs ? { timeoutMs: opts.taskTimeoutMs } : {}),
       ...(opts.signal ? { signal: opts.signal } : {}),
       onEvent: onLeadEvent,
@@ -109,7 +120,11 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
       leadId,
       status: err instanceof LeadPlanError ? err.status : "failed",
       durationMs: Date.now() - planningStarted,
-      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.model ? { requestedModel: opts.model } : {}),
+      ...observedIdentity(observedLeadModels, observedLeadReasoningLevels),
+      ...(opts.reasoningLevel
+        ? { requestedReasoningLevel: opts.reasoningLevel }
+        : {}),
       ...(leadUsage ? { usage: leadUsage } : {}),
     });
     throw err;
@@ -120,7 +135,11 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     leadId,
     status: "completed",
     durationMs: Date.now() - planningStarted,
-    ...(observedLeadModel ?? opts.model ? { model: observedLeadModel ?? opts.model } : {}),
+    ...(opts.model ? { requestedModel: opts.model } : {}),
+    ...observedIdentity(observedLeadModels, observedLeadReasoningLevels),
+    ...(opts.reasoningLevel
+      ? { requestedReasoningLevel: opts.reasoningLevel }
+      : {}),
     ...(leadUsage ? { usage: leadUsage } : {}),
   });
   logger?.info({ tasks: plan.tasks.length, attempts }, "lead produced a plan");
@@ -174,8 +193,8 @@ export type { Task };
 function addUsage(
   current: UsageSummary | undefined,
   event: Extract<AgentEvent, { type: "usage" }>,
-): UsageSummary {
-  return {
+): UsageSummary | undefined {
+  const usage: UsageSummary = {
     ...(current?.inputTokens !== undefined || event.inputTokens !== undefined
       ? { inputTokens: (current?.inputTokens ?? 0) + (event.inputTokens ?? 0) }
       : {}),
@@ -186,6 +205,23 @@ function addUsage(
       ? { costUsd: (current?.costUsd ?? 0) + (event.costUsd ?? 0) }
       : {}),
   };
+  return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+function singleObserved<T>(values: Set<T>): T | undefined {
+  return values.size === 1 ? [...values][0] : undefined;
+}
+
+function observedIdentity(
+  models: Set<string>,
+  reasoningLevels: Set<ReasoningLevel>,
+): Pick<PlanningLedgerInput, "actualModel" | "actualReasoningLevel"> {
+  const actualModel = singleObserved(models);
+  const actualReasoningLevel = singleObserved(reasoningLevels);
+  return {
+    ...(actualModel ? { actualModel } : {}),
+    ...(actualReasoningLevel ? { actualReasoningLevel } : {}),
+  };
 }
 
 interface PlanningLedgerInput {
@@ -194,7 +230,10 @@ interface PlanningLedgerInput {
   leadId: string;
   status: "completed" | "failed" | "cancelled";
   durationMs: number;
-  model?: string;
+  requestedModel?: string;
+  actualModel?: string;
+  requestedReasoningLevel?: ReasoningLevel;
+  actualReasoningLevel?: ReasoningLevel;
   usage?: UsageSummary;
 }
 
@@ -212,7 +251,14 @@ async function recordPlanningLedger(input: PlanningLedgerInput): Promise<void> {
       status: input.status,
       filesChanged: 0,
       durationMs: input.durationMs,
-      ...(input.model ? { model: input.model } : {}),
+      ...(input.requestedModel ? { requestedModel: input.requestedModel } : {}),
+      ...(input.actualModel ? { actualModel: input.actualModel } : {}),
+      ...(input.requestedReasoningLevel
+        ? { requestedReasoningLevel: input.requestedReasoningLevel }
+        : {}),
+      ...(input.actualReasoningLevel
+        ? { actualReasoningLevel: input.actualReasoningLevel }
+        : {}),
       ...(input.usage ? { usage: input.usage } : {}),
     });
   } catch {

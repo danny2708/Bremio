@@ -71,6 +71,7 @@ class MockLead extends BaseMock {
         runId: req.runId,
         ts,
         model: "claude-mock",
+        reasoningLevel: "medium",
         inputTokens: 40,
         outputTokens: 10,
         costUsd: 0.01,
@@ -173,6 +174,7 @@ class MockWorker extends BaseMock {
       runId: req.runId,
       ts: Date.now(),
       model: "codex-mock",
+      reasoningLevel: "high",
       inputTokens: 120,
       outputTokens: 30,
     };
@@ -216,6 +218,8 @@ describe("runBremio end-to-end (mock adapters)", () => {
       repoPath: repo,
       prompt: "add a greeting",
       registry,
+      model: "claude-requested",
+      reasoningLevel: "high",
     });
 
     // one prompt -> valid plan -> implementation + test + independent review
@@ -231,7 +235,10 @@ describe("runBremio end-to-end (mock adapters)", () => {
     expect(impl?.result.filesChanged).toContain("GREETING.txt");
     expect(impl?.result.commitHash).toBeTruthy();
     expect(impl?.result.usage).toEqual({ inputTokens: 120, outputTokens: 30 });
-    expect(impl?.result.model).toBe("codex-mock");
+    expect(impl?.result.requestedModel).toBeUndefined();
+    expect(impl?.result.actualModel).toBe("codex-mock");
+    expect(impl?.result.requestedReasoningLevel).toBeUndefined();
+    expect(impl?.result.actualReasoningLevel).toBe("high");
     expect(impl?.result.branch).toBe("bremio/TASK-002-codex");
     expect(existsSync(impl?.result.worktreePath ?? "")).toBe(true);
 
@@ -264,12 +271,18 @@ describe("runBremio end-to-end (mock adapters)", () => {
       inputTokens: 120,
       outputTokens: 30,
     });
-    expect(entries.find((entry) => entry.taskId === "TASK-002")?.model).toBe("codex-mock");
+    expect(entries.find((entry) => entry.taskId === "TASK-002")).toMatchObject({
+      actualModel: "codex-mock",
+      actualReasoningLevel: "high",
+    });
     expect(entries.find((entry) => entry.scope === "coordination")).toMatchObject({
       provider: "claude",
       kind: "planning",
       status: "completed",
-      model: "claude-mock",
+      requestedModel: "claude-requested",
+      actualModel: "claude-mock",
+      requestedReasoningLevel: "high",
+      actualReasoningLevel: "medium",
       usage: { inputTokens: 40, outputTokens: 10, costUsd: 0.01 },
     });
   });

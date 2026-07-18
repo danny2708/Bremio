@@ -259,10 +259,11 @@ interface RunExecutionMetadata {
 }
 ```
 
-Duration/status and a single provider-confirmed `model` are already recorded.
-TODO: split requested vs actual model, record requested reasoning, and preserve
-actual reasoning only when the provider confirms it. Provider token/cost events
-may remain optional telemetry, but are never converted into quota percentage.
+Duration/status and requested/provider-confirmed execution identity are now
+recorded separately in task results and the ledger. `--model` and `--reasoning`
+capture explicit lead requests; actual model/reasoning remain absent unless a
+provider event confirms them. Provider token/cost events remain optional
+telemetry and are never converted into quota percentage.
 
 ## Capacity implementation checklist
 
@@ -275,6 +276,8 @@ may remain optional telemetry, but are never converted into quota percentage.
 - [x] Introduce `QuotaProvider` and one canonical capacity schema.
 - [x] Map the AQT source to one canonical card per supported agent; expose it
       through `bremio capacity` while retaining `bremio quota` as an alias.
+- [x] Split requested/actual model and reasoning metadata in reports and the
+      ledger without inferring provider defaults.
 - [ ] Add the **Capacity** cards and data-age/source/confidence display.
 - [ ] Add re-read refresh, `Open usage`, and unavailable states.
 - [ ] Extend AQT's Claude whitelist only when another structured window is

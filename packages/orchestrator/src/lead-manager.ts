@@ -1,5 +1,11 @@
 import type { AgentAdapter } from "@bremio/adapter-sdk";
-import { PlanSchema, type AgentEvent, type Plan, type TaskStatus } from "@bremio/protocol";
+import {
+  PlanSchema,
+  type AgentEvent,
+  type Plan,
+  type ReasoningLevel,
+  type TaskStatus,
+} from "@bremio/protocol";
 import { TaskLog } from "@bremio/workspace";
 import {
   LEAD_SYSTEM_PROMPT,
@@ -25,6 +31,7 @@ export interface CreatePlanOptions {
   runId: string;
   runDir: string;
   model?: string;
+  reasoningLevel?: ReasoningLevel;
   maxTurns?: number;
   /** Hard timeout for each provider planning attempt. */
   timeoutMs?: number;
@@ -123,6 +130,7 @@ async function runLead(
     systemPrompt: LEAD_SYSTEM_PROMPT,
     outputSchema: planJsonSchema,
     ...(opts.model ? { model: opts.model } : {}),
+    ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
     maxTurns: opts.maxTurns ?? 30,
     signal: controller.signal,
   });

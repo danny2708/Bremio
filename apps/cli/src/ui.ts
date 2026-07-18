@@ -75,6 +75,18 @@ export function printReport(report: RunReport): void {
     console.log(
       `  agent: ${c.bold(agentId)}   status: ${statusGlyph(result.status)}   files: ${result.filesChanged.length}`,
     );
+    const execution = [
+      result.durationMs !== undefined ? `duration=${(result.durationMs / 1000).toFixed(1)}s` : undefined,
+      result.requestedModel ? `model requested=${result.requestedModel}` : undefined,
+      result.actualModel ? `model actual=${result.actualModel}` : undefined,
+      result.requestedReasoningLevel
+        ? `reasoning requested=${result.requestedReasoningLevel}`
+        : undefined,
+      result.actualReasoningLevel
+        ? `reasoning actual=${result.actualReasoningLevel}`
+        : undefined,
+    ].filter((value): value is string => Boolean(value));
+    if (execution.length > 0) console.log(`  execution: ${c.dim(execution.join(" | "))}`);
     if (result.filesChanged.length) {
       console.log(`  changed: ${c.dim(result.filesChanged.join(", "))}`);
     }

@@ -91,7 +91,14 @@ async function recordLedger(task: Task, result: TaskResult, opts: RunPlanOptions
       status: result.status,
       filesChanged: result.filesChanged.length,
       ...(result.durationMs !== undefined ? { durationMs: result.durationMs } : {}),
-      ...(result.model ? { model: result.model } : {}),
+      ...(result.requestedModel ? { requestedModel: result.requestedModel } : {}),
+      ...(result.actualModel ? { actualModel: result.actualModel } : {}),
+      ...(result.requestedReasoningLevel
+        ? { requestedReasoningLevel: result.requestedReasoningLevel }
+        : {}),
+      ...(result.actualReasoningLevel
+        ? { actualReasoningLevel: result.actualReasoningLevel }
+        : {}),
       ...(result.usage ? { usage: result.usage } : {}),
     });
   } catch {
@@ -207,7 +214,10 @@ async function runOneTask(
     worktreePath: worktree.path,
     logsPath: log.path,
     durationMs: Date.now() - started,
-    ...(run.model ? { model: run.model } : {}),
+    ...(run.actualModel ? { actualModel: run.actualModel } : {}),
+    ...(run.actualReasoningLevel
+      ? { actualReasoningLevel: run.actualReasoningLevel }
+      : {}),
     ...(run.usage ? { usage: run.usage } : {}),
     ...(error ? { error } : {}),
   };

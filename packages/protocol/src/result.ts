@@ -24,6 +24,10 @@ export type TestRun = z.infer<typeof TestRunSchema>;
 export const TaskStatusSchema = z.enum(["completed", "failed", "cancelled"]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
+/** Provider-neutral reasoning levels supported by both current lead adapters. */
+export const ReasoningLevelSchema = z.enum(["low", "medium", "high", "xhigh"]);
+export type ReasoningLevel = z.infer<typeof ReasoningLevelSchema>;
+
 /** Provider-reported usage only; omitted fields were not reported and are never estimated. */
 export const UsageSummarySchema = z.object({
   inputTokens: z.number().int().nonnegative().optional(),
@@ -55,7 +59,10 @@ export const TaskResultSchema = z.object({
   worktreePath: z.string().optional(),
   logsPath: z.string().optional(),
   durationMs: z.number().int().nonnegative().optional(),
-  model: z.string().optional(),
+  requestedModel: z.string().min(1).optional(),
+  actualModel: z.string().min(1).optional(),
+  requestedReasoningLevel: ReasoningLevelSchema.optional(),
+  actualReasoningLevel: ReasoningLevelSchema.optional(),
   usage: UsageSummarySchema.optional(),
   error: z.string().optional(),
 });

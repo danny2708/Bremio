@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ReasoningLevel } from "@bremio/protocol";
 import type { AgentRole, Permission } from "./capabilities";
 
 /** Result of an adapter liveness probe. */
@@ -33,6 +34,8 @@ export interface AgentRunRequest {
   permission: Permission;
   /** Provider model id; adapters fall back to their own default when omitted. */
   model?: string;
+  /** Explicit reasoning request; omission keeps the provider/config default. */
+  reasoningLevel?: ReasoningLevel;
   /** Extra system-prompt guidance layered on the provider default. */
   systemPrompt?: string;
   /**

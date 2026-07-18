@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { UsageSummarySchema } from "@bremio/protocol";
+import { ReasoningLevelSchema, UsageSummarySchema } from "@bremio/protocol";
 
 /**
  * One append-only usage-ledger line, written after each task completes.
@@ -21,7 +21,12 @@ export const LedgerEntrySchema = z.object({
   status: z.enum(["completed", "failed", "cancelled"]),
   filesChanged: z.number().int().nonnegative(),
   durationMs: z.number().int().nonnegative().optional(),
+  /** Legacy ambiguous identity; retained only so old ledger lines remain readable. */
   model: z.string().optional(),
+  requestedModel: z.string().min(1).optional(),
+  actualModel: z.string().min(1).optional(),
+  requestedReasoningLevel: ReasoningLevelSchema.optional(),
+  actualReasoningLevel: ReasoningLevelSchema.optional(),
   usage: UsageSummarySchema.optional(),
 });
 export type LedgerEntry = z.infer<typeof LedgerEntrySchema>;

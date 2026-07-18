@@ -125,4 +125,19 @@ describe("LedgerEntrySchema", () => {
   it("accepts a well-formed entry", () => {
     expect(LedgerEntrySchema.safeParse(entry()).success).toBe(true);
   });
+  it("preserves requested and provider-confirmed execution identity", () => {
+    const parsed = LedgerEntrySchema.parse(entry({
+      requestedModel: "requested-model",
+      actualModel: "actual-model",
+      requestedReasoningLevel: "high",
+      actualReasoningLevel: "medium",
+    }));
+
+    expect(parsed).toMatchObject({
+      requestedModel: "requested-model",
+      actualModel: "actual-model",
+      requestedReasoningLevel: "high",
+      actualReasoningLevel: "medium",
+    });
+  });
 });

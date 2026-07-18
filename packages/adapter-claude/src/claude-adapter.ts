@@ -106,6 +106,7 @@ export class ClaudeAdapter implements AgentAdapter {
         ? { type: "preset", preset: "claude_code", append: req.systemPrompt }
         : { type: "preset", preset: "claude_code" },
       ...(model ? { model } : {}),
+      ...(req.reasoningLevel ? { effort: req.reasoningLevel } : {}),
       ...(req.maxTurns ? { maxTurns: req.maxTurns } : {}),
       ...(req.outputSchema
         ? { outputFormat: { type: "json_schema", schema: req.outputSchema } }

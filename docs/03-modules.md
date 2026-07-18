@@ -91,7 +91,8 @@ interface TaskResult {
   summary: string;
   filesChanged: string[]; commandsExecuted: string[];
   tests: { command: string; passed: number; failed: number; exitCode: number }[];
-  model?: string;
+  requestedModel?: string; actualModel?: string;
+  requestedReasoningLevel?: string; actualReasoningLevel?: string;
   usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
   commitHash?: string; sessionId?: string;
   findings: Finding[];

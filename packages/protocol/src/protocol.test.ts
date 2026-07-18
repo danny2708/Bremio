@@ -60,4 +60,22 @@ describe("TaskResultSchema", () => {
     expect(r.tests).toEqual([]);
     expect(r.findings).toEqual([]);
   });
+
+  it("keeps requested and provider-confirmed execution identity separate", () => {
+    const result = TaskResultSchema.parse({
+      taskId: "TASK-001",
+      agentId: "claude",
+      status: "completed",
+      summary: "done",
+      requestedModel: "claude-requested",
+      actualModel: "claude-actual",
+      requestedReasoningLevel: "high",
+      actualReasoningLevel: "medium",
+    });
+
+    expect(result.requestedModel).toBe("claude-requested");
+    expect(result.actualModel).toBe("claude-actual");
+    expect(result.requestedReasoningLevel).toBe("high");
+    expect(result.actualReasoningLevel).toBe("medium");
+  });
 });

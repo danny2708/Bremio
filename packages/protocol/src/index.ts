@@ -25,11 +25,13 @@ export { PlanSchema, type Plan } from "./plan";
 export {
   TaskResultSchema,
   TaskStatusSchema,
+  ReasoningLevelSchema,
   FindingSchema,
   TestRunSchema,
   UsageSummarySchema,
   type TaskResult,
   type TaskStatus,
+  type ReasoningLevel,
   type Finding,
   type TestRun,
   type UsageSummary,

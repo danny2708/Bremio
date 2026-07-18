@@ -1,4 +1,10 @@
-import type { AgentEvent, RunOutcome, TestRun, UsageSummary } from "@bremio/protocol";
+import type {
+  AgentEvent,
+  ReasoningLevel,
+  RunOutcome,
+  TestRun,
+  UsageSummary,
+} from "@bremio/protocol";
 import type { TaskLog } from "@bremio/workspace";
 
 export interface CollectedRun {
@@ -11,8 +17,9 @@ export interface CollectedRun {
   tests: TestRun[];
   /** Sum of provider-reported usage events; missing dimensions stay unknown. */
   usage?: UsageSummary;
-  /** Provider-confirmed model, omitted if unavailable or inconsistent. */
-  model?: string;
+  /** Provider-confirmed identity, omitted if unavailable or inconsistent. */
+  actualModel?: string;
+  actualReasoningLevel?: ReasoningLevel;
 }
 
 const SHELL_TOOLS = new Set(["shell", "bash", "Bash"]);
@@ -36,6 +43,7 @@ export async function collectRun(
   let outputTokens: number | undefined;
   let costUsd: number | undefined;
   const models = new Set<string>();
+  const reasoningLevels = new Set<ReasoningLevel>();
 
   for await (const event of events) {
     opts.log?.event(event);
@@ -61,6 +69,7 @@ export async function collectRun(
       });
     } else if (event.type === "usage") {
       if (event.model) models.add(event.model);
+      if (event.reasoningLevel) reasoningLevels.add(event.reasoningLevel);
       if (event.inputTokens !== undefined) inputTokens = (inputTokens ?? 0) + event.inputTokens;
       if (event.outputTokens !== undefined) outputTokens = (outputTokens ?? 0) + event.outputTokens;
       if (event.costUsd !== undefined) costUsd = (costUsd ?? 0) + event.costUsd;
@@ -83,6 +92,9 @@ export async function collectRun(
           },
         }
       : {}),
-    ...(models.size === 1 ? { model: [...models][0] } : {}),
+    ...(models.size === 1 ? { actualModel: [...models][0] } : {}),
+    ...(reasoningLevels.size === 1
+      ? { actualReasoningLevel: [...reasoningLevels][0] }
+      : {}),
   };
 }

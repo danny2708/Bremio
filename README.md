@@ -28,7 +28,7 @@ Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
 
 ```sh
 corepack pnpm install
-corepack pnpm test          # 66 tests (incl. quality-gate + timeout E2E runs)
+corepack pnpm test          # unit + quality-gate + timeout E2E runs
 corepack pnpm typecheck
 
 # check adapter health / lead-eligibility
@@ -38,6 +38,8 @@ corepack pnpm bremio doctor
 # which edits code in its own git worktree; results aggregate into one report
 corepack pnpm bremio run --lead codex --timeout 600 --repo /path/to/repo "add a health endpoint"
 corepack pnpm bremio run --lead claude --repo /path/to/repo "fix the failing test"
+# optional explicit lead identity; provider defaults remain untouched when omitted
+corepack pnpm bremio run --lead codex --model gpt-5.6-terra --reasoning high --repo /path/to/repo "review this change"
 
 # after the run's test + independent-review gate passes, review the diff and merge
 corepack pnpm bremio merge TASK-002 --repo /path/to/repo          # prompts y/N
@@ -75,7 +77,8 @@ their dependency branches, so they inspect the implementation rather than HEAD.
 order, excluding inherited dependency history; conflicts also abort cleanly.
 Every task also appends a line to `.bremio/ledger.jsonl` (measurement only, no
 routing yet), including provider-reported task and lead-planning token/cost
-usage plus confirmed model identity when available, summarized by
+usage plus requested/provider-confirmed model and reasoning identity when
+available, summarized by
 `bremio stats [--since <date>]`.
 Planning entries are counted as coordination rather than tasks, including on
 planning failure. Missing usage remains unknown; no price is estimated.

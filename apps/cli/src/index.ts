@@ -11,6 +11,7 @@ import {
   runBremio,
   type RunBremioHooks,
 } from "@bremio/orchestrator";
+import type { ReasoningLevel } from "@bremio/protocol";
 import { mergeCommand } from "./merge";
 import { quotaCommand } from "./quota";
 import { statsCommand } from "./stats";
@@ -31,6 +32,7 @@ ${c.bold("run")}      plan + delegate + execute in isolated worktrees (left for 
   --lead <claude|codex>   Which agent leads (plans). Required.
   --repo <path>           Target git repository. Required.
   --model <id>            Model for the lead's planning run (optional).
+  --reasoning <level>     Lead reasoning: low, medium, high, or xhigh.
   --timeout <seconds>      Hard timeout for each lead attempt and worker task.
   --json                  Print the report as JSON (suppresses progress).
   --verbose               Emit structured operational logs to stderr.
@@ -60,6 +62,7 @@ function parseCli() {
       repo: { type: "string" },
       prompt: { type: "string" },
       model: { type: "string" },
+      reasoning: { type: "string" },
       timeout: { type: "string" },
       run: { type: "string" },
       base: { type: "string" },
@@ -121,6 +124,10 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   const timeoutSeconds = values.timeout === undefined ? undefined : Number(values.timeout);
   if (timeoutSeconds !== undefined && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
     errors.push("--timeout must be a positive number of seconds");
+  }
+  const reasoningLevels = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh"]);
+  if (values.reasoning && !reasoningLevels.has(values.reasoning as ReasoningLevel)) {
+    errors.push("--reasoning must be 'low', 'medium', 'high', or 'xhigh'");
   }
   if (errors.length) {
     for (const e of errors) console.error(c.red(`error: ${e}`));
@@ -186,6 +193,9 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       signal: ac.signal,
       hooks,
       ...(values.model ? { model: values.model } : {}),
+      ...(values.reasoning
+        ? { reasoningLevel: values.reasoning as ReasoningLevel }
+        : {}),
       ...(timeoutSeconds !== undefined ? { taskTimeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
     });
 

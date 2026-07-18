@@ -32,6 +32,32 @@ const CAPABILITIES: AgentCapabilities = {
   resumableSessions: true,
 };
 
+export function buildCodexExecArgs(
+  req: AgentRunRequest,
+  outFile: string,
+  schemaFile?: string,
+): string[] {
+  const sandbox = req.permission === "read-only" ? "read-only" : "workspace-write";
+  const args = [
+    "exec",
+    "--json",
+    "--color",
+    "never",
+    "-C",
+    req.cwd,
+    "-s",
+    sandbox,
+    "-o",
+    outFile,
+  ];
+  if (schemaFile) args.push("--output-schema", schemaFile);
+  if (req.model) args.push("-m", req.model);
+  if (req.reasoningLevel) {
+    args.push("-c", `model_reasoning_effort=${JSON.stringify(req.reasoningLevel)}`);
+  }
+  return args;
+}
+
 export class CodexAdapter implements AgentAdapter {
   readonly id = "codex";
   readonly provider = "openai";
@@ -87,21 +113,7 @@ export class CodexAdapter implements AgentAdapter {
       await fs.writeFile(schemaFile, JSON.stringify(req.outputSchema), "utf8");
     }
 
-    const sandbox = req.permission === "read-only" ? "read-only" : "workspace-write";
-    const args = [
-      "exec",
-      "--json",
-      "--color",
-      "never",
-      "-C",
-      req.cwd,
-      "-s",
-      sandbox,
-      "-o",
-      outFile,
-    ];
-    if (schemaFile) args.push("--output-schema", schemaFile);
-    if (req.model) args.push("-m", req.model);
+    const args = buildCodexExecArgs(req, outFile, schemaFile);
 
     let spawnError: Error | undefined;
     let stderr = "";

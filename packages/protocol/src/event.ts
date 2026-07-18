@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { TaskStatusSchema } from "./result";
+import { ReasoningLevelSchema, TaskStatusSchema } from "./result";
 
 /**
  * AgentEvent — the normalized streaming protocol every adapter emits from
@@ -74,6 +74,8 @@ export const UsageEventSchema = z.object({
   ...base,
   /** Provider-confirmed model id when the stream exposes it. */
   model: z.string().min(1).optional(),
+  /** Provider-confirmed reasoning level, never inferred from the request. */
+  reasoningLevel: ReasoningLevelSchema.optional(),
   inputTokens: z.number().int().nonnegative().optional(),
   outputTokens: z.number().int().nonnegative().optional(),
   costUsd: z.number().nonnegative().optional(),

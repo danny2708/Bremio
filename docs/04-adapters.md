@@ -20,8 +20,8 @@ interface AgentAdapter {
 > docs and update this file. Don't trust this list blindly.
 
 ## Claude Code adapter
-- Surface: **Claude Agent SDK** (TypeScript) — model selection, streaming,
-  permissions, structured output, usage + rate-limit events.
+- Surface: **Claude Agent SDK** (TypeScript) — model/effort selection,
+  streaming, permissions, structured output, usage + rate-limit events.
 - Quota in Bremio: consume AQT's opt-in Claude Code status-line bridge (5-hour
   and 7-day windows). SDK token usage is telemetry, not a quota percentage.
 - Roles: lead, planner, implementer, reviewer. Eligible to be the lead.
@@ -32,9 +32,10 @@ interface AgentAdapter {
   (`codex app-server --stdio`) for progress streaming, thread persistence,
   turn control.
 - Model/effort: GPT-5.6 family — **Sol** (flagship), **Terra** (workhorse),
-  **Luna** (cheap/fast); effort low→extra-high. Pass `--model`/`--effort`
-  explicitly, or Codex falls back to its own `config.toml` (not something
-  Bremio implicitly controls).
+  **Luna** (cheap/fast); effort low→extra-high. Bremio passes the model with
+  `--model` and normalized effort through
+  `-c model_reasoning_effort="<level>"`; omission leaves Codex's
+  `config.toml` defaults untouched.
 - Quota: RPC `account/rateLimits/read` via app-server — **official**. This
   is exactly the source AI-Quota-Tray already uses → reuse it, don't
   re-read it.
