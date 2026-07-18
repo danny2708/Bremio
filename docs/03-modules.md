@@ -62,6 +62,11 @@ repo/
     └── TASK-003-antigravity/
 ```
 
+A task with dependencies starts from their completed branches. With multiple
+dependencies, Bremio integrates those branches inside the new task worktree;
+the user's base branch remains untouched. This is what lets test/review tasks
+inspect the implementation they gate.
+
 Lifecycle of a task at the workspace layer:
 
 ```text
@@ -87,7 +92,7 @@ interface TaskResult {
 }
 ```
 
-Each task is granted `permissions` (`read-only` for a reviewer,
-`workspace-write` for an implementer) and its own `worktree` path. See
+Each task is granted `permissions` (`read-only` for analysis, test, and review;
+`workspace-write` for implementation) and its own `worktree` path. See
 enforcement limits in `04-adapters.md` (Antigravity **cannot** be forced
 read-only in `-p` mode).

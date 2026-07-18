@@ -13,10 +13,13 @@
      - which agents are eligible + still have quota?
 5. Router assigns an agent+model to each task (scoring, see 05).
 6. Scheduler runs the tasks (Phase 1: sequential, in dependency order):
-     - creates a branch + a dedicated worktree for the task
+     - creates a branch + a dedicated worktree for the task; dependent tasks
+       inherit the completed dependency branches
      - calls adapter.startRun(request) → streams AgentEvent
      - collects the diff, test results, logs
-7. Quality gate (Phase 3+): independent review + test gate.
+7. Quality gate (Phase 2): require shell exit-code test evidence, structured
+   findings from a reviewer other than the implementation author, and zero
+   open blockers.
 8. Result Aggregator collects every TaskResult into one report.
 9. User reviews the report; approves the merge (manual in the MVP).
 ```
@@ -39,11 +42,16 @@
       "dependencies": ["TASK-001"],
       "acceptanceCriteria": ["Runs on schedule", "Exponential backoff",
         "No duplicate records", "Tests pass"] },
-    { "id": "TASK-003", "title": "Independent review",
+    { "id": "TASK-003", "title": "Run verification",
+      "kind": "test", "requiredCapabilities": ["repository.read", "shell", "test"],
+      "preferredAgents": ["codex", "claude"], "risk": "medium",
+      "dependencies": ["TASK-002"],
+      "acceptanceCriteria": ["Relevant test command exits 0"] },
+    { "id": "TASK-004", "title": "Independent review",
       "kind": "review", "requiredCapabilities": ["repository.read", "review"],
       "preferredAgents": ["antigravity", "codex"], "risk": "medium",
-      "dependencies": ["TASK-002"],
-      "acceptanceCriteria": ["Review diff", "Run tests", "Report blockers"] }
+      "dependencies": ["TASK-003"],
+      "acceptanceCriteria": ["Review diff", "Return structured findings", "Report blockers"] }
   ]
 }
 ```

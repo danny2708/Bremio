@@ -8,7 +8,7 @@ Only **Claude (lead) + Codex (worker)**, **sequential**. Both return plan
 JSON → enough to prove lead-swapping + delegation. (Antigravity isn't in yet
 because it can't produce JSON — see 04.)
 
-**Implementation status (2026-07-18):** shipped. Local typecheck, 44 tests,
+**Implementation status (2026-07-18):** shipped. Local typecheck, 52 tests,
 and `bremio doctor` pass. A fresh two-provider real-run verification remains
 blocked by the Claude session limit reported at runtime; do not mark this phase
 fully closed until it is rerun after the reset.
@@ -38,13 +38,20 @@ Not allowed to be the lead.
 Add independent review (avoid-self-review), test gate, conflict detection,
 manual approval before merge. Every lead still returns the same PlanSchema.
 
+**Implementation status (2026-07-18):** shipped locally. Dependent task
+worktrees inherit upstream branches; test tasks are read-only and expose shell
+exit-code evidence; reviews return structured findings and are assigned away
+from the implementation author; reports compute a fail-closed gate; and
+`bremio merge` refuses missing/failed gates. Fresh Claude+Codex verification is
+pending the Claude session reset.
+
 ## Phase 3 — Full worktree lifecycle
 Diff/merge manager, cherry-pick, worktree cleanup, reliable kill-on-timeout.
 
-**Early slice shipped:** `bremio merge` previews a completed task's diff,
+**Early slice shipped:** `bremio merge` previews a gate-approved task's diff,
 requires confirmation (or `--yes`), merges with `--no-ff`, then removes its
 worktree and branch; conflicts abort cleanly. Cherry-pick, automatic quality
-gates, and reliable kill-on-timeout remain future work.
+automatic merge, cherry-pick, and reliable kill-on-timeout remain future work.
 
 ## Phase 4 — Quota-aware routing + efficiency (see 05)
 Usage ledger → consume AI-Quota-Tray → single-vs-multi decision +

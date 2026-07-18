@@ -12,10 +12,11 @@ aggregates the results back into one place. ROI goal: **get the most out of
 the models with the least quota.**
 
 ## Status
-**Phase 1 (vertical slice) implemented**, plus a Phase-2/Phase-4 slice
-(`bremio merge` + usage ledger / `bremio stats`) — Claude (Agent SDK) + Codex
+**Phase 1 (vertical slice) implemented**, plus the Phase-2 quality gate and a
+measurement-only Phase-4 ledger slice — Claude (Agent SDK) + Codex
 (`codex exec --json`) as swappable lead/worker, a validator, a sequential
-scheduler, git-worktree isolation, review-gated merge, and the CLI. Full design
+scheduler, dependency-aware git-worktree isolation, independent review,
+exit-code-backed test evidence, review-gated merge, and the CLI. Full design
 lives in [`docs/`](docs/); start at [`docs/README.md`](docs/README.md). Still out
 of scope (see [`docs/06`](docs/06-roadmap.md)): Antigravity, quota-aware routing,
 parallelism, dashboard.
@@ -27,7 +28,7 @@ Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
 
 ```sh
 corepack pnpm install
-corepack pnpm test          # 44 tests (incl. a mock-adapter end-to-end run)
+corepack pnpm test          # 52 tests (incl. a Phase-2 mock E2E run)
 corepack pnpm typecheck
 
 # check adapter health / lead-eligibility
@@ -38,7 +39,7 @@ corepack pnpm bremio doctor
 corepack pnpm bremio run --lead codex --repo /path/to/repo "add a health endpoint"
 corepack pnpm bremio run --lead claude --repo /path/to/repo "fix the failing test"
 
-# review a completed task's diff, then merge it into the base branch
+# after the run's test + independent-review gate passes, review the diff and merge
 corepack pnpm bremio merge TASK-002 --repo /path/to/repo          # prompts y/N
 corepack pnpm bremio merge --run <runId> --repo /path/to/repo --yes
 
@@ -46,13 +47,15 @@ corepack pnpm bremio merge --run <runId> --repo /path/to/repo --yes
 corepack pnpm bremio stats --repo /path/to/repo
 ```
 
-Each task runs in `.<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
+Each task runs in `<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
 `bremio/<taskId>-<agent>`; per-task logs and `report.json` land in
 `<repo>/.bremio/runs/<runId>/`. Press **Ctrl+C** to cancel an in-flight run.
 
 `bremio run` never merges — worktrees are **left for review**. `bremio merge`
-shows the diff, asks for confirmation (or `--yes`), then merges into the base
-branch (`--no-ff`) and cleans up the worktree + branch; conflicts abort cleanly.
+first requires a passed run quality gate, then shows the diff, asks for
+confirmation (or `--yes`), merges into the base branch (`--no-ff`), and cleans
+up the worktree + branch; conflicts abort cleanly. Test/review tasks inherit
+their dependency branches, so they inspect the implementation rather than HEAD.
 Every task also appends a line to `.bremio/ledger.jsonl` (measurement only, no
 routing yet), summarized by `bremio stats [--since <date>]`.
 
