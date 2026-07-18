@@ -80,8 +80,10 @@ export function buildPlanningPrompt(userPrompt: string): string {
     userPrompt,
     "",
     "PLAN RULES:",
-    "- Decompose into a SMALL number of concrete tasks (1-4). Prefer fewer tasks.",
+    "- Decompose into a SMALL number of concrete tasks (normally 3-4). Prefer fewer tasks.",
     "- Include at least one `implementation` task that another agent can execute to make the actual code change.",
+    "- For every code-changing flow, include a later `test` task and an independent read-only `review` task. Both must depend on the implementation task (or on the final task containing the integrated implementation).",
+    "- Test tasks must require `shell` and `test`. Review tasks must require `repository.read` and `review`, and must not modify files.",
     "- Each task needs: id (e.g. \"TASK-001\"), title, kind (analysis|implementation|review|test|documentation|other), risk (low|medium|high), requiredCapabilities (subset of repository.read, repository.write, shell, test, review, browser, vision), preferredAgents (e.g. [\"codex\"]), dependencies (ids of prerequisite tasks, [] if none), acceptanceCriteria (concrete, checkable strings). Provide every field (use [] for empty arrays).",
     "- Order tasks so that any task's dependencies appear before it.",
     "- Set leadAgentId to your own provider id.",
@@ -104,7 +106,7 @@ export function buildRepairPrompt(userPrompt: string, error: string): string {
 
 /** Build the instruction handed to a worker for one task. */
 export function buildTaskPrompt(plan: Plan, task: Task): string {
-  const readOnly = task.kind === "review" || task.kind === "analysis";
+  const readOnly = task.kind === "review" || task.kind === "analysis" || task.kind === "test";
   const lines = [
     "You are executing ONE task within a larger plan, in an isolated git worktree (the current working directory).",
     "",
@@ -118,7 +120,19 @@ export function buildTaskPrompt(plan: Plan, task: Task): string {
     for (const c of task.acceptanceCriteria) lines.push(`- ${c}`);
   }
   lines.push("");
-  if (readOnly) {
+  if (task.kind === "test") {
+    lines.push(
+      "This is a READ-ONLY TEST GATE. Do NOT modify files.",
+      "Run the relevant test or verification commands against the inherited implementation.",
+      "Make the final shell command the authoritative pass/fail command; Bremio gates on its exit code.",
+    );
+  } else if (task.kind === "review") {
+    lines.push(
+      "This is a READ-ONLY INDEPENDENT REVIEW. Do NOT modify files.",
+      "Review the inherited implementation against the acceptance criteria and report every finding.",
+      "Return the structured review object required by the output schema.",
+    );
+  } else if (readOnly) {
     lines.push(
       "This is a READ-ONLY task. Do NOT modify files. Analyze and report your findings and any blockers.",
     );

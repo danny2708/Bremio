@@ -18,7 +18,19 @@ export function assignAgents(
 ): Map<string, string> {
   const assign = new Map<string, string>();
   for (const t of plan.tasks) {
-    assign.set(t.id, t.kind === "analysis" ? leadId : workerId);
+    if (t.kind === "analysis") {
+      assign.set(t.id, leadId);
+      continue;
+    }
+    if (t.kind === "review") {
+      const dependencyAuthors = new Set(
+        t.dependencies.map((dependency) => assign.get(dependency)).filter(Boolean),
+      );
+      const independent = [leadId, workerId].find((id) => !dependencyAuthors.has(id));
+      assign.set(t.id, independent ?? workerId);
+      continue;
+    }
+    assign.set(t.id, workerId);
   }
 
   // Delegation guarantee: if nothing landed on the worker, move the last task.
@@ -85,5 +97,7 @@ export function roleForKind(kind: TaskKind): AgentRole {
 }
 
 export function permissionForKind(kind: TaskKind): Permission {
-  return kind === "review" || kind === "analysis" ? "read-only" : "workspace-write";
+  return kind === "review" || kind === "analysis" || kind === "test"
+    ? "read-only"
+    : "workspace-write";
 }

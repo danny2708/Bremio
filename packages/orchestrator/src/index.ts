@@ -44,6 +44,15 @@ export {
 export { collectRun, type CollectedRun } from "./stream";
 
 export {
+  evaluateQualityGate,
+  parseReviewOutput,
+  reviewOutputJsonSchema,
+  type QualityGateResult,
+  type QualityGateTask,
+  type ReviewParseResult,
+} from "./quality-gate";
+
+export {
   appendLedgerEntry,
   readLedger,
   computeStats,

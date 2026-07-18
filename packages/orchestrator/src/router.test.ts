@@ -23,6 +23,16 @@ describe("assignAgents (lead ≠ worker)", () => {
     const assign = assignAgents(p, "claude", "codex");
     expect([...assign.values()].some((a) => a !== "claude")).toBe(true);
   });
+
+  it("assigns a review to an agent other than the implementation author", () => {
+    const p = plan([
+      { id: "T1", title: "implement", kind: "implementation", risk: "low" },
+      { id: "T2", title: "review", kind: "review", risk: "low", dependencies: ["T1"] },
+    ]);
+    const assign = assignAgents(p, "claude", "codex");
+    expect(assign.get("T1")).toBe("codex");
+    expect(assign.get("T2")).toBe("claude");
+  });
 });
 
 describe("topologicalOrder", () => {

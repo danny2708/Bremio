@@ -39,7 +39,7 @@ describe("mapCodexLine (real codex --json shapes)", () => {
       '{"type":"item.completed","item":{"type":"command_execution","command":"ls -a","exit_code":0}}',
       "r1",
     );
-    expect(end).toMatchObject({ type: "tool_result", name: "shell", ok: true });
+    expect(end).toMatchObject({ type: "tool_result", name: "shell", ok: true, exitCode: 0 });
   });
 
   it("maps turn.completed usage to a usage event", () => {

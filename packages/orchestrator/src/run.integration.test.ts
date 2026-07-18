@@ -50,7 +50,7 @@ abstract class BaseMock implements AgentAdapter {
   async cancelRun(): Promise<void> {}
 }
 
-/** Lead: returns a 2-task plan when planning; completes plainly for the analysis task. */
+/** Lead: plans implementation + quality gates, analyzes, and independently reviews. */
 class MockLead extends BaseMock {
   readonly id = "claude";
   readonly provider = "anthropic";
@@ -72,6 +72,22 @@ class MockLead extends BaseMock {
             dependencies: ["TASK-001"],
             requiredCapabilities: ["repository.write"],
           },
+          {
+            id: "TASK-003",
+            title: "Verify GREETING.txt",
+            kind: "test",
+            risk: "low",
+            dependencies: ["TASK-002"],
+            requiredCapabilities: ["shell", "test"],
+          },
+          {
+            id: "TASK-004",
+            title: "Independently review GREETING.txt",
+            kind: "review",
+            risk: "low",
+            dependencies: ["TASK-003"],
+            requiredCapabilities: ["repository.read", "review"],
+          },
         ],
       };
       yield {
@@ -79,6 +95,20 @@ class MockLead extends BaseMock {
         runId: req.runId,
         ts,
         outcome: { status: "completed", finalText: JSON.stringify(plan) },
+      };
+    } else if (req.role === "reviewer") {
+      const implementationPresent = existsSync(path.join(req.cwd, "GREETING.txt"));
+      const review = {
+        summary: implementationPresent ? "Independent review passed." : "Implementation missing.",
+        findings: implementationPresent
+          ? []
+          : [{ severity: "blocker", message: "GREETING.txt is missing", status: "open" }],
+      };
+      yield {
+        type: "completed",
+        runId: req.runId,
+        ts,
+        outcome: { status: "completed", finalText: JSON.stringify(review), structured: review },
       };
     } else {
       yield { type: "message", runId: req.runId, ts, role: "assistant", text: "Analysis: looks fine." };
@@ -92,7 +122,7 @@ class MockLead extends BaseMock {
   }
 }
 
-/** Worker: writes a file into its worktree, optionally waiting so it can be cancelled. */
+/** Worker: writes the implementation or executes the read-only test gate. */
 class MockWorker extends BaseMock {
   readonly id = "codex";
   readonly provider = "openai";
@@ -102,8 +132,15 @@ class MockWorker extends BaseMock {
   async *startRun(req: AgentRunRequest): AsyncIterable<AgentEvent> {
     const ts = Date.now();
     yield { type: "started", runId: req.runId, ts };
-    yield { type: "tool_use", runId: req.runId, ts, name: "shell", input: { command: "echo hi" } };
-    await fs.writeFile(path.join(req.cwd, "GREETING.txt"), "hello from codex\n");
+    if (req.role === "tester") {
+      const command = "node -e verify-GREETING";
+      const ok = existsSync(path.join(req.cwd, "GREETING.txt"));
+      yield { type: "tool_use", runId: req.runId, ts, name: "shell", input: { command } };
+      yield { type: "tool_result", runId: req.runId, ts, name: "shell", ok, exitCode: ok ? 0 : 1 };
+    } else {
+      yield { type: "tool_use", runId: req.runId, ts, name: "shell", input: { command: "echo hi" } };
+      await fs.writeFile(path.join(req.cwd, "GREETING.txt"), "hello from codex\n");
+    }
     if (this.delayMs > 0) {
       await new Promise<void>((resolve) => {
         if (req.signal?.aborted) return resolve();
@@ -119,7 +156,10 @@ class MockWorker extends BaseMock {
       type: "completed",
       runId: req.runId,
       ts: Date.now(),
-      outcome: { status: cancelled ? "cancelled" : "completed", finalText: "Created GREETING.txt" },
+        outcome: {
+          status: cancelled ? "cancelled" : "completed",
+          finalText: req.role === "tester" ? "Verified GREETING.txt" : "Created GREETING.txt",
+        },
     };
   }
 }
@@ -154,8 +194,8 @@ describe("runBremio end-to-end (mock adapters)", () => {
       registry,
     });
 
-    // one prompt -> valid plan -> 2 tasks aggregated into one report
-    expect(report.tasks).toHaveLength(2);
+    // one prompt -> valid plan -> implementation + test + independent review
+    expect(report.tasks).toHaveLength(4);
 
     // ≥1 task handed to a DIFFERENT agent than the lead
     const impl = report.tasks.find((t) => t.task.id === "TASK-002");
@@ -177,7 +217,19 @@ describe("runBremio end-to-end (mock adapters)", () => {
     expect(existsSync(impl?.result.logsPath ?? "")).toBe(true);
     expect(existsSync(path.join(report.runDir, "report.json"))).toBe(true);
 
-    expect(report.summary.completed).toBe(2);
+    // dependent gates inherit the implementation branch instead of testing HEAD
+    const test = report.tasks.find((t) => t.task.id === "TASK-003");
+    expect(test?.result.status).toBe("completed");
+    expect(test?.result.tests.at(-1)?.exitCode).toBe(0);
+    expect(existsSync(path.join(test?.result.worktreePath ?? "", "GREETING.txt"))).toBe(true);
+
+    const review = report.tasks.find((t) => t.task.id === "TASK-004");
+    expect(review?.agentId).toBe("claude");
+    expect(review?.agentId).not.toBe(impl?.agentId);
+    expect(review?.result.status).toBe("completed");
+    expect(report.qualityGate.status).toBe("passed");
+
+    expect(report.summary.completed).toBe(4);
     expect(report.summary.filesChanged).toBe(1);
   });
 

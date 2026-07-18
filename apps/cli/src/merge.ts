@@ -88,6 +88,16 @@ export async function mergeCommand(opts: MergeCommandOptions): Promise<number> {
   }
   const { report, tasks } = resolved;
 
+  if (!report.qualityGate || report.qualityGate.status !== "passed") {
+    const status = report.qualityGate?.status ?? "missing";
+    console.error(c.red(`error: quality gate is ${status}; refusing to merge.`));
+    for (const reason of report.qualityGate?.reasons ?? []) {
+      console.error(c.red(`  - ${reason}`));
+    }
+    console.error(c.dim("  inspect the run report and rerun failed/missing test or review tasks."));
+    return 2;
+  }
+
   const mgr = new MergeManager(opts.repoPath);
   const current = await mgr.currentBranch();
   const base = opts.base ?? report.baseBranch ?? current;

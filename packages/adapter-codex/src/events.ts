@@ -94,7 +94,17 @@ function mapItem(
     const exit = Number(item.exit_code);
     const ok = Number.isFinite(exit) ? exit === 0 : true;
     const detail = firstString(item.aggregated_output as string, item.output as string, command);
-    return [{ type: "tool_result", runId, ts, name: "shell", ok, ...(detail ? { detail } : {}) }];
+    return [
+      {
+        type: "tool_result",
+        runId,
+        ts,
+        name: "shell",
+        ok,
+        ...(Number.isFinite(exit) ? { exitCode: exit } : {}),
+        ...(detail ? { detail } : {}),
+      },
+    ];
   }
   if (itemType.includes("file") || itemType.includes("patch")) {
     return completed ? [{ type: "tool_use", runId, ts, name: "edit", input: item }] : [];

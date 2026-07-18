@@ -1,4 +1,5 @@
 import type { Plan, Task, TaskResult } from "@bremio/protocol";
+import { evaluateQualityGate, type QualityGateResult } from "./quality-gate";
 
 export interface RunReportTask {
   task: Task;
@@ -17,6 +18,7 @@ export interface RunReport {
   baseBranch?: string;
   plan: Plan;
   tasks: RunReportTask[];
+  qualityGate: QualityGateResult;
   summary: {
     total: number;
     completed: number;
@@ -58,6 +60,7 @@ export function buildReport(input: BuildReportInput): RunReport {
     cancelled: input.results.filter((r) => r.status === "cancelled").length,
     filesChanged: new Set(input.results.flatMap((r) => r.filesChanged)).size,
   };
+  const qualityGate = evaluateQualityGate(input.plan, tasks);
 
   return {
     runId: input.runId,
@@ -69,6 +72,7 @@ export function buildReport(input: BuildReportInput): RunReport {
     ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
     plan: input.plan,
     tasks,
+    qualityGate,
     summary,
   };
 }

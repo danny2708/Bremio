@@ -87,12 +87,22 @@ export function printReport(report: RunReport): void {
   }
 
   const s = report.summary;
+  const gate = report.qualityGate;
   console.log(`\n${line}`);
   console.log(
     ` ${c.bold("Summary")}: ${c.green(`${s.completed} completed`)}, ` +
       `${c.red(`${s.failed} failed`)}, ${c.yellow(`${s.cancelled} cancelled`)} ` +
       `— ${s.filesChanged} file(s) changed across ${s.total} task(s)`,
   );
+  if (gate) {
+    const gateText = gate.status === "passed"
+      ? c.green("passed")
+      : gate.status === "failed"
+        ? c.red("failed")
+        : c.yellow("not run");
+    console.log(` ${c.bold("Quality gate")}: ${gateText}`);
+    for (const reason of gate.reasons) console.log(`   ${c.red(`- ${reason}`)}`);
+  }
   console.log(` report:    ${c.dim(rel(path.join(report.runDir, "report.json")))}`);
   console.log(
     ` ${c.dim("worktrees left under .bremio/worktrees/ for manual review (no auto-merge)")}`,

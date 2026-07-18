@@ -4,6 +4,7 @@ import { TaskLog, type WorktreeManager } from "@bremio/workspace";
 import { appendLedgerEntry } from "./ledger";
 import { permissionForKind, roleForKind, topologicalOrder } from "./router";
 import { buildTaskPrompt } from "./plan-schema";
+import { parseReviewOutput, reviewOutputJsonSchema } from "./quality-gate";
 import { collectRun } from "./stream";
 
 export interface SchedulerHooks {
@@ -42,15 +43,27 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
   for (const task of ordered) {
     const agentId = opts.assign.get(task.id) ?? task.preferredAgents[0] ?? "";
     const adapter = opts.registry.get(agentId);
+    const dependencyResults = task.dependencies.map((id) => results.find((r) => r.taskId === id));
+    const blockedDependencies = dependencyResults.filter((r) => !r || r.status !== "completed");
 
     let result: TaskResult;
     if (opts.signal?.aborted) {
       result = cancelledResult(task, agentId, "run cancelled before this task started");
+    } else if (blockedDependencies.length > 0) {
+      const ids = task.dependencies.filter((_, index) => blockedDependencies.includes(dependencyResults[index]));
+      result = failedResult(task, agentId, `blocked by unsuccessful dependencies: ${ids.join(", ")}`);
     } else if (!adapter) {
       result = failedResult(task, agentId, `no adapter registered for "${agentId}"`);
     } else {
       opts.hooks?.onTaskStart?.(task, agentId);
-      result = await runOneTask(task, agentId, adapter, opts);
+      const dependencyRefs = dependencyResults
+        .map((r) => r?.branch)
+        .filter((branch): branch is string => Boolean(branch));
+      try {
+        result = await runOneTask(task, agentId, adapter, opts, dependencyRefs);
+      } catch (err) {
+        result = failedResult(task, agentId, `task setup or execution failed: ${(err as Error).message}`);
+      }
       opts.hooks?.onTaskComplete?.(result);
     }
 
@@ -86,9 +99,14 @@ async function runOneTask(
   agentId: string,
   adapter: AgentAdapter,
   opts: RunPlanOptions,
+  dependencyRefs: string[],
 ): Promise<TaskResult> {
   const started = Date.now();
-  const worktree = await opts.workspace.create(task.id, agentId);
+  const worktree = await opts.workspace.create(
+    task.id,
+    agentId,
+    dependencyRefs.length > 0 ? dependencyRefs : "HEAD",
+  );
   const log = new TaskLog(opts.runDir, `${task.id}-${agentId}`);
   log.line(`# Task ${task.id} (${task.kind}) — agent=${agentId} branch=${worktree.branch}`);
 
@@ -100,6 +118,7 @@ async function runOneTask(
       prompt: buildTaskPrompt(opts.plan, task),
       cwd: worktree.path,
       permission,
+      ...(task.kind === "review" ? { outputSchema: reviewOutputJsonSchema } : {}),
       maxTurns: opts.maxTurns ?? 40,
       ...(opts.signal ? { signal: opts.signal } : {}),
     }),
@@ -112,27 +131,53 @@ async function runOneTask(
   const collected = await opts.workspace.collect(worktree);
   await log.close();
 
-  const summary =
+  let status = run.outcome.status;
+  let error = run.outcome.error;
+  let findings = [] as TaskResult["findings"];
+  const tests = task.kind === "test" ? run.tests : [];
+  let summary =
     run.outcome.finalText?.trim() ||
     run.assistantText ||
     `${task.title} — no summary produced`;
 
+  if (task.kind === "test" && status === "completed") {
+    const finalTest = tests.at(-1);
+    if (!finalTest) {
+      status = "failed";
+      error = "test task completed without shell test evidence";
+    } else if (finalTest.exitCode !== 0) {
+      status = "failed";
+      error = `final test command exited ${finalTest.exitCode}: ${finalTest.command}`;
+    }
+  }
+
+  if (task.kind === "review" && status === "completed") {
+    const review = parseReviewOutput(run);
+    if (review.ok) {
+      summary = review.summary;
+      findings = review.findings;
+    } else {
+      status = "failed";
+      error = `review output invalid: ${review.error}`;
+    }
+  }
+
   return {
     taskId: task.id,
     agentId,
-    status: run.outcome.status,
+    status,
     summary,
     filesChanged: collected.filesChanged,
     commandsExecuted: run.commands,
-    tests: [],
-    findings: [],
+    tests,
+    findings,
     ...(collected.commitHash ? { commitHash: collected.commitHash } : {}),
     ...(run.outcome.sessionId ? { sessionId: run.outcome.sessionId } : {}),
     branch: worktree.branch,
     worktreePath: worktree.path,
     logsPath: log.path,
     durationMs: Date.now() - started,
-    ...(run.outcome.error ? { error: run.outcome.error } : {}),
+    ...(error ? { error } : {}),
   };
 }
 

@@ -51,6 +51,8 @@ export const ToolResultEventSchema = z.object({
   ...base,
   name: z.string(),
   ok: z.boolean(),
+  /** Provider-reported process exit code when the tool was a shell command. */
+  exitCode: z.number().int().optional(),
   detail: z.string().optional(),
 });
 

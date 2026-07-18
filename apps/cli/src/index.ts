@@ -169,7 +169,12 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     if (json) console.log(JSON.stringify(report, null, 2));
     else printReport(report);
 
-    process.exitCode = report.summary.failed > 0 || report.tasks.length === 0 ? 1 : 0;
+    process.exitCode =
+      report.summary.failed > 0 ||
+      report.tasks.length === 0 ||
+      report.qualityGate.status !== "passed"
+        ? 1
+        : 0;
   } catch (err) {
     if (err instanceof PlanValidationError) {
       console.error(c.red("\nPlan validation failed:"));

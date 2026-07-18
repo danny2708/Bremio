@@ -65,7 +65,7 @@ export class WorktreeManager {
   async create(
     taskId: string,
     agentId: string,
-    baseRef = "HEAD",
+    baseRefs: string | string[] = "HEAD",
   ): Promise<TaskWorktree> {
     const leaf = `${taskId}-${agentId}`;
     let branch = `bremio/${leaf}`;
@@ -79,9 +79,26 @@ export class WorktreeManager {
 
     const dir = path.join(this.worktreesRoot, dirLeaf);
     await fs.mkdir(this.worktreesRoot, { recursive: true });
-    await this.repo.raw(["worktree", "add", "-b", branch, dir, baseRef]);
+    const refs = (Array.isArray(baseRefs) ? baseRefs : [baseRefs]).filter(Boolean);
+    const primaryRef = refs[0] ?? "HEAD";
+    await this.repo.raw(["worktree", "add", "-b", branch, dir, primaryRef]);
 
-    return { taskId, agentId, branch, path: dir };
+    const worktree = { taskId, agentId, branch, path: dir };
+    if (refs.length <= 1) return worktree;
+
+    const git = simpleGit(dir);
+    try {
+      for (const ref of refs.slice(1)) {
+        await git.raw(["merge", "--no-ff", "--no-edit", ref]);
+      }
+      return worktree;
+    } catch (err) {
+      await git.raw(["merge", "--abort"]).catch(() => {});
+      await this.remove(worktree).catch(() => {});
+      throw new Error(
+        `could not integrate dependency branches for ${taskId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   /**
