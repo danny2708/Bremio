@@ -1,5 +1,10 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { extractJsonObject, parsePlan } from "./lead-manager";
+import type { AgentAdapter, AgentRunRequest } from "@bremio/adapter-sdk";
+import type { AgentEvent } from "@bremio/protocol";
+import { createPlan, extractJsonObject, parsePlan } from "./lead-manager";
 import type { CollectedRun } from "./stream";
 
 function run(finalText?: string, structured?: unknown): CollectedRun {
@@ -61,5 +66,43 @@ describe("parsePlan", () => {
   it("reports an error for an unparseable plan", () => {
     const result = parsePlan(run("definitely not a plan"), "codex");
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("createPlan", () => {
+  it("preserves a provider failure and does not waste a schema-repair retry", async () => {
+    let attempts = 0;
+    const providerError = "You've hit your session limit · resets 2:20pm (Asia/Saigon)";
+    const adapter = {
+      id: "claude",
+      provider: "anthropic",
+      async *startRun(req: AgentRunRequest): AsyncGenerator<AgentEvent> {
+        attempts += 1;
+        const ts = Date.now();
+        yield { type: "started", runId: req.runId, ts };
+        yield { type: "message", runId: req.runId, ts, role: "assistant", text: providerError };
+        yield {
+          type: "completed",
+          runId: req.runId,
+          ts,
+          outcome: { status: "failed", error: providerError },
+        };
+      },
+    } as unknown as AgentAdapter;
+    const runDir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-lead-error-"));
+
+    try {
+      await expect(
+        createPlan(adapter, {
+          prompt: "add a greeting",
+          cwd: runDir,
+          runDir,
+          runId: "run-provider-failure",
+        }),
+      ).rejects.toThrow(`Lead "claude" failed during planning: ${providerError}`);
+      expect(attempts).toBe(1);
+    } finally {
+      await fs.rm(runDir, { recursive: true, force: true });
+    }
   });
 });

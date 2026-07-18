@@ -47,6 +47,7 @@ export async function createPlan(
 
   try {
     const first = await runLead(lead, opts, buildPlanningPrompt(opts.prompt), `${opts.runId}-plan-1`, log);
+    assertLeadRunCompleted(first, lead.id);
     const parsed1 = parsePlan(first, lead.id);
     if (parsed1.ok) return { plan: parsed1.plan, logsPath: log.path, attempts: 1 };
 
@@ -58,6 +59,7 @@ export async function createPlan(
       `${opts.runId}-plan-2`,
       log,
     );
+    assertLeadRunCompleted(second, lead.id);
     const parsed2 = parsePlan(second, lead.id);
     if (parsed2.ok) return { plan: parsed2.plan, logsPath: log.path, attempts: 2 };
 
@@ -67,6 +69,23 @@ export async function createPlan(
   } finally {
     await log.close();
   }
+}
+
+/**
+ * Schema repair is useful only when a provider completed successfully but
+ * returned malformed output. Provider failures (quota, auth, cancellation,
+ * runtime errors) must retain their real cause and must not spend a retry.
+ */
+function assertLeadRunCompleted(run: CollectedRun, leadId: string): void {
+  if (run.outcome.status === "completed") return;
+
+  const detail = [run.outcome.finalText, run.outcome.error, run.assistantText]
+    .map((value) => value?.trim())
+    .find((value) => value);
+  const status = run.outcome.status === "cancelled" ? "was cancelled" : "failed";
+  throw new LeadPlanError(
+    `Lead "${leadId}" ${status} during planning${detail ? `: ${detail}` : "."}`,
+  );
 }
 
 async function runLead(
