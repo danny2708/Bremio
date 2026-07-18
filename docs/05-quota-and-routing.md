@@ -20,18 +20,18 @@ and read-only. `bremio quota [--db <path>] [--stale-after <minutes>]` exposes th
 normalized result for calibration. The default database is under
 `%LOCALAPPDATA%/aiquotatray/AI Quota Tray/data/quota-history.sqlite3`.
 
-This slice deliberately does **not** affect routing yet. Unsupported schema
-versions are rejected, and disabled/errored providers, missing buckets, or any
-quota window older than 30 minutes normalize to `unknown`. This fail-closed
-behavior prevents a fresh short window from hiding a stale longer-term limit.
+Routing remains disabled by default. `bremio run --capacity-routing` explicitly
+enables the conservative 4C safety slice. Unsupported schema versions are
+rejected, and disabled/errored providers, missing buckets, or old quota windows
+remain unknown/low-confidence signals rather than hard exclusions.
 
 ### Coverage audit
 
 | Agent | Already available through AQT SQLite | Gap in Bremio |
 |---|---|---|
-| Claude Code | 5-hour and 7-day windows from the opt-in status-line bridge | No Capacity card/open-native-usage action; extra windows such as "Weekly Fable" are not currently whitelisted by AQT and must remain absent until a structured source is verified. |
-| Codex | Every `rateLimitsByLimitId` entry, including primary/secondary windows and optional individual limits | No Capacity card or router consumption. Multiple windows are already preserved and must not be collapsed to one value. |
-| Antigravity | One bucket per model from `clientModelConfigs[].quotaInfo`, with remaining fraction and reset time | No Capacity card or model-aware router consumption. Routing must score the selected model bucket, not take the minimum across unrelated models. |
+| Claude Code | 5-hour and 7-day windows from the opt-in status-line bridge | No graphical Capacity card/open-native-usage action; extra windows such as "Weekly Fable" are not currently whitelisted by AQT and must remain absent until a structured source is verified. |
+| Codex | Every `rateLimitsByLimitId` entry, including primary/secondary windows and optional individual limits | Multiple windows are preserved and the 4C evaluator uses their minimum remaining percentage. |
+| Antigravity | One bucket per model from `clientModelConfigs[].quotaInfo`, with remaining fraction and reset time | The CLI displays every bucket and the evaluator is model-aware, but routing stays disabled until each display key maps to a verified provider model id. |
 
 AQT currently persists Antigravity's display-derived bucket key, not a verified
 provider model id. Bremio therefore marks those windows as model-scoped but
@@ -231,10 +231,9 @@ routing:
   unknownQuotaPenalty: 10
 ```
 
-The current observation-only normalizer uses fixed thresholds of 25%/10%/0%
-for limited/critical/exhausted. Before router integration, move thresholds to
-configuration and test the 50%/20%/5% policy above. Capacity cards should show
-raw percentages regardless of the configured label.
+The AQT observation normalizer retains source labels for display. The router
+independently applies a validated, overrideable 50%/20%/5% policy; raw
+percentages remain unchanged in Capacity output.
 
 Router rules:
 
@@ -302,11 +301,19 @@ telemetry and are never converted into quota percentage.
 
 ### 4C — Router integration
 
-- [ ] Add configurable thresholds and lead reserve.
-- [ ] Apply hard exclusion only to fresh, sufficiently confident exhaustion.
-- [ ] Apply soft penalties to unknown/low-confidence/stale data.
+- [x] Add programmatically configurable thresholds and lead reserve with
+      validated 50%/20%/5% and 15% defaults.
+- [x] Apply hard exclusion only to fresh, high-confidence exhaustion.
+- [x] Apply soft penalties to unknown/low-confidence/stale data. The default
+      10-point penalty cannot erase the established 25-point task-role
+      preference; trusted critical capacity can trigger a healthy fallback.
 - [ ] Select Antigravity capacity by candidate model and Codex capacity by all
-      applicable rate-limit windows.
+      applicable rate-limit windows. The evaluator implements both rules and
+      Codex is wired; Antigravity remains blocked on verified model-id mapping.
+
+The safety router is opt-in through `bremio run --capacity-routing`. This is a
+calibration guard: normal runs retain the proven deterministic router until the
+ledger has enough evidence to enable optimization automatically.
 
 ## Build order for this section
 1. Ledger first (log the cost of every run, even before smart routing exists).

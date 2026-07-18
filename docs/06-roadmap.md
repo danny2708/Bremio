@@ -68,13 +68,13 @@ invariant.
 **Early slices shipped:** a measurement-only ledger and `bremio stats` that
 preserve provider-reported task and lead-planning token/cost usage without
 estimation (including failed planning attempts), plus a
-read-only schema-v1 AI-Quota-Tray SQLite consumer and `bremio quota`. Stale,
-missing, errored, disabled, or unsupported quota fails closed rather than
-influencing routing. Quota-aware routing, kill-switch, and `net_gain`
-enforcement are not implemented yet; confirmed model ids are preserved when a
-provider exposes them, but unreported worker defaults and the outcome baseline
-remain incomplete before efficiency claims. Router wiring waits for fresh AQT
-data and calibration.
+read-only schema-v1 AI-Quota-Tray SQLite consumer and `bremio quota`. The first
+quota-aware safety router is available only through explicit opt-in; stale,
+missing, errored, disabled, or unsupported quota cannot hard-exclude an agent.
+Automatic optimization, the kill-switch, and `net_gain` enforcement are not
+implemented yet; confirmed model ids are preserved when a provider exposes
+them, but unreported worker defaults and the outcome baseline remain incomplete
+before efficiency claims.
 
 **Capacity sub-roadmap:**
 
@@ -105,6 +105,14 @@ windows now carry explicit freshness. Confidence degrades as data ages while
 last-known values remain visible; the CLI shows per-window update timestamps
 and suppresses low-capacity alerts for stale, unknown, or low-confidence data.
 AQT-owned polling remains open.
+
+**4C routing status (2026-07-18):** a conservative, opt-in safety router is
+available through `bremio run --capacity-routing`. It applies configurable
+50%/20%/5% bands, protects a 15% lead reserve, uses the minimum across Codex
+account windows, hard-excludes only fresh high-confidence exhaustion, and
+treats stale/unknown/low-confidence data as a soft signal. Automatic enablement
+remains behind ledger calibration. Antigravity routing remains blocked until
+AQT exposes or Bremio can explicitly map verified provider model ids.
 
 ## Phase 5 — Parallel + VS Code extension
 Run tasks in parallel (PQueue/BullMQ), panel UI. UI is just a surface; the

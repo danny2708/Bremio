@@ -18,8 +18,8 @@ early Phase-4 measurement/quota slices — Claude (Agent SDK) + Codex
 scheduler, dependency-aware git-worktree isolation, independent review,
 exit-code-backed test evidence, review-gated merge, and the CLI. Full design
 lives in [`docs/`](docs/); start at [`docs/README.md`](docs/README.md). Still out
-of scope (see [`docs/06`](docs/06-roadmap.md)): Antigravity, quota-aware routing,
-parallelism, dashboard.
+of scope (see [`docs/06`](docs/06-roadmap.md)): Antigravity execution,
+automatically enabled/calibrated quota optimization, parallelism, dashboard.
 
 ## Quickstart
 Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
@@ -52,6 +52,9 @@ corepack pnpm bremio stats --repo /path/to/repo
 # inspect normalized AQT capacity with per-window freshness (read-only)
 corepack pnpm bremio capacity --aging-after 15 --stale-after 30
 
+# explicitly enable the conservative Phase-4C safety router for a run
+corepack pnpm bremio run --capacity-routing --lead codex --repo /path/to/repo "fix the failing test"
+
 # explicit real-provider smoke (consumes quota; defaults to both lead directions)
 corepack pnpm smoke:providers --lead both --timeout 600
 ```
@@ -75,8 +78,8 @@ up the worktree + branch; conflicts abort cleanly. Test/review tasks inherit
 their dependency branches, so they inspect the implementation rather than HEAD.
 `--strategy cherry-pick` instead applies each task-owned `commitHash` in plan
 order, excluding inherited dependency history; conflicts also abort cleanly.
-Every task also appends a line to `.bremio/ledger.jsonl` (measurement only, no
-routing yet), including provider-reported task and lead-planning token/cost
+Every task also appends a line to `.bremio/ledger.jsonl`, including
+provider-reported task and lead-planning token/cost
 usage plus requested/provider-confirmed model and reasoning identity when
 available, summarized by
 `bremio stats [--since <date>]`.
@@ -86,7 +89,10 @@ planning failure. Missing usage remains unknown; no price is estimated.
 reads AI-Quota-Tray's schema-v1 SQLite database in read-only mode. Unsupported
 schema versions are rejected. Aging snapshots lose confidence, while stale,
 disabled, or errored providers normalize to `unknown` without dropping their
-last-known values. Quota is not yet used by the router.
+last-known values. `bremio run --capacity-routing` opts into the conservative
+Phase-4C safety slice: only fresh, high-confidence exhaustion can prohibit an
+agent; stale/unknown data is a soft penalty and preserves established routing.
+This remains opt-in until ledger calibration supports automatic optimization.
 
 ## Packages
 `protocol` (Zod contracts) · `adapter-sdk` (the `AgentAdapter` interface) ·

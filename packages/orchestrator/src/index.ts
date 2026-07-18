@@ -19,9 +19,11 @@ export { validatePlan, PlanValidationError } from "./validator";
 
 export {
   assignAgents,
+  CapacityRoutingError,
   topologicalOrder,
   roleForKind,
   permissionForKind,
+  type AssignAgentsOptions,
 } from "./router";
 
 export { runPlan, type RunPlanOptions, type SchedulerHooks } from "./scheduler";

@@ -12,7 +12,13 @@ import {
   type RunBremioHooks,
 } from "@bremio/orchestrator";
 import type { ReasoningLevel } from "@bremio/protocol";
-import { DEFAULT_STALE_AFTER_SECONDS } from "@bremio/quota";
+import {
+  DEFAULT_STALE_AFTER_SECONDS,
+  defaultAqtDatabasePath,
+  readAqtQuota,
+  toAqtCapacitySnapshots,
+  type AgentCapacitySnapshot,
+} from "@bremio/quota";
 import { mergeCommand } from "./merge";
 import { quotaCommand } from "./quota";
 import { statsCommand } from "./stats";
@@ -35,6 +41,8 @@ ${c.bold("run")}      plan + delegate + execute in isolated worktrees (left for 
   --model <id>            Model for the lead's planning run (optional).
   --reasoning <level>     Lead reasoning: low, medium, high, or xhigh.
   --timeout <seconds>      Hard timeout for each lead attempt and worker task.
+  --capacity-routing      Opt in to conservative AQT-backed capacity routing.
+  --db <path>             Override the AQT database used for capacity routing.
   --json                  Print the report as JSON (suppresses progress).
   --verbose               Emit structured operational logs to stderr.
 
@@ -73,6 +81,7 @@ function parseCli() {
       db: { type: "string" },
       "aging-after": { type: "string" },
       "stale-after": { type: "string" },
+      "capacity-routing": { type: "boolean", default: false },
       json: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
@@ -132,6 +141,10 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   if (values.reasoning && !reasoningLevels.has(values.reasoning as ReasoningLevel)) {
     errors.push("--reasoning must be 'low', 'medium', 'high', or 'xhigh'");
   }
+  const capacityTiming = parseCapacityTiming(values);
+  if (values["capacity-routing"] && capacityTiming.error) {
+    errors.push(capacityTiming.error);
+  }
   if (errors.length) {
     for (const e of errors) console.error(c.red(`error: ${e}`));
     console.log(`\n${USAGE}`);
@@ -150,6 +163,9 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   const json = values.json === true;
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
   const registry = createRegistry([new ClaudeAdapter(), new CodexAdapter()]);
+  const capacitySnapshots = values["capacity-routing"]
+    ? readRoutingCapacity(values, capacityTiming)
+    : undefined;
 
   // Cancellation: first Ctrl+C aborts the run; a second forces exit.
   const ac = new AbortController();
@@ -200,6 +216,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         ? { reasoningLevel: values.reasoning as ReasoningLevel }
         : {}),
       ...(timeoutSeconds !== undefined ? { taskTimeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
+      ...(capacitySnapshots ? { capacitySnapshots } : {}),
     });
 
     if (json) console.log(JSON.stringify(report, null, 2));
@@ -272,6 +289,29 @@ async function statsCommandFromCli(values: Values): Promise<number> {
 }
 
 function quotaCommandFromCli(values: Values): number {
+  const timing = parseCapacityTiming(values);
+  if (timing.error) {
+    console.error(c.red(`error: ${timing.error}`));
+    return 2;
+  }
+  return quotaCommand({
+    ...(values.db ? { databasePath: path.resolve(values.db) } : {}),
+    ...(timing.staleAfterSeconds !== undefined
+      ? { staleAfterSeconds: timing.staleAfterSeconds }
+      : {}),
+    ...(timing.agingAfterSeconds !== undefined
+      ? { agingAfterSeconds: timing.agingAfterSeconds }
+      : {}),
+  });
+}
+
+interface CapacityTiming {
+  agingAfterSeconds?: number;
+  staleAfterSeconds?: number;
+  error?: string;
+}
+
+function parseCapacityTiming(values: Values): CapacityTiming {
   const agingMinutes = values["aging-after"] === undefined
     ? undefined
     : Number(values["aging-after"]);
@@ -279,23 +319,55 @@ function quotaCommandFromCli(values: Values): number {
     ? undefined
     : Number(values["stale-after"]);
   if (staleMinutes !== undefined && (!Number.isFinite(staleMinutes) || staleMinutes <= 0)) {
-    console.error(c.red("error: --stale-after must be a positive number of minutes"));
-    return 2;
+    return { error: "--stale-after must be a positive number of minutes" };
   }
   if (agingMinutes !== undefined && (!Number.isFinite(agingMinutes) || agingMinutes <= 0)) {
-    console.error(c.red("error: --aging-after must be a positive number of minutes"));
-    return 2;
+    return { error: "--aging-after must be a positive number of minutes" };
   }
   const effectiveStaleMinutes = staleMinutes ?? DEFAULT_STALE_AFTER_SECONDS / 60;
   if (agingMinutes !== undefined && agingMinutes >= effectiveStaleMinutes) {
-    console.error(c.red("error: --aging-after must be less than --stale-after"));
-    return 2;
+    return { error: "--aging-after must be less than --stale-after" };
   }
-  return quotaCommand({
-    ...(values.db ? { databasePath: path.resolve(values.db) } : {}),
-    ...(staleMinutes !== undefined ? { staleAfterSeconds: staleMinutes * 60 } : {}),
+  return {
     ...(agingMinutes !== undefined ? { agingAfterSeconds: agingMinutes * 60 } : {}),
-  });
+    ...(staleMinutes !== undefined ? { staleAfterSeconds: staleMinutes * 60 } : {}),
+  };
+}
+
+function readRoutingCapacity(
+  values: Values,
+  timing: CapacityTiming,
+): AgentCapacitySnapshot[] {
+  const databasePath = values.db ? path.resolve(values.db) : defaultAqtDatabasePath();
+  if (!databasePath || !existsSync(databasePath)) {
+    console.error(c.yellow("warning: capacity routing has no AQT database; quota stays unknown"));
+    return [];
+  }
+  try {
+    const source = readAqtQuota({
+      databasePath,
+      staleAfterSeconds: timing.staleAfterSeconds ?? DEFAULT_STALE_AFTER_SECONDS,
+    });
+    const snapshots = toAqtCapacitySnapshots(source, {
+      ...(timing.agingAfterSeconds !== undefined
+        ? { agingAfterSeconds: timing.agingAfterSeconds }
+        : {}),
+    });
+    if (snapshots.every((snapshot) =>
+      snapshot.freshness === "stale" ||
+      snapshot.freshness === "unknown" ||
+      snapshot.confidence === "low")) {
+      console.error(
+        c.yellow("warning: all AQT capacity is stale, unknown, or low-confidence; routing stays conservative"),
+      );
+    }
+    return snapshots;
+  } catch (error) {
+    console.error(
+      c.yellow(`warning: capacity routing could not read AQT; quota stays unknown: ${(error as Error).message}`),
+    );
+    return [];
+  }
 }
 
 async function doctor(): Promise<void> {

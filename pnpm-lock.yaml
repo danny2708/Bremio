@@ -98,6 +98,9 @@ importers:
       '@bremio/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@bremio/quota':
+        specifier: workspace:*
+        version: link:../quota
       '@bremio/workspace':
         specifier: workspace:*
         version: link:../workspace

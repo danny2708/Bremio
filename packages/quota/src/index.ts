@@ -32,3 +32,12 @@ export {
   type CapacityFreshnessOptions,
   type AqtQuotaProviderOptions,
 } from "./aqt-provider";
+export {
+  DEFAULT_CAPACITY_ROUTING_POLICY,
+  assessCapacity,
+  resolveCapacityRoutingPolicy,
+  type AssessCapacityOptions,
+  type CapacityAssessment,
+  type CapacityRoutingPolicy,
+  type CapacityRoutingPolicyInput,
+} from "./routing-policy";

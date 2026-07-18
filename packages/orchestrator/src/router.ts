@@ -1,5 +1,32 @@
 import type { AgentRole, Permission } from "@bremio/adapter-sdk";
 import type { Plan, Task, TaskKind } from "@bremio/protocol";
+import {
+  assessCapacity,
+  resolveCapacityRoutingPolicy,
+  type AgentCapacitySnapshot,
+  type CapacityAssessment,
+  type CapacityRoutingPolicy,
+  type CapacityRoutingPolicyInput,
+} from "@bremio/quota";
+
+export interface AssignAgentsOptions {
+  capacityByAgent?: ReadonlyMap<string, AgentCapacitySnapshot>;
+  capacityPolicy?: CapacityRoutingPolicyInput;
+  /** Provider-confirmed model id selected for each candidate agent. */
+  modelByAgent?: ReadonlyMap<string, string>;
+}
+
+export class CapacityRoutingError extends Error {
+  constructor(
+    readonly taskId: string,
+    detail: string,
+  ) {
+    super(`no capacity-eligible agent for ${taskId}: ${detail}`);
+    this.name = "CapacityRoutingError";
+  }
+}
+
+const TASK_ROLE_PREFERENCE_STEP = 25;
 
 /**
  * Phase-1 deterministic router (policy: lead ≠ worker).
@@ -15,31 +42,125 @@ export function assignAgents(
   plan: Plan,
   leadId: string,
   workerId: string,
+  options: AssignAgentsOptions = {},
 ): Map<string, string> {
+  const policy = resolveCapacityRoutingPolicy(options.capacityPolicy);
   const assign = new Map<string, string>();
   for (const t of plan.tasks) {
     if (t.kind === "analysis") {
-      assign.set(t.id, leadId);
+      assign.set(t.id, chooseAgent(t, [leadId, workerId], leadId, options, policy));
       continue;
     }
     if (t.kind === "review") {
       const dependencyAuthors = new Set(
         t.dependencies.map((dependency) => assign.get(dependency)).filter(Boolean),
       );
-      const independent = [leadId, workerId].find((id) => !dependencyAuthors.has(id));
-      assign.set(t.id, independent ?? workerId);
+      const independent = [leadId, workerId].filter((id) => !dependencyAuthors.has(id));
+      assign.set(
+        t.id,
+        chooseAgent(
+          t,
+          independent.length > 0 ? independent : [workerId],
+          leadId,
+          options,
+          policy,
+        ),
+      );
       continue;
     }
-    assign.set(t.id, workerId);
+    assign.set(t.id, chooseAgent(t, [workerId, leadId], leadId, options, policy));
   }
 
   // Delegation guarantee: if nothing landed on the worker, move the last task.
   const someDelegated = [...assign.values()].some((a) => a !== leadId);
-  if (!someDelegated) {
+  if (!someDelegated && workerId !== leadId) {
     const last = plan.tasks[plan.tasks.length - 1];
-    if (last) assign.set(last.id, workerId);
+    const workerAssessment = assessmentFor(workerId, options, policy);
+    const trustedCapacityAvoidance = workerAssessment?.trusted === true &&
+      workerAssessment.scoreAdjustment < 0;
+    if (
+      last &&
+      !trustedCapacityAvoidance &&
+      isCapacityEligible(workerId, last, leadId, options, policy)
+    ) {
+      assign.set(last.id, workerId);
+    }
   }
   return assign;
+}
+
+function chooseAgent(
+  task: Task,
+  orderedCandidates: readonly string[],
+  leadId: string,
+  options: AssignAgentsOptions,
+  policy: CapacityRoutingPolicy,
+): string {
+  const candidates = [...new Set(orderedCandidates)].map((agentId, index) => {
+    const assessment = assessmentFor(agentId, options, policy);
+    const reserveBlocked = isLeadReserveBlocked(agentId, task, leadId, assessment, policy);
+    return {
+      agentId,
+      assessment,
+      reserveBlocked,
+      // Unknown/stale data cannot erase the established role preference, while
+      // a trusted critical penalty can move work to a healthy fallback.
+      score: (orderedCandidates.length - index) * TASK_ROLE_PREFERENCE_STEP +
+        (assessment?.scoreAdjustment ?? 0),
+    };
+  });
+  const eligible = candidates
+    .filter((candidate) => !candidate.assessment?.hardExcluded && !candidate.reserveBlocked)
+    .sort((a, b) => b.score - a.score);
+  if (eligible[0]) return eligible[0].agentId;
+
+  const detail = candidates.map((candidate) => {
+    if (candidate.reserveBlocked) {
+      return `${candidate.agentId} is held for the ${policy.reserveLeadCapacityPercent}% lead reserve`;
+    }
+    return `${candidate.agentId}: ${candidate.assessment?.reason ?? "unavailable"}`;
+  }).join("; ");
+  throw new CapacityRoutingError(task.id, detail);
+}
+
+function isCapacityEligible(
+  agentId: string,
+  task: Task,
+  leadId: string,
+  options: AssignAgentsOptions,
+  policy: CapacityRoutingPolicy,
+): boolean {
+  const assessment = assessmentFor(agentId, options, policy);
+  return !assessment?.hardExcluded &&
+    !isLeadReserveBlocked(agentId, task, leadId, assessment, policy);
+}
+
+function assessmentFor(
+  agentId: string,
+  options: AssignAgentsOptions,
+  policy: CapacityRoutingPolicy,
+): CapacityAssessment | undefined {
+  if (!options.capacityByAgent) return undefined;
+  return assessCapacity(options.capacityByAgent.get(agentId), {
+    policy,
+    ...(options.modelByAgent?.get(agentId)
+      ? { modelId: options.modelByAgent.get(agentId) }
+      : {}),
+  });
+}
+
+function isLeadReserveBlocked(
+  agentId: string,
+  task: Task,
+  leadId: string,
+  assessment: CapacityAssessment | undefined,
+  policy: CapacityRoutingPolicy,
+): boolean {
+  return agentId === leadId &&
+    task.kind !== "analysis" &&
+    assessment?.trusted === true &&
+    assessment.effectiveRemainingPercent !== undefined &&
+    assessment.effectiveRemainingPercent <= policy.reserveLeadCapacityPercent;
 }
 
 /** Order tasks so each task's dependencies come first (Kahn topological sort). */

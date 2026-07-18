@@ -10,6 +10,10 @@ import type {
   Task,
   UsageSummary,
 } from "@bremio/protocol";
+import type {
+  AgentCapacitySnapshot,
+  CapacityRoutingPolicyInput,
+} from "@bremio/quota";
 import { WorktreeManager, getCurrentBranch } from "@bremio/workspace";
 import { buildReport, type RunReport } from "./aggregator";
 import { createPlan, LeadPlanError } from "./lead-manager";
@@ -36,6 +40,11 @@ export interface RunBremioOptions {
   reasoningLevel?: ReasoningLevel;
   /** Hard timeout for each lead attempt and worker task. */
   taskTimeoutMs?: number;
+  /** Optional canonical snapshots used by the opt-in capacity-aware router. */
+  capacitySnapshots?: readonly AgentCapacitySnapshot[];
+  capacityPolicy?: CapacityRoutingPolicyInput;
+  /** Provider-confirmed model id for model-scoped capacity selection. */
+  modelByAgent?: ReadonlyMap<string, string>;
   signal?: AbortSignal;
   logger?: Logger;
   hooks?: RunBremioHooks;
@@ -146,7 +155,14 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
 
   validatePlan(plan, capabilitiesByAgent);
 
-  const assign = assignAgents(plan, leadId, workerId);
+  const capacityByAgent = opts.capacitySnapshots
+    ? new Map(opts.capacitySnapshots.map((snapshot) => [snapshot.agentId, snapshot] as const))
+    : undefined;
+  const assign = assignAgents(plan, leadId, workerId, {
+    ...(capacityByAgent ? { capacityByAgent } : {}),
+    ...(opts.capacityPolicy ? { capacityPolicy: opts.capacityPolicy } : {}),
+    ...(opts.modelByAgent ? { modelByAgent: opts.modelByAgent } : {}),
+  });
   opts.hooks?.onPlan?.(plan, assign);
   logger?.info(
     { assignments: Object.fromEntries(assign) },
