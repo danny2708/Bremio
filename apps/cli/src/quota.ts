@@ -119,17 +119,19 @@ function printCapacity(
     : capacity.status === "unknown"
       ? c.yellow(capacity.status)
       : c.red(capacity.status);
-  const ageSeconds = Math.max(0, readAt - capacity.capturedAt);
-  const age = `${formatAge(ageSeconds)} old`;
-  const freshness = ` | ${capacity.freshness.toUpperCase()}`;
+  const ageSeconds = Math.max(0, readAt - capacity.lastContactAt);
+  // This age is when AQT last reached the provider, not how old the numbers
+  // are — each window carries its own age below. Saying "last contact" keeps
+  // the two apart: a source can be reachable while its values are old.
+  const age = `last contact ${formatAge(ageSeconds)} ago`;
+  const freshness = ` | CONTACT ${capacity.contactFreshness.toUpperCase()}`;
   const sourceUnavailable = capacity.source.confidenceLabel === "unavailable"
     ? " | SOURCE UNAVAILABLE"
     : "";
   console.log(`\n  ${c.bold(AGENT_LABELS[capacity.agentId] ?? capacity.agentId)}  ${status}`);
   console.log(
     `    source: ${capacity.source.name} | ${capacity.source.confidenceLabel}` +
-      ` (${capacity.confidence}) | updated ${new Date(capacity.capturedAt * 1000).toISOString()}` +
-      ` | ${age}${freshness}${sourceUnavailable}`,
+      ` (${capacity.confidence}) | ${age}${freshness}${sourceUnavailable}`,
   );
   if (shouldAlert(capacity)) {
     const alert = `    capacity alert: ${capacity.status}`;
@@ -152,12 +154,17 @@ function printCapacity(
   }
 }
 
+/**
+ * Alert only on data we would act on. Trust is a property of the windows, not
+ * of contact: a reachable source whose numbers are all stale must not raise a
+ * low-capacity alarm. Mirrors `assessCapacity`'s `trusted` rule.
+ */
 export function shouldAlert(capacity: AgentCapacitySnapshot): boolean {
-  return capacity.status !== "healthy" &&
-    capacity.status !== "unknown" &&
-    capacity.freshness !== "stale" &&
-    capacity.freshness !== "unknown" &&
-    capacity.confidence !== "low";
+  const trustedData = capacity.windows.length > 0 &&
+    capacity.windows.every(
+      (window) => window.freshness === "fresh" && window.confidence === "high",
+    );
+  return capacity.status !== "healthy" && capacity.status !== "unknown" && trustedData;
 }
 
 function formatAge(seconds: number): string {

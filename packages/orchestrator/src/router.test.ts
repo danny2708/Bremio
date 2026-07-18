@@ -37,8 +37,8 @@ function capacity(
     status: remainingPercent === 0 ? "exhausted" : "healthy",
     confidence: freshness === "fresh" ? "high" : "low",
     source: { name: "test", confidenceLabel: "official" },
-    capturedAt: 1_000,
-    freshness,
+    lastContactAt: 1_000,
+    contactFreshness: freshness,
     windows: [{
       id: "account",
       label: "Account",

@@ -503,12 +503,16 @@ function readRoutingCapacity(
         ? { agingAfterSeconds: timing.agingAfterSeconds }
         : {}),
     });
-    if (snapshots.every((snapshot) =>
-      snapshot.freshness === "stale" ||
-      snapshot.freshness === "unknown" ||
-      snapshot.confidence === "low")) {
+    // Mirror what the router actually trusts: a fresh, high-confidence WINDOW.
+    // Contact freshness is irrelevant here — a reachable source whose windows
+    // are all stale still leaves routing conservative.
+    const anyTrustedWindow = snapshots.some((snapshot) =>
+      snapshot.windows.some(
+        (window) => window.freshness === "fresh" && window.confidence === "high",
+      ));
+    if (!anyTrustedWindow) {
       console.error(
-        c.yellow("warning: all AQT capacity is stale, unknown, or low-confidence; routing stays conservative"),
+        c.yellow("warning: no AQT capacity window is fresh and high-confidence; routing stays conservative"),
       );
     }
     return snapshots;

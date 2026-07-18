@@ -63,14 +63,32 @@ describe("readAqtQuota", () => {
     expect(() => readAqtQuota({ databasePath })).toThrow(/unsupported AI-Quota-Tray schema/);
   });
 
-  it("fails closed when any quota window is stale", async () => {
+  it("ages a provider by its last successful fetch, not by an unchanged bucket", async () => {
+    // AQT skips the insert when a bucket's value has not changed, so an old
+    // `fetched_at` means "this number has been steady", not "we lost contact".
+    // Provider age must therefore come from `providers.updated_at`.
     const databasePath = await fixture();
     const db = new DatabaseSync(databasePath);
     db.exec(`
       INSERT INTO quota_snapshots VALUES
         ('weekly', 'codex', 'weekly', 'Weekly', 5, 95, '%', 10080, 3000, 1000,
          'Codex app-server', 'official', 'normal');
+      UPDATE providers SET updated_at = 1950 WHERE id = 'codex';
     `);
+    db.close();
+
+    const snapshot = readAqtQuota({ databasePath, staleAfterSeconds: 300, now: 2000 });
+    const codex = snapshot.providers.find((provider) => provider.providerId === "codex");
+    expect(codex).toMatchObject({ status: "healthy", stale: false, ageSeconds: 50 });
+    // The window itself keeps its own, older capture time.
+    const weekly = codex?.buckets.find((bucket) => bucket.bucketId === "weekly");
+    expect(weekly?.fetchedAt).toBe(1000);
+  });
+
+  it("still fails a provider closed once contact itself goes stale", async () => {
+    const databasePath = await fixture();
+    const db = new DatabaseSync(databasePath);
+    db.exec(`UPDATE providers SET updated_at = 1000 WHERE id = 'codex';`);
     db.close();
 
     const snapshot = readAqtQuota({ databasePath, staleAfterSeconds: 300, now: 2000 });

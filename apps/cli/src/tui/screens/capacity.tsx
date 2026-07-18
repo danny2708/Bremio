@@ -104,7 +104,7 @@ export function CapacityScreen(): React.JSX.Element {
       <SourceBanner {...(view.service ? { service: view.service } : {})} />
       <Box marginBottom={1} />
       {view.snapshots.map((snapshot) => {
-        const age = formatAge(Math.max(0, view.readAt - snapshot.capturedAt));
+        const age = formatAge(Math.max(0, view.readAt - snapshot.lastContactAt));
         return (
           <Box key={snapshot.agentId} flexDirection="column" marginBottom={1}>
             <Box>
@@ -114,7 +114,7 @@ export function CapacityScreen(): React.JSX.Element {
               <StatusText status={snapshot.status} />
               <Text color={theme.muted}>
                 {"  "}
-                {snapshot.freshness} · {snapshot.confidence} confidence · {age} old
+                contact {snapshot.contactFreshness} · {snapshot.confidence} confidence · last contact {age} ago
               </Text>
             </Box>
             {snapshot.windows.length === 0 ? (

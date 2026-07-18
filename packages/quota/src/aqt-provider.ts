@@ -84,9 +84,9 @@ export function toAgentCapacitySnapshot(
     };
   });
 
-  const capturedAt = oldestCapture(provider, source.readAt);
-  const freshness = freshnessFor(
-    capturedAt,
+  const lastContactAt = lastContact(provider, source.readAt);
+  const contactFreshness = freshnessFor(
+    lastContactAt,
     source.readAt,
     agingAfterSeconds,
     source.staleAfterSeconds,
@@ -97,13 +97,13 @@ export function toAgentCapacitySnapshot(
     // AQT observes provider quota, not whether an execution agent is busy or idle.
     availability: "unknown",
     status: provider.status,
-    confidence: confidenceFor(provider.confidence, freshness),
+    confidence: confidenceFor(provider.confidence, contactFreshness),
     source: {
       name: provider.sourceName,
       confidenceLabel: provider.confidence,
     },
-    capturedAt,
-    freshness,
+    lastContactAt,
+    contactFreshness,
     windows,
   });
 }
@@ -118,14 +118,23 @@ function unavailableSnapshot(
     status: "unknown",
     confidence: "low",
     source: { name: "AI-Quota-Tray", confidenceLabel: "unavailable" },
-    capturedAt: source.readAt,
-    freshness: "unknown",
+    lastContactAt: source.readAt,
+    contactFreshness: "unknown",
     windows: [],
   });
 }
 
-function oldestCapture(provider: ProviderQuota, fallback: number): number {
-  if (provider.buckets.length === 0) return provider.updatedAt ?? fallback;
+/**
+ * When AQT last successfully reached this provider.
+ *
+ * `providers.updated_at` is written on every successful fetch, whereas a
+ * bucket's `fetched_at` only moves when its value changes — AQT skips the
+ * insert for an unchanged value. Using the buckets here would make a steady
+ * quota look stale immediately after a successful poll.
+ */
+function lastContact(provider: ProviderQuota, fallback: number): number {
+  if (provider.updatedAt !== undefined) return provider.updatedAt;
+  if (provider.buckets.length === 0) return fallback;
   return Math.min(...provider.buckets.map((bucket) => bucket.fetchedAt));
 }
 

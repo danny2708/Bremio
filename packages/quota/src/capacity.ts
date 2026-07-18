@@ -49,9 +49,18 @@ export const AgentCapacitySnapshotSchema = z.object({
     name: z.string().min(1),
     confidenceLabel: z.string().min(1),
   }),
-  /** Unix seconds represented by the oldest constraining window. */
-  capturedAt: z.number().int().nonnegative(),
-  freshness: CapacityFreshnessSchema,
+  /**
+   * Unix seconds when the source last successfully reached this provider —
+   * NOT how old the numbers are. A source can be reachable while its values
+   * are old, so each window carries its own `capturedAt`/`freshness`.
+   */
+  lastContactAt: z.number().int().nonnegative(),
+  /**
+   * Freshness of that contact. Deliberately never used for routing:
+   * `assessCapacity` trusts per-window freshness only, because a reachable
+   * source is not evidence that any particular window is current.
+   */
+  contactFreshness: CapacityFreshnessSchema,
   windows: z.array(QuotaWindowSchema),
 });
 export type AgentCapacitySnapshot = z.infer<typeof AgentCapacitySnapshotSchema>;

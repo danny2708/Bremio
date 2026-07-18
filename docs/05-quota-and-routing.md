@@ -133,6 +133,35 @@ reports `stale-endpoint`, never `live`.
 states whether the source was LIVE or last-known. The TUI Capacity screen
 refreshes on open, every 30s, and on `r`.
 
+### Contact age vs data age (fixed 2026-07-18)
+
+AQT's `persist_snapshots` skips the insert when a bucket's values are
+unchanged, so `quota_snapshots.fetched_at` records when a value *first
+appeared*, not when it was last confirmed. A steady quota (Antigravity buckets
+sitting at 100%) therefore looked days stale moments after a successful poll,
+and Bremio's rule that one stale window fails its whole provider closed turned
+that into a `unknown`/`STALE` card over current data.
+
+Provider-level age now comes from `providers.updated_at`, which AQT writes on
+every successful fetch. Windows keep their own `fetched_at`. The two answer
+different questions and are labelled accordingly: the provider line reads
+`last contact <age> ago`, each window reports its own data age.
+
+This is safe for routing by construction: `assessCapacity` reads only
+`snapshot.windows` — `statusForRemaining` from window percentages and
+`isTrustedWindow` from per-window freshness and confidence. It never reads the
+provider-level `status`, `freshness`, or `confidence`, so this change affects
+reporting only, never agent selection.
+
+**Known limitation.** For Claude the fetch reads a status-line cache file, so a
+successful read moves `updated_at` even when the cached content is old: the
+provider can read fresh contact while every window is stale. The `status` stays
+`unknown` (AQT applies `CLAUDE_STALE_AFTER_SECONDS` itself), and the windows
+show their real ages. Capping provider freshness by the newest window would fix
+this case but would reintroduce the original bug for steady values, since a
+steady quota and an abandoned source are indistinguishable from bucket
+timestamps alone.
+
 ## Compatibility note
 
 The old single-window `AgentAdapter.getQuota()` placeholder has been removed.

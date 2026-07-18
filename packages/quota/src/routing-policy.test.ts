@@ -22,20 +22,52 @@ function window(
   };
 }
 
-function snapshot(windows: QuotaWindow[]): AgentCapacitySnapshot {
+function snapshot(
+  windows: QuotaWindow[],
+  overrides: Partial<AgentCapacitySnapshot> = {},
+): AgentCapacitySnapshot {
   return {
     agentId: "codex",
     availability: "unknown",
     status: "healthy",
     confidence: "high",
     source: { name: "test", confidenceLabel: "official" },
-    capturedAt: 1_000,
-    freshness: "fresh",
+    lastContactAt: 1_000,
+    contactFreshness: "fresh",
     windows,
+    ...overrides,
   };
 }
 
 describe("assessCapacity", () => {
+  // Regression guard for the contact-age/data-age split. Provider-level
+  // freshness now means "the source was reachable", which says nothing about
+  // whether any number is current. If routing ever starts reading it, a
+  // reachable-but-stale provider would be wrongly trusted — and at 4%
+  // remaining that would hard-exclude a real agent on six-day-old data.
+  it("stays fail-closed when contact is fresh but every window is stale", () => {
+    const reachableButStale = snapshot(
+      [window("weekly", 18, { freshness: "stale", confidence: "low" })],
+      { lastContactAt: 9_999, contactFreshness: "fresh", confidence: "high" },
+    );
+
+    const result = assessCapacity(reachableButStale);
+
+    expect(result.trusted).toBe(false);
+    expect(result.hardExcluded).toBe(false);
+    expect(result.scoreAdjustment).toBe(-10);
+    expect(result.reason).toContain("not fresh high-confidence data");
+  });
+
+  it("never hard-excludes on stale windows even when contact is fresh", () => {
+    const exhaustedButStale = snapshot(
+      [window("weekly", 0, { freshness: "stale", confidence: "low" })],
+      { contactFreshness: "fresh", confidence: "high" },
+    );
+
+    expect(assessCapacity(exhaustedButStale).hardExcluded).toBe(false);
+  });
+
   it("uses the minimum across all account rate-limit windows", () => {
     const result = assessCapacity(snapshot([
       window("5-hour", 80),

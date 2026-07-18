@@ -138,13 +138,21 @@ export function readAqtQuota(options: ReadAqtQuotaOptions): AqtQuotaSnapshot {
       const buckets = bucketRows
         .filter((bucket) => bucket.provider_id === provider.id)
         .map(toBucket);
-      // All windows constrain routing. One stale window must fail the provider closed,
-      // even when another window has a recent snapshot.
+      // Provider-level age answers "when did AQT last successfully reach this
+      // provider", which is `providers.updated_at` — written on every
+      // successful fetch. A bucket's `fetched_at` cannot answer it: AQT skips
+      // the insert when a value is unchanged, so a steady quota keeps an old
+      // `fetched_at` and would look stale moments after a successful poll.
+      //
+      // Per-window freshness still comes from each bucket's own `fetched_at`,
+      // and routing trusts only that (see assessCapacity) — so this affects
+      // reporting, never agent selection.
       const oldestFetchedAt = buckets.reduce<number | undefined>(
         (oldest, bucket) => oldest === undefined || bucket.fetchedAt < oldest ? bucket.fetchedAt : oldest,
         undefined,
       );
-      const ageSeconds = oldestFetchedAt === undefined ? undefined : Math.max(0, now - oldestFetchedAt);
+      const lastContactAt = provider.updated_at ?? oldestFetchedAt;
+      const ageSeconds = lastContactAt === undefined ? undefined : Math.max(0, now - lastContactAt);
       const stale = ageSeconds === undefined || ageSeconds > staleAfterSeconds;
       const agentId = AGENT_BY_PROVIDER[provider.id];
       return {

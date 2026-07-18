@@ -78,8 +78,9 @@ describe("AQT capacity mapping", () => {
       availability: "unknown",
       status: "limited",
       confidence: "high",
-      capturedAt: 1_900,
-      freshness: "fresh",
+      // Last successful contact (providers.updated_at), not the oldest bucket.
+      lastContactAt: 1_950,
+      contactFreshness: "fresh",
       source: { name: "Codex app-server", confidenceLabel: "official" },
     });
     expect(snapshot.windows).toHaveLength(2);
@@ -105,8 +106,8 @@ describe("AQT capacity mapping", () => {
       status: "unknown",
       confidence: "low",
       source: { name: "AI-Quota-Tray", confidenceLabel: "unavailable" },
-      capturedAt: 2_000,
-      freshness: "unknown",
+      lastContactAt: 2_000,
+      contactFreshness: "unknown",
       windows: [],
     });
   });
@@ -120,11 +121,21 @@ describe("AQT capacity mapping", () => {
   });
 
   it("degrades high confidence by one level while data is aging", () => {
+    // updatedAt 1950 + 150s aging threshold, so 2150 puts contact into aging.
+    const snapshot = toAgentCapacitySnapshot({ ...SOURCE, readAt: 2_150 }, "codex");
+
+    expect(snapshot).toMatchObject({ contactFreshness: "aging", confidence: "medium" });
+    expect(snapshot.windows[0]).toMatchObject({ freshness: "aging", confidence: "medium" });
+  });
+
+  it("keeps a provider fresh on recent contact even when a window's value is older", () => {
+    // The whole point of the split: a bucket whose number has not moved is not
+    // evidence that contact was lost. Contact (1950) is fresh at 2100 while the
+    // untouched 1900 window has already aged.
     const snapshot = toAgentCapacitySnapshot({ ...SOURCE, readAt: 2_100 }, "codex");
 
-    expect(snapshot).toMatchObject({ freshness: "aging", confidence: "medium" });
+    expect(snapshot).toMatchObject({ contactFreshness: "fresh", confidence: "high" });
     expect(snapshot.windows[0]).toMatchObject({ freshness: "aging", confidence: "medium" });
-    expect(snapshot.windows[1]).toMatchObject({ freshness: "fresh", confidence: "high" });
   });
 
   it("retains last-known values but lowers stale confidence", () => {
@@ -139,7 +150,7 @@ describe("AQT capacity mapping", () => {
     };
     const snapshot = toAgentCapacitySnapshot(staleSource, "codex");
 
-    expect(snapshot).toMatchObject({ status: "unknown", freshness: "stale", confidence: "low" });
+    expect(snapshot).toMatchObject({ status: "unknown", contactFreshness: "stale", confidence: "low" });
     expect(snapshot.windows[0]).toMatchObject({
       remainingPercent: 40,
       freshness: "stale",
