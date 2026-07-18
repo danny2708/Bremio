@@ -48,12 +48,13 @@ expanding.
       against AQT's code).
 - [ ] `agy --help` on the actual machine: confirm `-p`, `--model`, real
       non-TTY behavior.
-- [ ] Where/how AQT writes its quota cache → how Bremio reads it back.
+- [x] Where/how AQT writes its quota cache → confirmed schema-v1 SQLite under
+      AQT's LocalAppData directory; Bremio reads it read-only.
 
 ## Open questions (not yet resolved)
-- [ ] **Q-quota-integration**: read AQT's cache file, or split the
-      official-source logic into a shared package for both projects?
-      (affects coupling)
+- [x] **Q-quota-integration**: read AQT's schema-v1 SQLite cache directly and
+      read-only for the first integration. Reject unknown schema versions and
+      keep it out of routing until fresh-data calibration succeeds.
 - [ ] **Q-lang**: docs/code fully in English going forward, or keep
       Vietnamese + English technical terms?
 - [ ] **Q-baseline**: what exactly measures a task's `outcome` (tests

@@ -12,8 +12,8 @@ aggregates the results back into one place. ROI goal: **get the most out of
 the models with the least quota.**
 
 ## Status
-**Phase 1 (vertical slice) implemented**, plus the Phase-2 quality gate and a
-measurement-only Phase-4 ledger slice — Claude (Agent SDK) + Codex
+**Phase 1 (vertical slice) implemented**, plus the Phase-2 quality gate and
+early Phase-4 measurement/quota slices — Claude (Agent SDK) + Codex
 (`codex exec --json`) as swappable lead/worker, a validator, a sequential
 scheduler, dependency-aware git-worktree isolation, independent review,
 exit-code-backed test evidence, review-gated merge, and the CLI. Full design
@@ -28,7 +28,7 @@ Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
 
 ```sh
 corepack pnpm install
-corepack pnpm test          # 57 tests (incl. quality-gate + timeout E2E runs)
+corepack pnpm test          # 61 tests (incl. quality-gate + timeout E2E runs)
 corepack pnpm typecheck
 
 # check adapter health / lead-eligibility
@@ -46,6 +46,9 @@ corepack pnpm bremio merge --run <runId> --strategy cherry-pick --repo /path/to/
 
 # summarize the usage ledger
 corepack pnpm bremio stats --repo /path/to/repo
+
+# inspect normalized AQT quota (read-only; stale/error data becomes unknown)
+corepack pnpm bremio quota
 ```
 
 Each task runs in `<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
@@ -62,12 +65,16 @@ their dependency branches, so they inspect the implementation rather than HEAD.
 `--strategy cherry-pick` instead applies each task-owned `commitHash` in plan
 order, excluding inherited dependency history; conflicts also abort cleanly.
 Every task also appends a line to `.bremio/ledger.jsonl` (measurement only, no
-routing yet), summarized by `bremio stats [--since <date>]`.
+routing yet), summarized by `bremio stats [--since <date>]`. `bremio quota`
+reads AI-Quota-Tray's schema-v1 SQLite database in read-only mode. Unsupported
+schema versions are rejected; stale, disabled, or errored providers normalize
+to `unknown`. Quota is not yet used by the router.
 
 ## Packages
 `protocol` (Zod contracts) · `adapter-sdk` (the `AgentAdapter` interface) ·
 `adapter-claude` · `adapter-codex` · `orchestrator` (lead-manager, validator,
-router, scheduler, aggregator) · `workspace` (worktrees + logs) · `apps/cli`.
+router, scheduler, aggregator) · `quota` (read-only AQT consumer) · `workspace`
+(worktrees + logs) · `apps/cli`.
 
 ## Core principles
 - Orchestrator is provider-agnostic — Claude is only the *default lead*.

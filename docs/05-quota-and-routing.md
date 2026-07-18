@@ -12,6 +12,18 @@
 3. **Quota is Phase 4, NOT the MVP.** Prove orchestration works first;
    optimize quota afterward, once a usage ledger exists to measure it.
 
+## Current AQT integration (2026-07-18)
+
+`packages/quota` now reads AQT's WAL-backed schema-v1 SQLite database directly
+and read-only. `bremio quota [--db <path>] [--stale-after <minutes>]` exposes the
+normalized result for calibration. The default database is under
+`%LOCALAPPDATA%/aiquotatray/AI Quota Tray/data/quota-history.sqlite3`.
+
+This slice deliberately does **not** affect routing yet. Unsupported schema
+versions are rejected, and disabled/errored providers, missing buckets, or any
+quota window older than 30 minutes normalize to `unknown`. This fail-closed
+behavior prevents a fresh short window from hiding a stale longer-term limit.
+
 ## QuotaSnapshot (allows partial data)
 ```ts
 interface QuotaSnapshot {
@@ -124,7 +136,8 @@ names are NEVER hardcoded in core — each adapter maps
 ## Build order for this section
 1. Ledger first (log the cost of every run, even before smart routing exists).
 2. Consume quota from AI-Quota-Tray (Codex + Claude official; Antigravity per
-   current AQT coverage).
+   current AQT coverage). **Read-only observation slice shipped; router wiring
+   waits for fresh-data calibration.**
 3. Single-agent-vs-multi decision + kill-switch.
 4. Scoring router + calibration gate (enable cheap-first only once the
    ledger has enough samples).

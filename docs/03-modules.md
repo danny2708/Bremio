@@ -40,9 +40,10 @@ implements this interface.
 `router` (scoring to pick agent+model), `result-aggregator` (collects
 TaskResults → report). **Knows nothing** about specific providers.
 
-**quota** — `quota-broker` (queries quota, normalizes to `QuotaSnapshot`) +
-`quota-normalizer`. **Consumes** AI-Quota-Tray instead of reading sources
-itself (see 05).
+**quota** — currently reads AI-Quota-Tray's schema-v1 SQLite cache read-only
+and normalizes provider/bucket freshness for `bremio quota`. It **consumes**
+AI-Quota-Tray instead of reading provider sources itself (see 05); router
+integration remains gated on calibration.
 
 **workspace** — manages git isolation. Details below.
 
