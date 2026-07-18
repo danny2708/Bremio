@@ -23,7 +23,17 @@ await build({
   target: "node22",
   sourcemap: true,
   legalComments: "none",
-  banner: { js: "#!/usr/bin/env node" },
+  // The TUI is written in TSX against Ink's React renderer.
+  jsx: "automatic",
+  banner: {
+    // Some transitive CJS deps in Ink's tree call require() for node builtins,
+    // which an ESM bundle cannot do without this shim.
+    js: [
+      "#!/usr/bin/env node",
+      "import { createRequire as __bremioCreateRequire } from 'node:module';",
+      "const require = __bremioCreateRequire(import.meta.url);",
+    ].join("\n"),
+  },
   define: { __BREMIO_VERSION__: JSON.stringify(packageJson.version) },
   external: [
     "@anthropic-ai/claude-agent-sdk",
@@ -31,6 +41,10 @@ await build({
     "simple-git",
     "zod",
   ],
+  alias: {
+    // Ink statically imports this but never calls it outside devtools mode.
+    "react-devtools-core": path.join(repoRoot, "scripts", "stubs", "react-devtools-core.js"),
+  },
 });
 
 // The Antigravity adapter drives the installed `agy` CLI, so the bundle ships

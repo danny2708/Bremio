@@ -25,6 +25,7 @@ import {
 import { mergeCommand } from "./merge";
 import { quotaCommand } from "./quota";
 import { statsCommand } from "./stats";
+import { canUseTui, startTui } from "./tui";
 import { c, compactEvent, printPlan, printReport, statusGlyph } from "./ui";
 
 declare const __BREMIO_VERSION__: string | undefined;
@@ -35,6 +36,8 @@ const VERSION = typeof __BREMIO_VERSION__ === "string"
 const USAGE = `${c.bold("bremio")} — provider-agnostic orchestrator for AI coding agents
 
 ${c.bold("Usage")}
+  bremio                                  launch the interactive TUI (needs a terminal)
+  bremio tui [--repo <path>]              same, explicitly
   bremio run --mode single --agent <claude|codex|antigravity> --repo <path> "<prompt>"
   bremio run --mode team --lead <claude|codex> [--worker <agent>] --repo <path> "<prompt>"
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
@@ -119,12 +122,30 @@ async function main(): Promise<void> {
     console.log(VERSION);
     return;
   }
-  if (values.help || !command) {
+  if (values.help) {
     console.log(USAGE);
+    return;
+  }
+  // Bare `bremio` opens the TUI when attached to a terminal; piped/CI callers
+  // still get the usage text so scripts keep working unchanged.
+  if (!command) {
+    if (canUseTui()) {
+      await startTui({ version: VERSION, ...(values.repo ? { repoPath: values.repo } : {}) });
+    } else {
+      console.log(USAGE);
+    }
     return;
   }
 
   switch (command) {
+    case "tui":
+      if (!canUseTui()) {
+        console.error(c.red("error: the TUI needs an interactive terminal (TTY)"));
+        process.exitCode = 2;
+        return;
+      }
+      await startTui({ version: VERSION, ...(values.repo ? { repoPath: values.repo } : {}) });
+      return;
     case "run":
       await runCommand(values, positionals);
       return;

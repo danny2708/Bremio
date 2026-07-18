@@ -15,6 +15,8 @@
     "@bremio/protocol": "workspace:*",
     "@bremio/quota": "workspace:*",
     "@bremio/workspace": "workspace:*",
-    "pino": "^9.5.0"
+    "ink": "^7.1.1",
+    "pino": "^9.5.0",
+    "react": "^19.2.7"
   }
 }

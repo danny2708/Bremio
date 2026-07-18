@@ -24,10 +24,12 @@
     "smoke:providers": "tsx scripts/provider-smoke.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "tui:smoke": "node scripts/tui-smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/react": "^19.2.17",
     "esbuild": "0.28.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
