@@ -28,9 +28,22 @@ function entry(over: Partial<LedgerEntry> = {}): LedgerEntry {
 describe("computeStats", () => {
   it("aggregates by provider, status, runs, files, and duration", () => {
     const stats = computeStats([
-      entry({ provider: "codex", status: "completed", filesChanged: 2, durationMs: 1000 }),
+      entry({
+        provider: "codex",
+        status: "completed",
+        filesChanged: 2,
+        durationMs: 1000,
+        usage: { inputTokens: 100, outputTokens: 20, costUsd: 0 },
+      }),
       entry({ provider: "codex", status: "failed", filesChanged: 0, durationMs: 2000 }),
-      entry({ provider: "claude", status: "completed", filesChanged: 1, durationMs: 3000, runId: "r2" }),
+      entry({
+        provider: "claude",
+        status: "completed",
+        filesChanged: 1,
+        durationMs: 3000,
+        runId: "r2",
+        usage: { inputTokens: 50, outputTokens: 10, costUsd: 0.12 },
+      }),
     ]);
     expect(stats.totalRuns).toBe(2);
     expect(stats.totalTasks).toBe(3);
@@ -39,6 +52,11 @@ describe("computeStats", () => {
     expect(stats.totalFilesChanged).toBe(3);
     expect(stats.avgDurationMs).toBe(2000);
     expect(stats.completionRate).toBeCloseTo(2 / 3);
+    expect(stats.usageEntries).toBe(2);
+    expect(stats.reportedInputTokens).toBe(150);
+    expect(stats.reportedOutputTokens).toBe(30);
+    expect(stats.reportedCostUsd).toBeCloseTo(0.12);
+    expect(stats.reportedCostEntries).toBe(2);
     expect(stats.byProvider.codex).toEqual({ tasks: 2, completed: 1, failed: 1, cancelled: 0 });
     expect(stats.byProvider.claude?.completed).toBe(1);
   });

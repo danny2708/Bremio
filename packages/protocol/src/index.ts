@@ -27,10 +27,12 @@ export {
   TaskStatusSchema,
   FindingSchema,
   TestRunSchema,
+  UsageSummarySchema,
   type TaskResult,
   type TaskStatus,
   type Finding,
   type TestRun,
+  type UsageSummary,
 } from "./result";
 
 export {

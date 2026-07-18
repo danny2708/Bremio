@@ -65,8 +65,9 @@ export const LogEventSchema = z.object({
 });
 
 /**
- * Optional token-usage signal. Quota/routing is out of scope for Phase 1, so
- * consumers may ignore this; adapters emit it when the provider reports it.
+ * Optional incremental token-usage signal. Multiple events in one run are
+ * additive; adapters receiving cumulative provider counters must emit only the
+ * final value or convert them to deltas.
  */
 export const UsageEventSchema = z.object({
   type: z.literal("usage"),

@@ -90,6 +90,7 @@ async function recordLedger(task: Task, result: TaskResult, opts: RunPlanOptions
       status: result.status,
       filesChanged: result.filesChanged.length,
       ...(result.durationMs !== undefined ? { durationMs: result.durationMs } : {}),
+      ...(result.usage ? { usage: result.usage } : {}),
     });
   } catch {
     // measurement is best-effort; a ledger write must never fail a run
@@ -204,6 +205,7 @@ async function runOneTask(
     worktreePath: worktree.path,
     logsPath: log.path,
     durationMs: Date.now() - started,
+    ...(run.usage ? { usage: run.usage } : {}),
     ...(error ? { error } : {}),
   };
 }

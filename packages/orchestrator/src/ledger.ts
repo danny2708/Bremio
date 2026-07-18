@@ -1,12 +1,13 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { UsageSummarySchema } from "@bremio/protocol";
 
 /**
  * One append-only usage-ledger line, written after each task completes.
  * Measurement infrastructure ONLY (Phase 4 groundwork) — no routing logic
- * reads this yet, and there are no cost/net_gain fields. It records what
- * already exists in the TaskResult, nothing invented.
+ * reads this yet. Provider-reported usage is recorded when available; missing
+ * usage remains unknown and no cost is estimated.
  */
 export const LedgerEntrySchema = z.object({
   ts: z.string(), // ISO 8601
@@ -19,6 +20,7 @@ export const LedgerEntrySchema = z.object({
   filesChanged: z.number().int().nonnegative(),
   durationMs: z.number().int().nonnegative().optional(),
   model: z.string().optional(),
+  usage: UsageSummarySchema.optional(),
 });
 export type LedgerEntry = z.infer<typeof LedgerEntrySchema>;
 
@@ -84,6 +86,11 @@ export interface LedgerStats {
   completionRate: number; // 0..1
   avgDurationMs: number;
   totalFilesChanged: number;
+  usageEntries: number;
+  reportedInputTokens: number;
+  reportedOutputTokens: number;
+  reportedCostUsd: number;
+  reportedCostEntries: number;
   byProvider: Record<string, ProviderStats>;
 }
 
@@ -97,6 +104,11 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
   let totalFilesChanged = 0;
   let durationSum = 0;
   let durationCount = 0;
+  let usageEntries = 0;
+  let reportedInputTokens = 0;
+  let reportedOutputTokens = 0;
+  let reportedCostUsd = 0;
+  let reportedCostEntries = 0;
 
   for (const e of entries) {
     runs.add(e.runId);
@@ -104,6 +116,13 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
     if (typeof e.durationMs === "number") {
       durationSum += e.durationMs;
       durationCount += 1;
+    }
+    if (e.usage) {
+      usageEntries += 1;
+      reportedInputTokens += e.usage.inputTokens ?? 0;
+      reportedOutputTokens += e.usage.outputTokens ?? 0;
+      reportedCostUsd += e.usage.costUsd ?? 0;
+      if (e.usage.costUsd !== undefined) reportedCostEntries += 1;
     }
     if (e.status === "completed") completed += 1;
     else if (e.status === "failed") failed += 1;
@@ -129,6 +148,11 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
     completionRate: totalTasks > 0 ? completed / totalTasks : 0,
     avgDurationMs: durationCount > 0 ? Math.round(durationSum / durationCount) : 0,
     totalFilesChanged,
+    usageEntries,
+    reportedInputTokens,
+    reportedOutputTokens,
+    reportedCostUsd,
+    reportedCostEntries,
     byProvider,
   };
 }

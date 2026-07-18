@@ -24,6 +24,14 @@ export type TestRun = z.infer<typeof TestRunSchema>;
 export const TaskStatusSchema = z.enum(["completed", "failed", "cancelled"]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
+/** Provider-reported usage only; omitted fields were not reported and are never estimated. */
+export const UsageSummarySchema = z.object({
+  inputTokens: z.number().int().nonnegative().optional(),
+  outputTokens: z.number().int().nonnegative().optional(),
+  costUsd: z.number().nonnegative().optional(),
+});
+export type UsageSummary = z.infer<typeof UsageSummarySchema>;
+
 /**
  * TaskResult — what an agent returns after running one task. Collected by the
  * result-aggregator into the final report. Operational fields (worktree path,
@@ -47,6 +55,7 @@ export const TaskResultSchema = z.object({
   worktreePath: z.string().optional(),
   logsPath: z.string().optional(),
   durationMs: z.number().int().nonnegative().optional(),
+  usage: UsageSummarySchema.optional(),
   error: z.string().optional(),
 });
 export type TaskResult = z.infer<typeof TaskResultSchema>;

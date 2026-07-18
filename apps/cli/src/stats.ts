@@ -29,6 +29,19 @@ export async function statsCommand(opts: StatsCommandOptions): Promise<number> {
   );
   console.log(`  avg duration:    ${avgS}s`);
   console.log(`  files changed:   ${stats.totalFilesChanged} total`);
+  if (stats.usageEntries > 0) {
+    console.log(
+      `  reported usage:  ${stats.reportedInputTokens.toLocaleString()} in / ` +
+        `${stats.reportedOutputTokens.toLocaleString()} out ` +
+        `${c.dim(`(${stats.usageEntries}/${stats.totalTasks} tasks)`)}`,
+    );
+    if (stats.reportedCostEntries > 0) {
+      console.log(
+        `  reported cost:   $${stats.reportedCostUsd.toFixed(4)} ` +
+          `${c.dim(`(${stats.reportedCostEntries}/${stats.totalTasks} tasks; partial)`)}`,
+      );
+    }
+  }
 
   console.log(`\n  ${c.bold("by provider")}`);
   const providers = Object.keys(stats.byProvider).sort();

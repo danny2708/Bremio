@@ -1,4 +1,4 @@
-import type { AgentEvent, RunOutcome, TestRun } from "@bremio/protocol";
+import type { AgentEvent, RunOutcome, TestRun, UsageSummary } from "@bremio/protocol";
 import type { TaskLog } from "@bremio/workspace";
 
 export interface CollectedRun {
@@ -9,6 +9,8 @@ export interface CollectedRun {
   commands: string[];
   /** Shell command outcomes paired from tool_use/tool_result events. */
   tests: TestRun[];
+  /** Sum of provider-reported usage events; missing dimensions stay unknown. */
+  usage?: UsageSummary;
 }
 
 const SHELL_TOOLS = new Set(["shell", "bash", "Bash"]);
@@ -28,6 +30,9 @@ export async function collectRun(
   const commands: string[] = [];
   const pendingShellCommands: string[] = [];
   const tests: TestRun[] = [];
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let costUsd: number | undefined;
 
   for await (const event of events) {
     opts.log?.event(event);
@@ -51,6 +56,10 @@ export async function collectRun(
         failed: exitCode === 0 ? 0 : 1,
         exitCode,
       });
+    } else if (event.type === "usage") {
+      if (event.inputTokens !== undefined) inputTokens = (inputTokens ?? 0) + event.inputTokens;
+      if (event.outputTokens !== undefined) outputTokens = (outputTokens ?? 0) + event.outputTokens;
+      if (event.costUsd !== undefined) costUsd = (costUsd ?? 0) + event.costUsd;
     } else if (event.type === "completed") {
       outcome = event.outcome;
     }
@@ -61,5 +70,14 @@ export async function collectRun(
     assistantText: textParts.join("\n").trim(),
     commands,
     tests,
+    ...(inputTokens !== undefined || outputTokens !== undefined || costUsd !== undefined
+      ? {
+          usage: {
+            ...(inputTokens !== undefined ? { inputTokens } : {}),
+            ...(outputTokens !== undefined ? { outputTokens } : {}),
+            ...(costUsd !== undefined ? { costUsd } : {}),
+          },
+        }
+      : {}),
   };
 }

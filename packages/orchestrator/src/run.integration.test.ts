@@ -12,6 +12,7 @@ import type {
   QuotaSnapshot,
 } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
+import { ledgerPathFor, readLedger } from "./ledger";
 import { createRegistry } from "./registry";
 import { runBremio } from "./run";
 
@@ -152,6 +153,7 @@ class MockWorker extends BaseMock {
       });
     }
     const cancelled = req.signal?.aborted === true;
+    yield { type: "usage", runId: req.runId, ts: Date.now(), inputTokens: 120, outputTokens: 30 };
     yield {
       type: "completed",
       runId: req.runId,
@@ -206,6 +208,7 @@ describe("runBremio end-to-end (mock adapters)", () => {
     expect(impl?.result.status).toBe("completed");
     expect(impl?.result.filesChanged).toContain("GREETING.txt");
     expect(impl?.result.commitHash).toBeTruthy();
+    expect(impl?.result.usage).toEqual({ inputTokens: 120, outputTokens: 30 });
     expect(impl?.result.branch).toBe("bremio/TASK-002-codex");
     expect(existsSync(impl?.result.worktreePath ?? "")).toBe(true);
 
@@ -231,6 +234,13 @@ describe("runBremio end-to-end (mock adapters)", () => {
 
     expect(report.summary.completed).toBe(4);
     expect(report.summary.filesChanged).toBe(1);
+
+    const entries = (await readLedger(ledgerPathFor(repo)))
+      .filter((entry) => entry.runId === report.runId);
+    expect(entries.find((entry) => entry.taskId === "TASK-002")?.usage).toEqual({
+      inputTokens: 120,
+      outputTokens: 30,
+    });
   });
 
   it("cancels an in-flight task", async () => {
