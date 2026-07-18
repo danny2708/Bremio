@@ -60,8 +60,15 @@ export {
   type LockResult,
 } from "./lock";
 
+/** Terminal runs older than this are pruned at startup. */
+export const DEFAULT_RETENTION_DAYS = 30;
+/** Always keep at least this many of the newest runs, whatever their age. */
+export const DEFAULT_RETENTION_MINIMUM = 50;
+
 export interface StartDaemonOptions {
   version: string;
+  retentionDays?: number;
+  retentionMinimumRuns?: number;
   /** Overrides exist so tests never touch the real user-level files. */
   endpointFile?: string;
   lockFile?: string;
@@ -74,6 +81,8 @@ export interface RunningDaemon extends DaemonHandle {
   store: RunStore;
   /** Runs marked interrupted because a previous process died mid-flight. */
   reconciled: string[];
+  /** How many old terminal runs were trimmed at startup. */
+  pruned: number;
 }
 
 export class DaemonAlreadyRunningError extends Error {
@@ -105,6 +114,14 @@ export async function startDaemon(options: StartDaemonOptions): Promise<RunningD
   const store = await RunStore.open(options.databasePath ?? defaultDatabasePath());
   const registry = new RunRegistry(store);
   const reconciled = registry.reconcileOnStartup().map((run) => run.id);
+
+  // Trim old terminal runs at startup rather than on a timer: it is the one
+  // moment nothing is streaming, and an event log that only ever grows would
+  // eventually make history unusable.
+  const pruned = store.pruneRuns({
+    olderThan: new Date(Date.now() - (options.retentionDays ?? DEFAULT_RETENTION_DAYS) * 86_400_000),
+    keepMinimum: options.retentionMinimumRuns ?? DEFAULT_RETENTION_MINIMUM,
+  });
 
   const token = mintToken();
   let stopping = false;
@@ -158,6 +175,7 @@ export async function startDaemon(options: StartDaemonOptions): Promise<RunningD
     endpointFile,
     store,
     reconciled,
+    pruned,
     close: shutdown,
   };
 }
