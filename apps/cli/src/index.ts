@@ -28,6 +28,7 @@ ${c.bold("run")}      plan + delegate + execute in isolated worktrees (left for 
   --lead <claude|codex>   Which agent leads (plans). Required.
   --repo <path>           Target git repository. Required.
   --model <id>            Model for the lead's planning run (optional).
+  --timeout <seconds>      Hard timeout for each lead attempt and worker task.
   --json                  Print the report as JSON (suppresses progress).
   --verbose               Emit structured operational logs to stderr.
 
@@ -50,6 +51,7 @@ function parseCli() {
       repo: { type: "string" },
       prompt: { type: "string" },
       model: { type: "string" },
+      timeout: { type: "string" },
       run: { type: "string" },
       base: { type: "string" },
       since: { type: "string" },
@@ -100,6 +102,10 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   }
   if (!values.repo) errors.push("--repo <path> is required");
   if (!prompt) errors.push('a prompt is required, e.g. bremio run ... "add a health endpoint"');
+  const timeoutSeconds = values.timeout === undefined ? undefined : Number(values.timeout);
+  if (timeoutSeconds !== undefined && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
+    errors.push("--timeout must be a positive number of seconds");
+  }
   if (errors.length) {
     for (const e of errors) console.error(c.red(`error: ${e}`));
     console.log(`\n${USAGE}`);
@@ -164,6 +170,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       signal: ac.signal,
       hooks,
       ...(values.model ? { model: values.model } : {}),
+      ...(timeoutSeconds !== undefined ? { taskTimeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
     });
 
     if (json) console.log(JSON.stringify(report, null, 2));

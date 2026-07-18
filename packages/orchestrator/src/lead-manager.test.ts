@@ -106,4 +106,43 @@ describe("createPlan", () => {
       await fs.rm(runDir, { recursive: true, force: true });
     }
   });
+
+  it("cancels a timed-out planning attempt and does not retry it", async () => {
+    let attempts = 0;
+    const adapter = {
+      id: "claude",
+      provider: "anthropic",
+      async *startRun(req: AgentRunRequest): AsyncGenerator<AgentEvent> {
+        attempts += 1;
+        yield { type: "started", runId: req.runId, ts: Date.now() };
+        await new Promise<void>((resolve) => {
+          if (req.signal?.aborted) return resolve();
+          req.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield {
+          type: "completed",
+          runId: req.runId,
+          ts: Date.now(),
+          outcome: { status: "cancelled", error: "provider cancelled" },
+        };
+      },
+      async cancelRun(): Promise<void> {},
+    } as unknown as AgentAdapter;
+    const runDir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-lead-timeout-"));
+
+    try {
+      await expect(
+        createPlan(adapter, {
+          prompt: "add a greeting",
+          cwd: runDir,
+          runDir,
+          runId: "run-timeout",
+          timeoutMs: 20,
+        }),
+      ).rejects.toThrow("planning attempt timed out after 20ms");
+      expect(attempts).toBe(1);
+    } finally {
+      await fs.rm(runDir, { recursive: true, force: true });
+    }
+  });
 });

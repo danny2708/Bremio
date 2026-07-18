@@ -253,4 +253,23 @@ describe("runBremio end-to-end (mock adapters)", () => {
     expect(impl?.result.status).toBe("cancelled");
     expect(report.summary.cancelled).toBeGreaterThanOrEqual(1);
   });
+
+  it("times out an in-flight task and blocks its dependent quality gates", async () => {
+    const registry = createRegistry([new MockLead(), new MockWorker(2000)]);
+    const report = await runBremio({
+      leadId: "claude",
+      repoPath: repo,
+      prompt: "add a greeting with a short deadline",
+      registry,
+      taskTimeoutMs: 50,
+    });
+
+    const impl = report.tasks.find((t) => t.task.id === "TASK-002");
+    expect(impl?.result.status).toBe("cancelled");
+    expect(impl?.result.error).toMatch(/timed out after 50ms/);
+    expect(report.tasks.find((t) => t.task.id === "TASK-003")?.result.error).toMatch(
+      /blocked by unsuccessful dependencies/,
+    );
+    expect(report.qualityGate.status).toBe("failed");
+  });
 });

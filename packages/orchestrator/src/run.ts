@@ -26,6 +26,8 @@ export interface RunBremioOptions {
   registry: AgentRegistry;
   /** Model for the lead's planning run (workers use their adapter defaults). */
   model?: string;
+  /** Hard timeout for each lead attempt and worker task. */
+  taskTimeoutMs?: number;
   signal?: AbortSignal;
   logger?: Logger;
   hooks?: RunBremioHooks;
@@ -83,6 +85,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     runId,
     runDir,
     ...(opts.model ? { model: opts.model } : {}),
+    ...(opts.taskTimeoutMs ? { timeoutMs: opts.taskTimeoutMs } : {}),
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.hooks?.onLeadEvent ? { onEvent: opts.hooks.onLeadEvent } : {}),
   });
@@ -105,6 +108,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     runDir,
     runId,
     ledgerPath: ledgerPathFor(repoPath),
+    ...(opts.taskTimeoutMs ? { taskTimeoutMs: opts.taskTimeoutMs } : {}),
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.hooks ? { hooks: opts.hooks } : {}),
   });

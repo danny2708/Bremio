@@ -23,6 +23,8 @@ export interface CreatePlanOptions {
   runDir: string;
   model?: string;
   maxTurns?: number;
+  /** Hard timeout for each provider planning attempt. */
+  timeoutMs?: number;
   signal?: AbortSignal;
   onEvent?: (event: AgentEvent) => void;
 }
@@ -95,6 +97,19 @@ async function runLead(
   runId: string,
   log: TaskLog,
 ): Promise<CollectedRun> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onExternalAbort = () => controller.abort();
+  opts.signal?.addEventListener("abort", onExternalAbort, { once: true });
+  if (opts.signal?.aborted) controller.abort();
+  const timer = opts.timeoutMs
+    ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        void lead.cancelRun(runId).catch(() => {});
+      }, opts.timeoutMs)
+    : undefined;
+
   const events = lead.startRun({
     runId,
     role: "planner",
@@ -105,9 +120,24 @@ async function runLead(
     outputSchema: planJsonSchema,
     ...(opts.model ? { model: opts.model } : {}),
     maxTurns: opts.maxTurns ?? 30,
-    ...(opts.signal ? { signal: opts.signal } : {}),
+    signal: controller.signal,
   });
-  return collectRun(events, { log, ...(opts.onEvent ? { onEvent: opts.onEvent } : {}) });
+  try {
+    const run = await collectRun(events, { log, ...(opts.onEvent ? { onEvent: opts.onEvent } : {}) });
+    if (!timedOut) return run;
+    return {
+      ...run,
+      outcome: {
+        ...run.outcome,
+        status: "cancelled",
+        finalText: undefined,
+        error: `planning attempt timed out after ${opts.timeoutMs}ms`,
+      },
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onExternalAbort);
+  }
 }
 
 type ParseResult = { ok: true; plan: Plan } | { ok: false; error: string };

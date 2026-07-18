@@ -5,7 +5,7 @@ import { appendLedgerEntry } from "./ledger";
 import { permissionForKind, roleForKind, topologicalOrder } from "./router";
 import { buildTaskPrompt } from "./plan-schema";
 import { parseReviewOutput, reviewOutputJsonSchema } from "./quality-gate";
-import { collectRun } from "./stream";
+import { collectRun, type CollectedRun } from "./stream";
 
 export interface SchedulerHooks {
   onTaskStart?(task: Task, agentId: string): void;
@@ -24,6 +24,8 @@ export interface RunPlanOptions {
   /** Append-only usage ledger; when set, one line is written per task. */
   ledgerPath?: string;
   maxTurns?: number;
+  /** Hard timeout for each task's provider run. */
+  taskTimeoutMs?: number;
   signal?: AbortSignal;
   hooks?: SchedulerHooks;
 }
@@ -111,25 +113,45 @@ async function runOneTask(
   log.line(`# Task ${task.id} (${task.kind}) — agent=${agentId} branch=${worktree.branch}`);
 
   const permission = permissionForKind(task.kind);
-  const run = await collectRun(
-    adapter.startRun({
-      runId: `${task.id}::${agentId}`,
-      role: roleForKind(task.kind),
-      prompt: buildTaskPrompt(opts.plan, task),
-      cwd: worktree.path,
-      permission,
-      ...(task.kind === "review" ? { outputSchema: reviewOutputJsonSchema } : {}),
-      maxTurns: opts.maxTurns ?? 40,
-      ...(opts.signal ? { signal: opts.signal } : {}),
-    }),
-    {
-      log,
-      ...(opts.hooks?.onEvent ? { onEvent: (e) => opts.hooks?.onEvent?.(task, agentId, e) } : {}),
-    },
-  );
+  const taskRunId = `${task.id}::${agentId}`;
+  const controller = new AbortController();
+  let timedOut = false;
+  const onExternalAbort = () => controller.abort();
+  opts.signal?.addEventListener("abort", onExternalAbort, { once: true });
+  if (opts.signal?.aborted) controller.abort();
+  const timer = opts.taskTimeoutMs
+    ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        void adapter.cancelRun(taskRunId).catch(() => {});
+      }, opts.taskTimeoutMs)
+    : undefined;
+
+  let run: CollectedRun;
+  try {
+    run = await collectRun(
+      adapter.startRun({
+        runId: taskRunId,
+        role: roleForKind(task.kind),
+        prompt: buildTaskPrompt(opts.plan, task),
+        cwd: worktree.path,
+        permission,
+        ...(task.kind === "review" ? { outputSchema: reviewOutputJsonSchema } : {}),
+        maxTurns: opts.maxTurns ?? 40,
+        signal: controller.signal,
+      }),
+      {
+        log,
+        ...(opts.hooks?.onEvent ? { onEvent: (e) => opts.hooks?.onEvent?.(task, agentId, e) } : {}),
+      },
+    );
+  } finally {
+    if (timer) clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onExternalAbort);
+    await log.close();
+  }
 
   const collected = await opts.workspace.collect(worktree);
-  await log.close();
 
   let status = run.outcome.status;
   let error = run.outcome.error;
@@ -139,6 +161,11 @@ async function runOneTask(
     run.outcome.finalText?.trim() ||
     run.assistantText ||
     `${task.title} — no summary produced`;
+
+  if (timedOut) {
+    status = "cancelled";
+    error = `task timed out after ${opts.taskTimeoutMs}ms`;
+  }
 
   if (task.kind === "test" && status === "completed") {
     const finalTest = tests.at(-1);
