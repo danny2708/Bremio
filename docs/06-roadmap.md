@@ -8,6 +8,11 @@ Only **Claude (lead) + Codex (worker)**, **sequential**. Both return plan
 JSON → enough to prove lead-swapping + delegation. (Antigravity isn't in yet
 because it can't produce JSON — see 04.)
 
+**Implementation status (2026-07-18):** shipped. Local typecheck, 44 tests,
+and `bremio doctor` pass. A fresh two-provider real-run verification remains
+blocked by the Claude session limit reported at runtime; do not mark this phase
+fully closed until it is rerun after the reset.
+
 **Done criteria:**
 ```
 ✓ a single prompt
@@ -36,10 +41,19 @@ manual approval before merge. Every lead still returns the same PlanSchema.
 ## Phase 3 — Full worktree lifecycle
 Diff/merge manager, cherry-pick, worktree cleanup, reliable kill-on-timeout.
 
+**Early slice shipped:** `bremio merge` previews a completed task's diff,
+requires confirmation (or `--yes`), merges with `--no-ff`, then removes its
+worktree and branch; conflicts abort cleanly. Cherry-pick, automatic quality
+gates, and reliable kill-on-timeout remain future work.
+
 ## Phase 4 — Quota-aware routing + efficiency (see 05)
 Usage ledger → consume AI-Quota-Tray → single-vs-multi decision +
 kill-switch → scoring router + calibration gate. Enforce the `net_gain > 0`
 invariant.
+
+**Early slice shipped:** a measurement-only ledger and `bremio stats`. No
+quota source, cost fields, routing, kill-switch, or `net_gain` enforcement is
+implemented yet.
 
 ## Phase 5 — Parallel + VS Code extension
 Run tasks in parallel (PQueue/BullMQ), panel UI. UI is just a surface; the

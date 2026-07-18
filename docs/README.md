@@ -24,7 +24,18 @@ results back into one place.
 
 ## Status
 
-- Phase: **design** — no code yet. MVP = Phase 1 vertical slice (see roadmap).
+- Code status (2026-07-18): the Phase 1 implementation is shipped: Claude and
+  Codex adapters, strict plan validation, sequential worktree execution,
+  reports, cancellation, logs, and the CLI are available. See the root
+  `README.md` for the current commands and verification count.
+- A small Phase-3/Phase-4 foundation also shipped early: confirmation-gated
+  manual merge/cleanup plus a measurement-only usage ledger and `bremio stats`.
+  This does **not** include an automatic quality gate, quota integration, or
+  quota-aware routing.
+- Final two-provider re-verification is currently blocked by the Claude session
+  limit (reset reported as 14:20 Asia/Saigon on 2026-07-18), not by a known
+  implementation failure. Until that run succeeds, Phase 1 is not marked fully
+  closed.
 - Origin: brainstorm with an agent (2026-07). These docs have been **filtered
   and reworked**, not copied verbatim.
 - Open major decisions: see `99-risks-and-open-questions.md` §Open Questions.

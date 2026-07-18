@@ -80,6 +80,12 @@ principle already locked in `CLAUDE_master.md` (2026-07-16): escalate the
 both at once**.
 
 ## Usage ledger (the measurement tool — without it, "efficiency" is just a feeling)
+The current early implementation appends one measurement-only JSONL entry per
+task to `.bremio/ledger.jsonl` with `ts`, `runId`, `taskId`, `provider`,
+`role`, `kind`, `status`, `durationMs`, and `filesChanged`; `bremio stats`
+summarizes those entries. It deliberately records no model, token, or cost
+data and nothing routes on it. The richer target shape below belongs to Phase 4.
+
 ```json
 { "provider":"codex", "model":"gpt-5.6-terra", "effort":"medium",
   "taskType":"backend-crud", "durationSeconds":284, "filesChanged":4,
