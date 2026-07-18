@@ -28,7 +28,7 @@ Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
 
 ```sh
 corepack pnpm install
-corepack pnpm test          # 54 tests (incl. quality-gate + timeout E2E runs)
+corepack pnpm test          # 57 tests (incl. quality-gate + timeout E2E runs)
 corepack pnpm typecheck
 
 # check adapter health / lead-eligibility
@@ -42,6 +42,7 @@ corepack pnpm bremio run --lead claude --repo /path/to/repo "fix the failing tes
 # after the run's test + independent-review gate passes, review the diff and merge
 corepack pnpm bremio merge TASK-002 --repo /path/to/repo          # prompts y/N
 corepack pnpm bremio merge --run <runId> --repo /path/to/repo --yes
+corepack pnpm bremio merge --run <runId> --strategy cherry-pick --repo /path/to/repo --yes
 
 # summarize the usage ledger
 corepack pnpm bremio stats --repo /path/to/repo
@@ -58,6 +59,8 @@ first requires a passed run quality gate, then shows the diff, asks for
 confirmation (or `--yes`), merges into the base branch (`--no-ff`), and cleans
 up the worktree + branch; conflicts abort cleanly. Test/review tasks inherit
 their dependency branches, so they inspect the implementation rather than HEAD.
+`--strategy cherry-pick` instead applies each task-owned `commitHash` in plan
+order, excluding inherited dependency history; conflicts also abort cleanly.
 Every task also appends a line to `.bremio/ledger.jsonl` (measurement only, no
 routing yet), summarized by `bremio stats [--since <date>]`.
 

@@ -74,7 +74,8 @@ create branch bremio/TASK-002-codex
 → git worktree add
 → run the agent inside that worktree
 → collect diff + test results + logs
-→ (review) → cherry-pick/merge once it clears the quality gate
+→ (review) → merge the branch or cherry-pick each task-owned commit once the
+  run clears the quality gate
 → git worktree remove (cleanup)
 ```
 
