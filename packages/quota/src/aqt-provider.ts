@@ -97,7 +97,14 @@ export function toAgentCapacitySnapshot(
     // AQT observes provider quota, not whether an execution agent is busy or idle.
     availability: "unknown",
     status: provider.status,
-    confidence: confidenceFor(provider.confidence, contactFreshness),
+    // Confidence describes the NUMBERS, not the connection. AQT reporting
+    // anything other than a healthy provider means it could not obtain current
+    // data — Claude's status-line cache going stale, or the Antigravity
+    // language server being down — and last-known values from days ago must
+    // not be presented as high confidence just because the source answered.
+    confidence: provider.status === "unknown"
+      ? "low"
+      : confidenceFor(provider.confidence, contactFreshness),
     source: {
       name: provider.sourceName,
       confidenceLabel: provider.confidence,

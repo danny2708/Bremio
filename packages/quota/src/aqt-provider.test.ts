@@ -164,3 +164,29 @@ describe("AQT capacity mapping", () => {
     ).toThrow(/agingAfterSeconds/);
   });
 });
+
+describe("confidence reflects the data, not the connection", () => {
+  it("drops to low when AQT could not obtain current numbers", () => {
+    // Claude's status-line cache going stale, or the Antigravity language
+    // server being down: AQT answers instantly, but the values it hands back
+    // are days old. Reporting high confidence there told users to trust a
+    // number that was 157 hours out of date.
+    const unreachable: AqtQuotaSnapshot = {
+      ...SOURCE,
+      providers: SOURCE.providers.map((provider) =>
+        provider.agentId === "codex" ? { ...provider, status: "unknown" } : provider,
+      ),
+    };
+
+    const snapshot = toAgentCapacitySnapshot(unreachable, "codex");
+
+    expect(snapshot.contactFreshness).toBe("fresh"); // the source did answer
+    expect(snapshot.confidence).toBe("low"); // but its numbers are not current
+  });
+
+  it("keeps high confidence when the provider is healthy", () => {
+    const snapshot = toAgentCapacitySnapshot(SOURCE, "codex");
+    expect(snapshot.status).toBe("limited");
+    expect(snapshot.confidence).toBe("high");
+  });
+});
