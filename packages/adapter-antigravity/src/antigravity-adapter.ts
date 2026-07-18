@@ -1,5 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import path from "node:path";
 import readline from "node:readline";
 import type {
   AgentAdapter,
@@ -8,177 +7,211 @@ import type {
   AgentRunRequest,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
-import { AgentEventSchema, type AgentEvent } from "@bremio/protocol";
+import type { AgentEvent } from "@bremio/protocol";
+import {
+  agyLooksSignedIn,
+  formatPrintTimeout,
+  resolveAgyBinary,
+  spawnAgy,
+  type AgyChild,
+} from "./agy-cli";
 
 export interface AntigravityAdapterOptions {
-  /** Python interpreter containing google-antigravity (default: env override or python). */
-  pythonBin?: string;
-  /** Arguments placed before the sidecar path, e.g. ["-3.12"] for py.exe. */
-  pythonArgs?: string[];
-  /** Test/development override for the bundled sidecar. */
-  sidecarPath?: string;
+  /** Explicit path to the `agy` executable (default: BREMIO_AGY_BIN, PATH, install dir). */
+  agyBin?: string;
+  /** Arguments placed before the agy flags, e.g. a script path when testing. */
+  agyArgs?: string[];
+  /** Model label passed to `--model`, e.g. "Gemini 3.5 Flash (High)". */
   defaultModel?: string;
+  /** Fallback timeout when a request does not set one. */
+  defaultTimeoutMs?: number;
 }
 
-export interface AntigravitySidecarRequest {
-  runId: string;
-  prompt: string;
-  cwd: string;
-  permission: "read-only" | "workspace-write";
-  model?: string;
-  reasoningLevel?: "low" | "medium" | "high" | "xhigh";
-  systemPrompt?: string;
-  outputSchema?: Record<string, unknown>;
-}
+const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
+const INSTALL_HINT =
+  'install it with: irm https://antigravity.google/cli/install.ps1 | iex (Windows) or curl -fsSL https://antigravity.google/cli/install.sh | bash';
+
+/**
+ * Capabilities of the `agy` CLI path, verified against agy 1.1.4.
+ *
+ * `structuredOutput` is FALSE: `agy --print` emits prose only — there is no
+ * `--output-format json` and no machine-readable event stream. That is what
+ * makes Antigravity ineligible to lead (lead requires planning &&
+ * structuredOutput), and it is recorded as a capability rather than a special
+ * case so the router enforces it without provider-specific branching.
+ *
+ * `testing` is FALSE because prose output exposes no reliable command exit
+ * codes, so Antigravity cannot serve as a test gate.
+ */
 const CAPABILITIES: AgentCapabilities = {
   planning: false,
-  structuredOutput: true,
+  structuredOutput: false,
   repositoryRead: true,
   repositoryWrite: true,
   shell: true,
-  // The SDK does not expose reliable command exit codes in ChatResponse 0.1.7,
-  // so Bremio cannot yet treat it as a test-gate agent.
   testing: false,
   browser: false,
   vision: false,
   resumableSessions: false,
 };
 
-export function buildAntigravityRequest(
-  req: AgentRunRequest,
-  defaultModel?: string,
-): AntigravitySidecarRequest {
-  return {
-    runId: req.runId,
-    prompt: req.prompt,
-    cwd: req.cwd,
-    permission: req.permission,
-    ...(req.model ?? defaultModel ? { model: req.model ?? defaultModel } : {}),
-    ...(req.reasoningLevel ? { reasoningLevel: req.reasoningLevel } : {}),
-    ...(req.systemPrompt ? { systemPrompt: req.systemPrompt } : {}),
-    ...(req.outputSchema ? { outputSchema: req.outputSchema } : {}),
-  };
+export interface AgyInvocation {
+  args: string[];
+  workspace: string;
 }
 
+/**
+ * Build the `agy` argument vector for a Bremio request.
+ *
+ * Verified behaviour that shapes this (agy 1.1.4):
+ * - `agy` IGNORES the spawned process cwd and writes into its own scratch
+ *   workspace unless `--add-dir` names the target directory, so `--add-dir`
+ *   is mandatory and the prompt restates the workspace root.
+ * - read-only maps to `--mode plan`, which refuses writes but still returns
+ *   prose; workspace-write maps to `--dangerously-skip-permissions`, since a
+ *   non-interactive run cannot answer approval prompts.
+ */
+export function buildAgyInvocation(
+  req: AgentRunRequest,
+  options: { defaultModel?: string; defaultTimeoutMs?: number } = {},
+): AgyInvocation {
+  const workspace = path.resolve(req.cwd);
+  // `--print-timeout` is only a provider-side safety net; real cancellation and
+  // per-task deadlines come from the orchestrator via `req.signal`.
+  const timeoutMs = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const readOnly = req.permission === "read-only";
+
+  const prompt = [
+    `Workspace root: ${workspace}`,
+    "Work only inside that directory; treat it as the repository root.",
+    "",
+    req.prompt,
+  ].join("\n");
+
+  const args = [
+    "-p",
+    prompt,
+    "--add-dir",
+    workspace,
+    "--print-timeout",
+    formatPrintTimeout(timeoutMs),
+  ];
+  args.push(...(readOnly ? ["--mode", "plan"] : ["--dangerously-skip-permissions"]));
+
+  const model = req.model ?? options.defaultModel;
+  if (model) args.push("--model", model);
+
+  return { args, workspace };
+}
+
+/**
+ * AgentAdapter over the authenticated `agy` CLI, so Antigravity work is billed
+ * to the user's existing Google AI subscription rather than a separate API key.
+ *
+ * The stream is intentionally thin: `agy` prints prose, so Bremio emits one
+ * `message` event per output line plus a terminal `completed`. There are no
+ * tool_use/usage events because the CLI exposes none — Bremio reports what the
+ * provider actually gives instead of inventing structure.
+ */
 export class AntigravityAdapter implements AgentAdapter {
   readonly id = "antigravity";
   readonly provider = "google";
 
-  private readonly pythonBin: string;
-  private readonly pythonArgs: string[];
-  private readonly sidecarPath: string;
+  private readonly explicitBin: string | undefined;
+  private readonly agyArgs: string[];
   private readonly defaultModel: string | undefined;
-  private readonly children = new Map<string, ChildProcessWithoutNullStreams>();
+  private readonly defaultTimeoutMs: number;
+  private readonly children = new Map<string, AgyChild>();
   private readonly cancelled = new Set<string>();
 
   constructor(options: AntigravityAdapterOptions = {}) {
-    this.pythonBin = options.pythonBin ?? process.env.BREMIO_ANTIGRAVITY_PYTHON ?? "python";
-    this.pythonArgs = options.pythonArgs ?? [];
-    this.sidecarPath = options.sidecarPath ?? fileURLToPath(new URL("./sidecar.py", import.meta.url));
+    this.explicitBin = options.agyBin;
+    this.agyArgs = options.agyArgs ?? [];
     this.defaultModel = options.defaultModel;
+    this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async getCapabilities(): Promise<AgentCapabilities> {
     return CAPABILITIES;
   }
 
+  /**
+   * `agy models` lists display labels with the reasoning tier baked in
+   * ("Gemini 3.5 Flash (High)"). These are NOT provider model ids, so they are
+   * surfaced as labels and never recorded as confirmed model identity.
+   */
   async listModels(): Promise<ModelDescriptor[]> {
-    return [{ id: "gemini-3.5-flash", displayName: "Gemini 3.5 Flash", default: true }];
+    return [
+      { id: "Gemini 3.5 Flash (Medium)", displayName: "Gemini 3.5 Flash (Medium)", default: true },
+      { id: "Gemini 3.5 Flash (High)", displayName: "Gemini 3.5 Flash (High)" },
+      { id: "Gemini 3.1 Pro (High)", displayName: "Gemini 3.1 Pro (High)" },
+      { id: "Claude Sonnet 4.6 (Thinking)", displayName: "Claude Sonnet 4.6 (Thinking)" },
+    ];
   }
 
   async healthCheck(): Promise<AgentHealth> {
-    return await new Promise<AgentHealth>((resolve) => {
-      let stdout = "";
-      let stderr = "";
-      let settled = false;
-      const child = this.spawnSidecar(["--health"], process.cwd());
-      const finish = (health: AgentHealth) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(health);
+    const bin = resolveAgyBinary(this.explicitBin);
+    if (!bin) {
+      return { status: "unavailable", detail: `agy CLI not found; ${INSTALL_HINT}` };
+    }
+
+    const version = await this.readVersion(bin);
+    if (!version) {
+      return { status: "unavailable", detail: `agy at ${bin} did not report a version` };
+    }
+    if (!agyLooksSignedIn()) {
+      return {
+        status: "degraded",
+        detail: `agy ${version}; run 'agy' once in a terminal to sign in with your Google account`,
       };
-      const timer = setTimeout(() => {
-        child.kill();
-        finish({ status: "unavailable", detail: "Antigravity SDK health check timed out" });
-      }, 5_000);
-      child.stdout.on("data", (data: Buffer) => { stdout += data.toString(); });
-      child.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
-      child.on("error", (error) => finish({
-        status: "unavailable",
-        detail: `Python sidecar is not runnable: ${error.message}`,
-      }));
-      child.on("close", () => {
-        const line = stdout.trim().split(/\r?\n/).at(-1);
-        if (line) {
-          try {
-            const parsed = JSON.parse(line) as AgentHealth;
-            if (["ok", "degraded", "unavailable"].includes(parsed.status)) {
-              finish(parsed);
-              return;
-            }
-          } catch {
-            // Fall through to one stable diagnostic.
-          }
-        }
-        finish({
-          status: "unavailable",
-          detail: stderr.trim().slice(-500) || "Antigravity sidecar returned no health result",
-        });
-      });
-    });
+    }
+    return { status: "ok", detail: `agy ${version}; signed in (subscription quota)` };
   }
 
   async *startRun(req: AgentRunRequest): AsyncIterable<AgentEvent> {
     const now = () => Date.now();
     yield { type: "started", runId: req.runId, ts: now() };
 
+    const bin = resolveAgyBinary(this.explicitBin);
+    if (!bin) {
+      yield {
+        type: "completed",
+        runId: req.runId,
+        ts: now(),
+        outcome: { status: "failed", error: `agy CLI not found; ${INSTALL_HINT}` },
+      };
+      return;
+    }
+
+    const { args } = buildAgyInvocation(req, {
+      ...(this.defaultModel ? { defaultModel: this.defaultModel } : {}),
+      defaultTimeoutMs: this.defaultTimeoutMs,
+    });
+
     let spawnError: Error | undefined;
     let stderr = "";
-    let terminal = false;
-    const child = this.spawnSidecar([], req.cwd);
+    const lines: string[] = [];
+    const child = spawnAgy(bin, [...this.agyArgs, ...args]);
     this.children.set(req.runId, child);
+    child.on("error", (error) => {
+      spawnError = error;
+    });
+    child.stderr.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
     const exit = new Promise<number | null>((resolve) => child.on("close", resolve));
-    child.on("error", (error) => { spawnError = error; });
-    child.stdin.on("error", () => {});
-    child.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
 
     const onAbort = () => void this.cancelRun(req.runId);
     req.signal?.addEventListener("abort", onAbort, { once: true });
     if (req.signal?.aborted) void this.cancelRun(req.runId);
 
-    child.stdin.end(`${JSON.stringify(buildAntigravityRequest(req, this.defaultModel))}\n`);
     const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
     try {
       for await (const line of rl) {
         if (!line.trim()) continue;
-        let raw: unknown;
-        try {
-          raw = JSON.parse(line);
-        } catch {
-          yield {
-            type: "log",
-            runId: req.runId,
-            ts: now(),
-            level: "warn",
-            message: `Antigravity sidecar emitted invalid JSON: ${line.slice(0, 300)}`,
-          };
-          continue;
-        }
-        const parsed = AgentEventSchema.safeParse(raw);
-        if (!parsed.success || parsed.data.runId !== req.runId) {
-          yield {
-            type: "log",
-            runId: req.runId,
-            ts: now(),
-            level: "warn",
-            message: "Antigravity sidecar emitted an invalid event",
-          };
-          continue;
-        }
-        if (parsed.data.type === "completed") terminal = true;
-        yield parsed.data;
+        lines.push(line);
+        yield { type: "message", runId: req.runId, ts: now(), role: "assistant", text: line };
       }
     } finally {
       rl.close();
@@ -187,32 +220,40 @@ export class AntigravityAdapter implements AgentAdapter {
 
     const code = await exit;
     this.children.delete(req.runId);
+
     if (stderr.trim()) {
       yield {
         type: "log",
         runId: req.runId,
         ts: now(),
         level: code === 0 ? "debug" : "warn",
-        message: `Antigravity stderr: ${stderr.trim().slice(-2_000)}`,
+        message: `agy stderr: ${stderr.trim().slice(-2_000)}`,
       };
     }
-    const cancelled = this.cancelled.delete(req.runId);
-    if (!terminal) {
-      const status = cancelled ? "cancelled" : "failed";
-      const error = cancelled
-        ? undefined
-        : spawnError?.message ?? `Antigravity sidecar exited with code ${code}`;
-      yield {
-        type: "completed",
-        runId: req.runId,
-        ts: now(),
-        outcome: { status, ...(error ? { error } : {}) },
-      };
-    }
+
+    const wasCancelled = this.cancelled.delete(req.runId);
+    const finalText = lines.join("\n").trim();
+    const status = wasCancelled ? "cancelled" : code === 0 ? "completed" : "failed";
+    const error =
+      status === "failed"
+        ? spawnError?.message ??
+          `agy exited with code ${code}${stderr.trim() ? `: ${stderr.trim().slice(-500)}` : ""}`
+        : undefined;
+
+    yield {
+      type: "completed",
+      runId: req.runId,
+      ts: now(),
+      outcome: {
+        status,
+        ...(finalText ? { finalText } : {}),
+        ...(error ? { error } : {}),
+      },
+    };
   }
 
   resumeRun(): AsyncIterable<AgentEvent> {
-    throw new Error("Antigravity resumeRun is not implemented in Phase 1.5");
+    throw new Error("Antigravity resumeRun is not implemented (agy --continue is not wired)");
   }
 
   async cancelRun(runId: string): Promise<void> {
@@ -222,11 +263,26 @@ export class AntigravityAdapter implements AgentAdapter {
     child.kill();
   }
 
-  private spawnSidecar(extraArgs: string[], cwd: string): ChildProcessWithoutNullStreams {
-    return spawn(
-      this.pythonBin,
-      [...this.pythonArgs, this.sidecarPath, ...extraArgs],
-      { cwd, env: process.env, shell: false, stdio: ["pipe", "pipe", "pipe"] },
-    );
+  private async readVersion(bin: string): Promise<string | undefined> {
+    return await new Promise<string | undefined>((resolve) => {
+      let stdout = "";
+      let settled = false;
+      const child = spawnAgy(bin, [...this.agyArgs, "--version"]);
+      const finish = (value: string | undefined) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const timer = setTimeout(() => {
+        child.kill();
+        finish(undefined);
+      }, 10_000);
+      child.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString();
+      });
+      child.on("error", () => finish(undefined));
+      child.on("close", () => finish(stdout.trim().split(/\r?\n/)[0]?.trim() || undefined));
+    });
   }
 }

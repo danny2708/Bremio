@@ -35,8 +35,6 @@ try {
   for (const relative of [
     "dist/bremio.js",
     "dist/bremio.js.map",
-    "dist/sidecar.py",
-    "dist/antigravity-requirements.txt",
   ]) {
     if (!existsSync(path.join(installedRoot, relative))) {
       throw new Error(`packed artifact is missing ${relative}`);

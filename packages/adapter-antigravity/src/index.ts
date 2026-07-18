@@ -1,7 +1,14 @@
-// @bremio/adapter-antigravity — AgentAdapter over the official Python SDK.
+// @bremio/adapter-antigravity — AgentAdapter over the authenticated `agy` CLI.
 export {
   AntigravityAdapter,
-  buildAntigravityRequest,
+  buildAgyInvocation,
   type AntigravityAdapterOptions,
-  type AntigravitySidecarRequest,
+  type AgyInvocation,
 } from "./antigravity-adapter";
+
+export {
+  resolveAgyBinary,
+  agyLooksSignedIn,
+  agyStateFile,
+  formatPrintTimeout,
+} from "./agy-cli";

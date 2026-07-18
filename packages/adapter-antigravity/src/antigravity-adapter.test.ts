@@ -1,11 +1,15 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { AgentRunRequest } from "@bremio/adapter-sdk";
-import { AntigravityAdapter, buildAntigravityRequest } from "./antigravity-adapter";
+import type { AgentEvent } from "@bremio/protocol";
+import { AntigravityAdapter, buildAgyInvocation } from "./antigravity-adapter";
 
-const fakeSidecar = fileURLToPath(
-  new URL("../test-fixtures/fake-sidecar.mjs", import.meta.url),
-);
+const fakeAgy = fileURLToPath(new URL("../test-fixtures/fake-agy.mjs", import.meta.url));
+
+/** Drive the fake CLI through node so tests never spend real subscription quota. */
+function adapter(): AntigravityAdapter {
+  return new AntigravityAdapter({ agyBin: process.execPath, agyArgs: [fakeAgy] });
+}
 
 function request(overrides: Partial<AgentRunRequest> = {}): AgentRunRequest {
   return {
@@ -18,53 +22,79 @@ function request(overrides: Partial<AgentRunRequest> = {}): AgentRunRequest {
   };
 }
 
+async function collect(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
+  const out: AgentEvent[] = [];
+  for await (const event of events) out.push(event);
+  return out;
+}
+
+describe("buildAgyInvocation", () => {
+  it("always passes --add-dir because agy ignores the process cwd", () => {
+    const { args, workspace } = buildAgyInvocation(request());
+    expect(args[args.indexOf("--add-dir") + 1]).toBe(workspace);
+    // The prompt restates the workspace so the agent cannot drift to its scratch dir.
+    expect(args[args.indexOf("-p") + 1]).toContain(workspace);
+  });
+
+  it("maps workspace-write to auto-approval and read-only to plan mode", () => {
+    expect(buildAgyInvocation(request()).args).toContain("--dangerously-skip-permissions");
+
+    const readOnly = buildAgyInvocation(request({ permission: "read-only" })).args;
+    expect(readOnly[readOnly.indexOf("--mode") + 1]).toBe("plan");
+    expect(readOnly).not.toContain("--dangerously-skip-permissions");
+  });
+
+  it("passes an explicit model label and a print timeout", () => {
+    const args = buildAgyInvocation(request({ model: "Gemini 3.1 Pro (High)" })).args;
+    expect(args[args.indexOf("--model") + 1]).toBe("Gemini 3.1 Pro (High)");
+    expect(args[args.indexOf("--print-timeout") + 1]).toMatch(/^\d+s$/);
+  });
+});
+
 describe("AntigravityAdapter", () => {
-  it("maps Bremio requests without inventing provider-reported identity", () => {
-    expect(buildAntigravityRequest(request({ reasoningLevel: "xhigh" }), "gemini-default"))
-      .toEqual({
-        runId: "run:test",
-        prompt: "implement it",
-        cwd: process.cwd(),
-        permission: "workspace-write",
-        model: "gemini-default",
-        reasoningLevel: "xhigh",
-      });
-  });
-
-  it("reports sidecar health and streams normalized events", async () => {
-    const adapter = new AntigravityAdapter({
-      pythonBin: process.execPath,
-      sidecarPath: fakeSidecar,
-    });
-    await expect(adapter.healthCheck()).resolves.toEqual({
-      status: "ok",
-      detail: "fake sidecar",
-    });
-
-    const events = [];
-    for await (const event of adapter.startRun(request())) events.push(event);
-
-    expect(events.map((event) => event.type)).toEqual([
-      "started",
-      "tool_use",
-      "tool_result",
-      "message",
-      "usage",
-      "completed",
-    ]);
-    expect(events.find((event) => event.type === "message")).toMatchObject({
-      text: "permission=workspace-write",
-    });
-  });
-
   it("is worker-capable but not lead- or test-gate eligible", async () => {
-    const adapter = new AntigravityAdapter();
-    await expect(adapter.getCapabilities()).resolves.toMatchObject({
-      planning: false,
-      structuredOutput: true,
-      repositoryWrite: true,
-      shell: true,
-      testing: false,
-    });
+    const caps = await adapter().getCapabilities();
+    // agy --print emits prose only, so it can never satisfy the lead contract.
+    expect(caps.structuredOutput).toBe(false);
+    expect(caps.planning).toBe(false);
+    expect(caps.testing).toBe(false);
+    expect(caps.repositoryWrite).toBe(true);
+    expect(caps.shell).toBe(true);
+  });
+
+  it("reports the agy version from healthCheck", async () => {
+    const health = await adapter().healthCheck();
+    // ok vs degraded depends on whether this machine has completed sign-in.
+    expect(["ok", "degraded"]).toContain(health.status);
+    expect(health.detail).toContain("1.1.4");
+  });
+
+  it("reports unavailable with an install hint when agy is missing", async () => {
+    const health = await new AntigravityAdapter({ agyBin: "/nonexistent/agy" }).healthCheck();
+    expect(health.status).toBe("unavailable");
+    expect(health.detail).toMatch(/not found/i);
+  });
+
+  it("streams prose lines as message events and completes", async () => {
+    const events = await collect(adapter().startRun(request()));
+    expect(events[0]?.type).toBe("started");
+    expect(events.filter((event) => event.type === "message").length).toBeGreaterThan(0);
+
+    const terminal = events.at(-1);
+    expect(terminal?.type).toBe("completed");
+    if (terminal?.type === "completed") {
+      expect(terminal.outcome.status).toBe("completed");
+      expect(terminal.outcome.finalText).toContain("task complete");
+    }
+  });
+
+  it("surfaces a non-zero exit as a failed outcome", async () => {
+    const events = await collect(adapter().startRun(request({ prompt: "FAIL_PLEASE" })));
+    const terminal = events.at(-1);
+    expect(terminal?.type).toBe("completed");
+    if (terminal?.type === "completed") {
+      expect(terminal.outcome.status).toBe("failed");
+      expect(terminal.outcome.error).toMatch(/exited with code 3/);
+    }
   });
 });

@@ -33,16 +33,8 @@ await build({
   ],
 });
 
-await Promise.all([
-  copyFile(
-    path.join(repoRoot, "packages", "adapter-antigravity", "src", "sidecar.py"),
-    path.join(distDir, "sidecar.py"),
-  ),
-  copyFile(
-    path.join(repoRoot, "packages", "adapter-antigravity", "requirements.txt"),
-    path.join(distDir, "antigravity-requirements.txt"),
-  ),
-]);
+// The Antigravity adapter drives the installed `agy` CLI, so the bundle ships
+// no Python sidecar or requirements file.
 
 if (process.platform !== "win32") {
   await chmod(path.join(distDir, "bremio.js"), 0o755);
