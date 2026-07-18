@@ -106,5 +106,5 @@ interface TaskResult {
 
 Each task is granted `permissions` (`read-only` for analysis, test, and review;
 `workspace-write` for implementation) and its own `worktree` path. See
-enforcement limits in `04-adapters.md` (Antigravity **cannot** be forced
-read-only in `-p` mode).
+per-provider enforcement in `04-adapters.md` (Antigravity enforces read-only
+through `agy --mode plan`).

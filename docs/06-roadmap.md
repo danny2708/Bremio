@@ -72,14 +72,15 @@ Not needed yet: dashboard, parallelism, auto-merge, automatic quota routing,
 OpenCode/Jan.
 
 ## Phase 1.5 — Antigravity worker
-**Implemented locally (2026-07-18):** official `google-antigravity==0.1.7`
-Python SDK sidecar, normalized JSONL events, health/auth diagnostics,
-workspace-scoped read/write policies, cancellation, usage, Single selection,
-and explicit Team worker selection. Capability-aware routing keeps planning
-and test gates on Claude/Codex. Typecheck and 112 tests pass; a clean isolated
-SDK install passes `pip check`. Real billed execution remains unverified
-because no `GEMINI_API_KEY` or complete Vertex configuration was present;
-`doctor` correctly reports `degraded`.
+**Implemented and verified with a real run (2026-07-18):** the authenticated
+`agy` CLI 1.1.4 in print mode, so Antigravity work uses the existing Google AI
+subscription instead of a separate API key. Mandatory `--add-dir` workspace
+targeting (verified: `agy` ignores the process cwd), `--mode plan` for
+read-only, `--dangerously-skip-permissions` for write, prose events,
+cancellation, and explicit Single/Team worker selection. Verified that
+`agy -p` returns clean stdout under a non-TTY parent, so no pty wrapper is
+needed. A real `bremio run --mode single --agent antigravity` created the
+requested file with a ledger entry and report; `doctor` reports `ok`.
 
 Antigravity is not allowed to lead (`planning=false`) and is not a test-gate
 agent until the SDK exposes reliable shell exit codes through its response

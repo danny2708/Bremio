@@ -15,8 +15,8 @@ the results. ROI goal: **get the most out of the models with the least quota.**
 **Bremio v0.1 CLI is release-ready as a local npm artifact.** Phase 1
 (vertical slice) is implemented, plus the Phase-2 quality gate and
 early Phase-4 measurement/quota slices — explicit Single/Team modes, Claude
-(Agent SDK) + Codex (`codex exec --json`) as swappable lead/workers, and an
-Antigravity SDK worker, a validator, a sequential
+(Agent SDK) + Codex (`codex exec --json`) as swappable lead/workers, an
+Antigravity worker on the `agy` CLI, an interactive TUI, a validator, a sequential
 scheduler, dependency-aware git-worktree isolation, independent review,
 exit-code-backed test evidence, review-gated merge, and the CLI. Full design
 lives in [`docs/`](docs/); start at [`docs/README.md`](docs/README.md). Still out
@@ -42,35 +42,42 @@ bremio --version
 bremio doctor
 ```
 
-`npm pack` runs the build again. The tarball contains the CLI bundle, source
-map, and Antigravity Python sidecar plus its requirements file. This v0.1 cut
-is intentionally a local tarball release (`private: true`), not an npm registry
-publication.
+`npm pack` runs the build again. The tarball contains the CLI bundle and its
+source map. This v0.1 cut is intentionally a local tarball release
+(`private: true`), not an npm registry publication.
 
 ## Quickstart
 Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
 `PATH` and logged in (`codex login`), and Claude auth for the Agent SDK
 (`ANTHROPIC_API_KEY` or a Claude Code login).
 
-Antigravity is optional. It needs Python 3.10+, the official SDK, and either
-`GEMINI_API_KEY` or Vertex credentials. Install it in a dedicated environment
-and point Bremio at that interpreter (PowerShell example):
+Antigravity is optional and runs through the **`agy` CLI**, so its work bills to
+your existing Google AI subscription instead of a separate API key:
 
 ```powershell
-py -3.12 -m venv .bremio\antigravity-venv
-& .bremio\antigravity-venv\Scripts\python.exe -m pip install -r packages\adapter-antigravity\requirements.txt
-$env:BREMIO_ANTIGRAVITY_PYTHON = (Resolve-Path .bremio\antigravity-venv\Scripts\python.exe).Path
+irm https://antigravity.google/cli/install.ps1 | iex   # Windows
+# curl -fsSL https://antigravity.google/cli/install.sh | bash   # macOS/Linux
+agy    # run once in a real terminal to sign in with your Google account
 ```
 
-Keep credentials outside the repository. `bremio doctor` reports Antigravity
-as `unavailable` if its SDK environment is missing, or `degraded` until
-supported credentials are visible to the configured sidecar.
+Restart the terminal afterwards so the installer's PATH entry applies; Bremio
+also probes the default install location directly, and `BREMIO_AGY_BIN`
+overrides it. `bremio doctor` reports Antigravity as `unavailable` when `agy`
+is missing, `degraded` until sign-in completes, and `ok` once authenticated.
+
+Antigravity is a Single implementer and Team worker only: `agy --print` emits
+prose with no JSON mode, so it reports `structuredOutput: false` and can never
+be selected as lead or as the test gate.
 
 ```sh
 corepack pnpm install
 corepack pnpm test          # unit + quality-gate + timeout E2E runs
 corepack pnpm typecheck
 corepack pnpm release:check # full local release gate + clean packed install
+
+# interactive TUI (default when run in a terminal); everything below still works
+corepack pnpm bremio            # or: bremio tui --repo /path/to/repo
+corepack pnpm tui:smoke         # renders the TUI off-TTY to prove it still mounts
 
 # check adapter health / lead-eligibility
 corepack pnpm bremio doctor
@@ -121,7 +128,7 @@ git fixture per run. Single mode requires a completed direct implementation
 with recognizable passing verification evidence. Team mode requires real
 delegation plus a passed test/review gate. Fixtures are deleted on success and
 retained on failure; pass `--keep` to retain successes too. Antigravity's
-preflight fails closed while its SDK credentials are missing. The command is
+preflight fails closed until `agy` is installed and signed in. The command is
 intentionally excluded from both `pnpm test` and `release:check`, so normal QA
 never spends provider quota.
 
@@ -176,5 +183,5 @@ Claude (lead) + Codex (worker), sequential. See
 
 ## Stack (planned)
 Node 22 · TypeScript · pnpm workspaces · Zod · SQLite · simple-git · Pino · Vitest.
-Adapters: Claude Agent SDK · Codex app-server/exec · official Antigravity
-Python SDK sidecar.
+Adapters: Claude Agent SDK · Codex app-server/exec · Antigravity `agy` CLI
+(print mode, subscription auth). TUI: Ink + React.

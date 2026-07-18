@@ -41,37 +41,43 @@ interface AgentAdapter {
   re-read it.
 - Roles: lead, implementer, reviewer, tester. Eligible to be the lead.
 
-## Antigravity adapter (official SDK 0.1.7, verified 2026-07-18)
-- Surface: the official `google-antigravity` Python SDK behind a one-process,
-  one-run JSONL sidecar. Bremio does not drive the IDE or wrap the interactive
-  `agy` TUI.
-- Auth: `GEMINI_API_KEY`, or Vertex/Enterprise environment configuration plus
-  ADC. The SDK does **not** reuse an Antigravity IDE login or its subscription
-  quota. `doctor` distinguishes missing SDK (`unavailable`) from installed SDK
-  without detected credentials (`degraded`).
-- Permissions: both modes disable subagents and scope file tools to the task
-  workspace. `read-only` exposes only the SDK's read-only built-ins.
-  `workspace-write` additionally exposes create/edit/shell and uses the SDK's
-  declarative allow policy. The SDK's `run_command` is not filesystem-sandboxed
-  like its file tools, so Bremio never enables it for a read-only task.
-- Streaming: text, thoughts, tool calls, structured output, session id, and
-  provider token usage normalize into `AgentEvent`. SDK 0.1.7 does not expose
-  reliable shell exit codes through `ChatResponse`, so Antigravity is not
-  eligible for Bremio test gates yet.
+## Antigravity adapter (`agy` CLI 1.1.4, verified 2026-07-18)
+- Surface: the authenticated **`agy` CLI** in print mode, spawned directly
+  (`shell: false`). Work bills to the user's existing Google AI subscription;
+  Bremio does not use the Python SDK or a `GEMINI_API_KEY`, and never drives the
+  IDE or the interactive `agy` TUI.
+- Auth: sign-in happens once via `agy` in a real terminal. There is no
+  `agy auth status`, and the only definitive check is a billed prompt, so
+  `doctor` reads the CLI's onboarding state file as a heuristic: `unavailable`
+  when the binary is missing, `degraded` before sign-in, `ok` afterwards.
+- **Workspace targeting is mandatory.** Verified: `agy` IGNORES the spawned
+  process cwd and writes into its own scratch workspace, so every run passes
+  `--add-dir <absolute path>` and restates the workspace root in the prompt.
+- Permissions: `read-only` maps to `--mode plan`, which refuses writes but still
+  returns prose. `workspace-write` maps to `--dangerously-skip-permissions`,
+  because a non-interactive run cannot answer approval prompts.
+- Non-TTY: verified that `agy -p` returns clean stdout with exit 0 under a
+  non-TTY parent on 1.1.4, so the historical output-swallowing trap does not
+  reproduce and **no pty wrapper is needed**.
+- Streaming: prose only. Bremio emits one `message` event per output line plus a
+  terminal `completed`; there are no tool/usage events because the CLI exposes
+  none. `--print-timeout` is a provider-side safety net; real cancellation comes
+  from the orchestrator signal.
 - Roles: Single implementer and explicit Team implementation worker via
-  `--worker antigravity`. `planning=false` and `testing=false`, so it cannot be
-  selected as lead or test gate. Structured output support is retained for
-  future roles rather than being inferred from text.
-- Quota: **AI-Quota-Tray already reads Antigravity quota per model via the
-  running IDE's local language-server `GetUserStatus` RPC** (process discovery,
-  CSRF token, and `clientModelConfigs[].quotaInfo`; confirmed in AQT source on
-  2026-07-18). Bremio's `packages/quota` consumes the resulting SQLite rows —
-  don't re-implement it. If AQT's Antigravity source is ever
-  unavailable at runtime, `@bremio/quota` returns an explicit unknown or
+  `--worker antigravity`. There is no JSON output mode, so the adapter reports
+  `structuredOutput=false` (and `planning=false`, `testing=false`) — the router
+  therefore excludes it from lead and test-gate roles through the capability
+  contract rather than a provider-specific check.
+- Quota: unchanged and NOT read from `agy` (it has no machine-readable quota
+  command; `/credits` only opens an interactive panel). **AI-Quota-Tray already
+  reads Antigravity quota per model via the running IDE's local language-server
+  `GetUserStatus` RPC** (process discovery, CSRF token, and
+  `clientModelConfigs[].quotaInfo`; confirmed in AQT source on 2026-07-18).
+  Bremio's `packages/quota` consumes the resulting SQLite rows. If that source
+  is unavailable at runtime, `@bremio/quota` returns an explicit unknown or
   unavailable capacity snapshot rather than guessing.
-- Package pin and setup live in
-  `packages/adapter-antigravity/requirements.txt`; the interpreter can be
-  selected with `BREMIO_ANTIGRAVITY_PYTHON`.
+- Binary resolution: PATH, then the installer's default location; override with
+  `BREMIO_AGY_BIN`.
 
 ## OpenCode / Jan (future, not the MVP)
 - **OpenCode**: has a headless HTTP server (`opencode serve`) → the adapter

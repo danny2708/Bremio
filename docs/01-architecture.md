@@ -27,7 +27,7 @@ execution path.
         ┌───────────────────┼────────────────────┐
         ▼                   ▼                     ▼
   Claude Adapter      Codex Adapter       Antigravity Adapter
-  (Agent SDK)         (app-server/exec)   (Python SDK sidecar)
+  (Agent SDK)         (app-server/exec)   (agy CLI, print mode)
         └───────────────────┼────────────────────┘
                             ▼
                   Future adapters (OpenCode / Jan)
