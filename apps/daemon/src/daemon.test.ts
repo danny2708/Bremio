@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RunRegistry, type RunEvent } from "./runs";
+import { RunStore } from "./storage";
 import { startDaemonServer, type DaemonHandle } from "./server";
 import { publishEndpoint, readEndpoint, retractEndpoint } from "./endpoint";
 
@@ -33,11 +34,22 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
+async function freshRegistry(): Promise<RunRegistry> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-daemon-db-"));
+  const store = await RunStore.open(path.join(dir, "bremio.db"));
+  cleanups.push(async () => {
+    store.close();
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+      .catch(() => {});
+  });
+  return new RunRegistry(store);
+}
+
 async function daemon(registry?: RunRegistry): Promise<DaemonHandle> {
   const handle = await startDaemonServer({
     token: TOKEN,
     version: "test",
-    ...(registry ? { registry } : {}),
+    registry: registry ?? (await freshRegistry()),
   });
   cleanups.push(() => handle.close());
   return handle;
@@ -105,7 +117,7 @@ describe("daemon HTTP surface", () => {
   });
 
   it("rejects a malformed run request instead of starting one", async () => {
-    const registry = new RunRegistry();
+    const registry = await freshRegistry();
     const handle = await daemon(registry);
 
     const response = await call(handle, "/runs", {
@@ -144,7 +156,7 @@ describe("run registry", () => {
   }
 
   it("replays buffered events to a subscriber that attaches late", async () => {
-    const registry = new RunRegistry();
+    const registry = await freshRegistry();
     const started = registry.start({
       mode: "single",
       repoPath: path.join(os.tmpdir(), "definitely-not-a-repo"),
@@ -164,7 +176,7 @@ describe("run registry", () => {
   });
 
   it("resumes after a sequence number instead of repeating delivered events", async () => {
-    const registry = new RunRegistry();
+    const registry = await freshRegistry();
     const started = registry.start({
       mode: "single",
       repoPath: path.join(os.tmpdir(), "definitely-not-a-repo"),
@@ -191,7 +203,7 @@ describe("run registry", () => {
   });
 
   it("streams live events and resumes from a sequence number", async () => {
-    const registry = new RunRegistry();
+    const registry = await freshRegistry();
     const handle = await daemon(registry);
 
     // A fake run whose events we control, so no provider is involved.
@@ -215,7 +227,7 @@ describe("run registry", () => {
   });
 
   it("keeps a run readable after it finishes", async () => {
-    const registry = new RunRegistry();
+    const registry = await freshRegistry();
     const handle = await daemon(registry);
     const started = registry.start({
       mode: "single",
@@ -227,8 +239,8 @@ describe("run registry", () => {
 
     const detail = await call(handle, `/runs/${started.id}`);
     expect(detail.status).toBe(200);
-    const body = (await detail.json()) as { run: { state: string } };
-    expect(["failed", "cancelled", "completed"]).toContain(body.run.state);
+    const body = (await detail.json()) as { run: { status: string } };
+    expect(["failed", "cancelled", "completed"]).toContain(body.run.status);
   });
 });
 
@@ -238,7 +250,19 @@ describe("endpoint discovery", () => {
     const file = path.join(dir, "daemon.json");
     cleanups.push(() => fs.rm(dir, { recursive: true, force: true }));
 
-    await publishEndpoint({ port: 1234, token: "t", pid: 42, version: "test" }, file);
+    // pid must match this process: retract deliberately refuses to delete a
+    // file another daemon owns (covered in lifecycle.test.ts).
+    await publishEndpoint(
+      {
+        port: 1234,
+        token: "t",
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        daemonVersion: "test",
+        protocolVersion: 1,
+      },
+      file,
+    );
     expect(await readEndpoint(file)).toMatchObject({ port: 1234, token: "t" });
 
     await retractEndpoint(file);

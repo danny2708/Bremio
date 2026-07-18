@@ -13,11 +13,20 @@ import { z } from "zod";
  * boundary that protects the repos the daemon can write to.
  */
 
+/**
+ * Wire format version for the daemon HTTP + SSE surface. Bump when a change
+ * would break an older client; clients compare against `minimumClientProtocol`.
+ */
+export const PROTOCOL_VERSION = 1;
+export const MINIMUM_CLIENT_PROTOCOL = 1;
+
 const EndpointSchema = z.object({
   port: z.number().int().positive().max(65535),
   token: z.string().min(1),
   pid: z.number().int().positive(),
-  version: z.string().optional(),
+  startedAt: z.string().min(1),
+  daemonVersion: z.string().min(1),
+  protocolVersion: z.number().int().positive(),
 });
 export type DaemonEndpoint = z.infer<typeof EndpointSchema>;
 
@@ -34,10 +43,21 @@ export async function publishEndpoint(
   file = daemonEndpointPath(),
 ): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
-  // Write-then-rename so a reader never observes a half-written file.
+  // Write-then-rename so a reader never observes a half-written file, and mode
+  // 0600 so the token is not world-readable on POSIX. (Windows ignores the
+  // mode; there the user profile directory is the boundary.)
   const temporary = `${file}.${randomUUID()}.tmp`;
-  await fs.writeFile(temporary, JSON.stringify(endpoint, null, 2), "utf8");
+  const handle = await fs.open(temporary, "w", 0o600);
+  try {
+    await handle.writeFile(JSON.stringify(endpoint, null, 2), "utf8");
+    // Flush before the rename: a crash between write and rename must not leave
+    // a valid-looking file with no contents.
+    await handle.sync().catch(() => {});
+  } finally {
+    await handle.close();
+  }
   await fs.rename(temporary, file);
+  await fs.chmod(file, 0o600).catch(() => {});
 }
 
 export async function readEndpoint(
@@ -52,9 +72,14 @@ export async function readEndpoint(
 }
 
 /**
- * Best-effort cleanup. Consumers must still confirm liveness by connecting:
- * the file outlives a crash, so its presence proves nothing.
+ * Remove the discovery file, but only when it still describes this process.
+ * A slow shutdown must not delete the file a newer daemon just published.
  */
-export async function retractEndpoint(file = daemonEndpointPath()): Promise<void> {
+export async function retractEndpoint(
+  file = daemonEndpointPath(),
+  pid = process.pid,
+): Promise<void> {
+  const current = await readEndpoint(file);
+  if (current && current.pid !== pid) return;
   await fs.rm(file, { force: true }).catch(() => {});
 }

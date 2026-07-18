@@ -22,7 +22,12 @@ import {
   toAqtCapacitySnapshots,
   type AgentCapacitySnapshot,
 } from "@bremio/quota";
-import { startDaemon } from "@bremio/daemon";
+import {
+  DaemonAlreadyRunningError,
+  daemonStatus,
+  startDaemon,
+  stopDaemon,
+} from "@bremio/daemon";
 import { mergeCommand } from "./merge";
 import { capacityCommand } from "./quota";
 import { statsCommand } from "./stats";
@@ -45,7 +50,7 @@ ${c.bold("Usage")}
   bremio stats [--since <date>] [--repo <path>]
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
   bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
-  bremio daemon                           run the local daemon (HTTP + SSE on loopback)
+  bremio daemon [start|status|stop|restart]   manage the local daemon (HTTP + SSE, loopback)
   bremio doctor
   bremio --version
   bremio --help
@@ -167,7 +172,7 @@ async function main(): Promise<void> {
       process.exitCode = await quotaCommandFromCli(values);
       return;
     case "daemon":
-      await daemonCommand();
+      process.exitCode = await daemonCommandFromCli(positionals[1]);
       return;
     case "doctor":
       await doctor();
@@ -530,13 +535,50 @@ function readRoutingCapacity(
 }
 
 /**
- * Run the daemon in the foreground. Both the CLI and the VS Code extension are
- * clients of it, so a run started in one surface is visible from the other.
+ * Daemon lifecycle. `bremio daemon` with no subcommand keeps running it in the
+ * foreground, which is what the VS Code extension spawns.
  */
-async function daemonCommand(): Promise<void> {
-  const daemon = await startDaemon({ version: VERSION });
+async function daemonCommandFromCli(subcommand?: string): Promise<number> {
+  switch (subcommand ?? "start") {
+    case "start":
+      return runDaemonForeground();
+    case "status":
+      return reportDaemonStatus();
+    case "stop":
+      return stopDaemonCommand();
+    case "restart":
+      await stopDaemonCommand();
+      return runDaemonForeground();
+    default:
+      console.error(c.red(`unknown daemon subcommand: ${subcommand}`));
+      console.error(c.dim("  expected one of: start, status, stop, restart"));
+      return 2;
+  }
+}
+
+async function runDaemonForeground(): Promise<number> {
+  let daemon: Awaited<ReturnType<typeof startDaemon>>;
+  try {
+    daemon = await startDaemon({ version: VERSION });
+  } catch (err) {
+    if (err instanceof DaemonAlreadyRunningError) {
+      console.error(c.yellow(`error: ${err.message}`));
+      if (err.existing) {
+        console.error(c.dim(`  already listening on 127.0.0.1:${err.existing.port} (pid ${err.existing.pid})`));
+      }
+      console.error(c.dim("  run: bremio daemon status   (or: bremio daemon restart)"));
+      return 1;
+    }
+    throw err;
+  }
+
   console.log(`${c.bold("Bremio daemon")} listening on ${c.cyan(`127.0.0.1:${daemon.port}`)}`);
   console.log(c.dim(`  endpoint: ${daemon.endpointFile}`));
+  if (daemon.reconciled.length > 0) {
+    console.log(
+      c.yellow(`  ${daemon.reconciled.length} run(s) marked interrupted from a previous session`),
+    );
+  }
   console.log(c.dim("  press Ctrl+C to stop"));
 
   let stopping = false;
@@ -548,6 +590,25 @@ async function daemonCommand(): Promise<void> {
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
   await new Promise(() => {}); // hold the process open until a signal arrives
+  return 0;
+}
+
+async function reportDaemonStatus(): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    console.log(`${c.green("running")} — 127.0.0.1:${status.endpoint.port} (pid ${status.endpoint.pid})`);
+    console.log(c.dim(`  version ${status.endpoint.daemonVersion} · protocol ${status.endpoint.protocolVersion}`));
+    console.log(c.dim(`  started ${status.endpoint.startedAt}`));
+    return 0;
+  }
+  console.log(`${c.yellow("not running")} — ${status.detail}`);
+  return status.staleEndpoint ? 1 : 0;
+}
+
+async function stopDaemonCommand(): Promise<number> {
+  const outcome = await stopDaemon();
+  console.log(outcome.stopped ? c.green(outcome.detail) : c.dim(outcome.detail));
+  return 0;
 }
 
 async function doctor(): Promise<void> {

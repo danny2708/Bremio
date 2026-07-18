@@ -43,7 +43,10 @@ const MergeSchema = z.object({
 export interface DaemonServerOptions {
   token: string;
   version: string;
-  registry?: RunRegistry;
+  /** Owns run execution and the durable record; the server only routes to it. */
+  registry: RunRegistry;
+  /** Invoked by an authenticated shutdown request. */
+  onShutdown?: () => void;
 }
 
 export interface DaemonHandle {
@@ -54,7 +57,7 @@ export interface DaemonHandle {
 }
 
 export async function startDaemonServer(options: DaemonServerOptions): Promise<DaemonHandle> {
-  const registry = options.registry ?? new RunRegistry();
+  const registry = options.registry;
   const server = createServer((req, res) => {
     void handle(req, res, options, registry).catch((err: unknown) => {
       sendJson(res, 500, { error: (err as Error).message });
@@ -108,6 +111,16 @@ async function handle(
     return sendJson(res, 200, { app: "bremio-daemon", version: options.version, pid: process.pid });
   }
 
+  if (method === "POST" && route === "/shutdown") {
+    if (!options.onShutdown) return sendJson(res, 501, { error: "shutdown is not supported" });
+    // Answer before exiting so `daemon stop` sees a result rather than a
+    // dropped socket. Asking the daemon to stop itself is what lets `stop`
+    // avoid signalling a PID it cannot prove belongs to Bremio.
+    sendJson(res, 202, { stopping: true, activeRuns: registry.activeCount });
+    setTimeout(() => options.onShutdown?.(), 10);
+    return;
+  }
+
   if (method === "GET" && route === "/adapters") {
     const adapters = [new ClaudeAdapter(), new CodexAdapter(), new AntigravityAdapter()];
     const diagnostics = await Promise.all(
@@ -134,10 +147,12 @@ async function handle(
 
   if (method === "GET" && route === "/runs") {
     const repoPath = url.searchParams.get("repo");
+    // Runs now come from the durable store, so history survives a restart.
+    // Legacy on-disk reports are still surfaced for runs that predate it.
     const stored = repoPath ? await listReports(repoPath) : [];
     return sendJson(res, 200, {
-      live: registry.list().map(summarize),
-      stored: stored.map((entry) => ({ runId: entry.runId, report: entry.report })),
+      runs: registry.list(repoPath ?? undefined),
+      legacyReports: stored.map((entry) => ({ runId: entry.runId, report: entry.report })),
     });
   }
 
@@ -155,8 +170,15 @@ async function handle(
   const runDetail = /^\/runs\/([^/]+)$/.exec(route);
   if (method === "GET" && runDetail) {
     const id = decodeURIComponent(runDetail[1] ?? "");
-    const live = registry.get(id);
-    if (live) return sendJson(res, 200, { run: summarize(live), events: live.events });
+    const run = registry.get(id);
+    if (run) {
+      const afterSeq = Number(url.searchParams.get("afterSeq") ?? 0);
+      return sendJson(res, 200, {
+        run,
+        events: registry.events(id, Number.isFinite(afterSeq) ? afterSeq : 0),
+        artifacts: registry.artifacts(id),
+      });
+    }
     const repoPath = url.searchParams.get("repo");
     const stored = repoPath ? await loadReportByRunId(repoPath, id) : undefined;
     if (!stored) return sendJson(res, 404, { error: `unknown run: ${id}` });
@@ -168,8 +190,12 @@ async function handle(
     if (!parsed.success) {
       return sendJson(res, 400, { error: "invalid run request", detail: parsed.error.issues });
     }
-    const run = registry.start(parsed.data);
-    return sendJson(res, 202, { run: summarize(run) });
+    try {
+      return sendJson(res, 202, { run: registry.start(parsed.data) });
+    } catch (err) {
+      // Refusing work during shutdown is an expected answer, not a fault.
+      return sendJson(res, 503, { error: (err as Error).message });
+    }
   }
 
   if (method === "GET" && route === "/diff") {
@@ -270,21 +296,6 @@ function streamEvents(
   };
   req.on("close", stop);
   res.on("close", stop);
-}
-
-function summarize(run: ReturnType<RunRegistry["list"]>[number]) {
-  return {
-    id: run.id,
-    mode: run.mode,
-    repoPath: run.repoPath,
-    prompt: run.prompt,
-    agentId: run.agentId,
-    state: run.state,
-    startedAt: run.startedAt,
-    ...(run.finishedAt ? { finishedAt: run.finishedAt } : {}),
-    ...(run.error ? { error: run.error } : {}),
-    ...(run.report ? { report: run.report } : {}),
-  };
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
