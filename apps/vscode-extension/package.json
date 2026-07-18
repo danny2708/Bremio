@@ -1,0 +1,53 @@
+{
+  "name": "bremio-vscode",
+  "displayName": "Bremio",
+  "description": "Orchestrate AI coding agents — different minds, one team.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "bremio",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "bremio.open",
+        "title": "Bremio: Open Panel",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "bremio.startDaemon",
+        "title": "Bremio: Start Daemon"
+      },
+      {
+        "command": "bremio.stopDaemon",
+        "title": "Bremio: Stop Daemon"
+      }
+    ],
+    "configuration": {
+      "title": "Bremio",
+      "properties": {
+        "bremio.cliPath": {
+          "type": "string",
+          "default": "bremio",
+          "description": "Path to the bremio executable used to start the daemon."
+        },
+        "bremio.autoStartDaemon": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the Bremio daemon automatically when the panel opens."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ./build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0"
+  }
+}

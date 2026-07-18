@@ -82,6 +82,9 @@ corepack pnpm tui:smoke         # renders the TUI off-TTY to prove it still moun
 # check adapter health / lead-eligibility
 corepack pnpm bremio doctor
 
+# run the local daemon; the CLI and the VS Code extension are both clients
+corepack pnpm bremio daemon
+
 # Single: one adapter call in the current workspace; no plan/scheduler/worktree/merge
 corepack pnpm bremio run --mode single --agent codex --timeout 600 --repo /path/to/repo "fix the failing test"
 corepack pnpm bremio run --mode single --agent claude --repo /path/to/repo "add a health endpoint"
@@ -171,7 +174,8 @@ This remains opt-in until ledger calibration supports automatic optimization.
 `adapter-claude` · `adapter-codex` · `adapter-antigravity` (`agy` CLI) ·
 `orchestrator` (direct Single runner plus Team lead-manager, validator, router,
 parallel scheduler, aggregator) · `quota` (AQT consumer: SQLite reader plus
-loopback refresh client) · `workspace` (worktrees + logs) · `apps/cli`.
+loopback refresh client) · `workspace` (worktrees + logs) · `apps/daemon`
+(loopback HTTP + SSE; holds run state) · `apps/cli` · `apps/vscode-extension`.
 
 ## Core principles
 - Orchestrator is provider-agnostic — Claude is only the *default lead*.

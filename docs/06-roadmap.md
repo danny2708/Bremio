@@ -196,8 +196,20 @@ the implementation commit, the main repo stayed clean, and no git lock errors
 occurred. Streamed output is tagged per task, since interleaved lines are
 otherwise unreadable.
 
-Still open in Phase 5: the VS Code extension, and any provider-side
-rate-limit backoff should concurrency be raised well above the default.
+**Daemon and VS Code extension shipped (2026-07-18).** `apps/daemon` is the
+process docs/03 described: it holds run state, streams events, and exposes
+adapters, capacity, runs, diff, and merge over a token-guarded loopback HTTP
+surface. The CLI (`bremio daemon`) and the VS Code extension are both clients,
+so a run started in one surface is visible from the other.
+
+The extension provides Run (Single/Team with live streaming and cancel), Runs,
+Capacity, and Doctor, plus diff review and gate-checked merge behind an explicit
+confirmation dialog. It depends on no `@bremio/*` package — the extension host is
+shared with the editor, so the adapters stay out of it — and spawns the daemon
+when one is not already reachable.
+
+Still open in Phase 5: provider-side rate-limit backoff should concurrency be
+raised well above the default, and a light-theme variant of the panel palette.
 
 ## Phase 6 — Additional providers
 OpenCode (HTTP), Jan (local worker = near-free capacity). Each one = one
