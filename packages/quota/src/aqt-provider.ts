@@ -1,6 +1,7 @@
 import type {
   AgentCapacitySnapshot,
   CapacityConfidence,
+  CapacityFreshness,
   QuotaProvider,
   QuotaWindow,
 } from "./capacity";
@@ -17,6 +18,12 @@ export type AqtAgentId = (typeof AQT_AGENT_IDS)[number];
 
 export interface AqtQuotaProviderOptions extends ReadAqtQuotaOptions {
   agentId: AqtAgentId;
+  /** Unix seconds after which confidence degrades one level. Defaults to half the stale limit. */
+  agingAfterSeconds?: number;
+}
+
+export interface CapacityFreshnessOptions {
+  agingAfterSeconds?: number;
 }
 
 /** One agent-facing view over AI-Quota-Tray's shared read-only snapshot store. */
@@ -30,51 +37,73 @@ export class AqtQuotaProvider implements QuotaProvider {
   }
 
   async readSnapshot(): Promise<AgentCapacitySnapshot> {
-    const source = readAqtQuota(this.#options);
-    return toAgentCapacitySnapshot(source, this.#options.agentId);
+    const { agentId, agingAfterSeconds, ...readOptions } = this.#options;
+    const source = readAqtQuota(readOptions);
+    return toAgentCapacitySnapshot(source, agentId, { agingAfterSeconds });
   }
 }
 
 /** Map one AQT database read to cards without re-reading the database per agent. */
 export function toAqtCapacitySnapshots(
   source: AqtQuotaSnapshot,
+  options: CapacityFreshnessOptions = {},
   agentIds: readonly AqtAgentId[] = AQT_AGENT_IDS,
 ): AgentCapacitySnapshot[] {
-  return agentIds.map((agentId) => toAgentCapacitySnapshot(source, agentId));
+  return agentIds.map((agentId) => toAgentCapacitySnapshot(source, agentId, options));
 }
 
 export function toAgentCapacitySnapshot(
   source: AqtQuotaSnapshot,
   agentId: AqtAgentId,
+  options: CapacityFreshnessOptions = {},
 ): AgentCapacitySnapshot {
+  const agingAfterSeconds = resolveAgingAfterSeconds(source, options);
   const provider = source.providers.find((candidate) => candidate.agentId === agentId);
   if (!provider) return unavailableSnapshot(source, agentId);
 
-  const windows = provider.buckets.map((bucket): QuotaWindow => ({
-    id: bucket.bucketId,
-    label: bucket.bucketName,
-    scope: agentId === "antigravity" ? "model" : "account",
-    ...(bucket.usedPercent !== undefined ? { usedPercent: bucket.usedPercent } : {}),
-    ...(bucket.remainingPercent !== undefined
-      ? { remainingPercent: bucket.remainingPercent }
-      : {}),
-    ...(bucket.resetsAt !== undefined ? { resetsAt: bucket.resetsAt } : {}),
-    ...(bucket.windowMinutes !== undefined ? { windowMinutes: bucket.windowMinutes } : {}),
-    capturedAt: bucket.fetchedAt,
-    confidence: normalizeConfidence(bucket.confidence),
-  }));
+  const windows = provider.buckets.map((bucket): QuotaWindow => {
+    const freshness = freshnessFor(
+      bucket.fetchedAt,
+      source.readAt,
+      agingAfterSeconds,
+      source.staleAfterSeconds,
+    );
+    return {
+      id: bucket.bucketId,
+      label: bucket.bucketName,
+      scope: agentId === "antigravity" ? "model" : "account",
+      ...(bucket.usedPercent !== undefined ? { usedPercent: bucket.usedPercent } : {}),
+      ...(bucket.remainingPercent !== undefined
+        ? { remainingPercent: bucket.remainingPercent }
+        : {}),
+      ...(bucket.resetsAt !== undefined ? { resetsAt: bucket.resetsAt } : {}),
+      ...(bucket.windowMinutes !== undefined ? { windowMinutes: bucket.windowMinutes } : {}),
+      capturedAt: bucket.fetchedAt,
+      freshness,
+      confidence: confidenceFor(bucket.confidence, freshness),
+    };
+  });
+
+  const capturedAt = oldestCapture(provider, source.readAt);
+  const freshness = freshnessFor(
+    capturedAt,
+    source.readAt,
+    agingAfterSeconds,
+    source.staleAfterSeconds,
+  );
 
   return AgentCapacitySnapshotSchema.parse({
     agentId,
     // AQT observes provider quota, not whether an execution agent is busy or idle.
     availability: "unknown",
     status: provider.status,
-    confidence: normalizeConfidence(provider.confidence),
+    confidence: confidenceFor(provider.confidence, freshness),
     source: {
       name: provider.sourceName,
       confidenceLabel: provider.confidence,
     },
-    capturedAt: oldestCapture(provider, source.readAt),
+    capturedAt,
+    freshness,
     windows,
   });
 }
@@ -90,6 +119,7 @@ function unavailableSnapshot(
     confidence: "low",
     source: { name: "AI-Quota-Tray", confidenceLabel: "unavailable" },
     capturedAt: source.readAt,
+    freshness: "unknown",
     windows: [],
   });
 }
@@ -109,4 +139,34 @@ function normalizeConfidence(confidence: string): CapacityConfidence {
     default:
       return "low";
   }
+}
+
+function resolveAgingAfterSeconds(
+  source: AqtQuotaSnapshot,
+  options: CapacityFreshnessOptions,
+): number {
+  const value = options.agingAfterSeconds ?? source.staleAfterSeconds / 2;
+  if (!Number.isFinite(value) || value <= 0 || value >= source.staleAfterSeconds) {
+    throw new Error("agingAfterSeconds must be positive and less than staleAfterSeconds");
+  }
+  return value;
+}
+
+function freshnessFor(
+  capturedAt: number,
+  readAt: number,
+  agingAfterSeconds: number,
+  staleAfterSeconds: number,
+): CapacityFreshness {
+  const ageSeconds = Math.max(0, readAt - capturedAt);
+  if (ageSeconds > staleAfterSeconds) return "stale";
+  if (ageSeconds > agingAfterSeconds) return "aging";
+  return "fresh";
+}
+
+function confidenceFor(sourceConfidence: string, freshness: CapacityFreshness): CapacityConfidence {
+  const confidence = normalizeConfidence(sourceConfidence);
+  if (freshness === "stale" || freshness === "unknown") return "low";
+  if (freshness === "aging") return confidence === "high" ? "medium" : "low";
+  return confidence;
 }

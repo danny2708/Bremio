@@ -11,6 +11,7 @@ import { c } from "./ui";
 export interface QuotaCommandOptions {
   databasePath?: string;
   staleAfterSeconds?: number;
+  agingAfterSeconds?: number;
 }
 
 export function quotaCommand(options: QuotaCommandOptions): number {
@@ -31,9 +32,14 @@ export function quotaCommand(options: QuotaCommandOptions): number {
     });
     console.log(`${c.bold("Bremio · Capacity")} ${c.dim("(read-only from AI-Quota-Tray)")}`);
     console.log(c.dim(`  database: ${snapshot.databasePath}`));
+    console.log(c.dim(`  aging after: ${formatAge(options.agingAfterSeconds ?? snapshot.staleAfterSeconds / 2)}`));
     console.log(c.dim(`  stale after: ${formatAge(snapshot.staleAfterSeconds)}`));
-    for (const capacity of toAqtCapacitySnapshots(snapshot)) {
-      printCapacity(capacity, snapshot.readAt, snapshot.staleAfterSeconds);
+    for (const capacity of toAqtCapacitySnapshots(snapshot, {
+      ...(options.agingAfterSeconds !== undefined
+        ? { agingAfterSeconds: options.agingAfterSeconds }
+        : {}),
+    })) {
+      printCapacity(capacity, snapshot.readAt);
     }
     return 0;
   } catch (err) {
@@ -51,7 +57,6 @@ const AGENT_LABELS: Record<string, string> = {
 function printCapacity(
   capacity: AgentCapacitySnapshot,
   readAt: number,
-  staleAfterSeconds: number,
 ): void {
   const status = capacity.status === "healthy"
     ? c.green(capacity.status)
@@ -60,15 +65,20 @@ function printCapacity(
       : c.red(capacity.status);
   const ageSeconds = Math.max(0, readAt - capacity.capturedAt);
   const age = `${formatAge(ageSeconds)} old`;
-  const stale = ageSeconds > staleAfterSeconds ? " | STALE" : "";
+  const freshness = ` | ${capacity.freshness.toUpperCase()}`;
   const sourceUnavailable = capacity.source.confidenceLabel === "unavailable"
     ? " | SOURCE UNAVAILABLE"
     : "";
   console.log(`\n  ${c.bold(AGENT_LABELS[capacity.agentId] ?? capacity.agentId)}  ${status}`);
   console.log(
     `    source: ${capacity.source.name} | ${capacity.source.confidenceLabel}` +
-      ` (${capacity.confidence}) | ${age}${stale}${sourceUnavailable}`,
+      ` (${capacity.confidence}) | updated ${new Date(capacity.capturedAt * 1000).toISOString()}` +
+      ` | ${age}${freshness}${sourceUnavailable}`,
   );
+  if (shouldAlert(capacity)) {
+    const alert = `    capacity alert: ${capacity.status}`;
+    console.log(capacity.status === "limited" ? c.yellow(alert) : c.red(alert));
+  }
   if (capacity.windows.length === 0) console.log(c.dim("    no quota windows available"));
   for (const window of capacity.windows) {
     const remaining = window.remainingPercent === undefined
@@ -77,8 +87,21 @@ function printCapacity(
     const reset = window.resetsAt
       ? ` | resets ${new Date(window.resetsAt * 1000).toISOString()}`
       : "";
-    console.log(`    - ${window.label}: ${remaining}${reset}`);
+    const windowAge = formatAge(Math.max(0, readAt - window.capturedAt));
+    console.log(
+      `    - ${window.label}: ${remaining}${reset}` +
+        ` | updated ${new Date(window.capturedAt * 1000).toISOString()}` +
+        ` (${windowAge} old, ${window.freshness}, ${window.confidence} confidence)`,
+    );
   }
+}
+
+export function shouldAlert(capacity: AgentCapacitySnapshot): boolean {
+  return capacity.status !== "healthy" &&
+    capacity.status !== "unknown" &&
+    capacity.freshness !== "stale" &&
+    capacity.freshness !== "unknown" &&
+    capacity.confidence !== "low";
 }
 
 function formatAge(seconds: number): string {

@@ -79,6 +79,7 @@ describe("AQT capacity mapping", () => {
       status: "limited",
       confidence: "high",
       capturedAt: 1_900,
+      freshness: "fresh",
       source: { name: "Codex app-server", confidenceLabel: "official" },
     });
     expect(snapshot.windows).toHaveLength(2);
@@ -91,6 +92,7 @@ describe("AQT capacity mapping", () => {
     expect(snapshot.windows[0]).toMatchObject({
       id: "gemini-pro-high",
       scope: "model",
+      freshness: "fresh",
       confidence: "high",
     });
     expect(snapshot.windows[0]?.modelId).toBeUndefined();
@@ -104,6 +106,7 @@ describe("AQT capacity mapping", () => {
       confidence: "low",
       source: { name: "AI-Quota-Tray", confidenceLabel: "unavailable" },
       capturedAt: 2_000,
+      freshness: "unknown",
       windows: [],
     });
   });
@@ -114,5 +117,39 @@ describe("AQT capacity mapping", () => {
       "codex",
       "antigravity",
     ]);
+  });
+
+  it("degrades high confidence by one level while data is aging", () => {
+    const snapshot = toAgentCapacitySnapshot({ ...SOURCE, readAt: 2_100 }, "codex");
+
+    expect(snapshot).toMatchObject({ freshness: "aging", confidence: "medium" });
+    expect(snapshot.windows[0]).toMatchObject({ freshness: "aging", confidence: "medium" });
+    expect(snapshot.windows[1]).toMatchObject({ freshness: "fresh", confidence: "high" });
+  });
+
+  it("retains last-known values but lowers stale confidence", () => {
+    const staleSource: AqtQuotaSnapshot = {
+      ...SOURCE,
+      readAt: 2_301,
+      providers: SOURCE.providers.map((provider) =>
+        provider.agentId === "codex"
+          ? { ...provider, status: "unknown", stale: true }
+          : provider,
+      ),
+    };
+    const snapshot = toAgentCapacitySnapshot(staleSource, "codex");
+
+    expect(snapshot).toMatchObject({ status: "unknown", freshness: "stale", confidence: "low" });
+    expect(snapshot.windows[0]).toMatchObject({
+      remainingPercent: 40,
+      freshness: "stale",
+      confidence: "low",
+    });
+  });
+
+  it("rejects an aging threshold outside the stale window", () => {
+    expect(() =>
+      toAgentCapacitySnapshot(SOURCE, "codex", { agingAfterSeconds: 300 }),
+    ).toThrow(/agingAfterSeconds/);
   });
 });

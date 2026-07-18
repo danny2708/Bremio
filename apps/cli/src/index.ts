@@ -12,6 +12,7 @@ import {
   type RunBremioHooks,
 } from "@bremio/orchestrator";
 import type { ReasoningLevel } from "@bremio/protocol";
+import { DEFAULT_STALE_AFTER_SECONDS } from "@bremio/quota";
 import { mergeCommand } from "./merge";
 import { quotaCommand } from "./quota";
 import { statsCommand } from "./stats";
@@ -23,8 +24,8 @@ ${c.bold("Usage")}
   bremio run --lead <claude|codex> --repo <path> "<prompt>"
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
-  bremio capacity [--db <path>] [--stale-after <minutes>]
-  bremio quota [--db <path>] [--stale-after <minutes>]
+  bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
+  bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
   bremio doctor
   bremio --help
 
@@ -52,6 +53,7 @@ ${c.bold("stats")}    summarize the usage ledger (.bremio/ledger.jsonl)
 ${c.bold("capacity")} show canonical agent capacity from AI-Quota-Tray's SQLite database
 ${c.bold("quota")}    backward-compatible alias for capacity
   --db <path>             Override the default AI-Quota-Tray database path.
+  --aging-after <minutes> Degrade source confidence after this age (default: 15).
   --stale-after <minutes> Treat older snapshots as unknown (default: 30).`;
 
 function parseCli() {
@@ -69,6 +71,7 @@ function parseCli() {
       strategy: { type: "string" },
       since: { type: "string" },
       db: { type: "string" },
+      "aging-after": { type: "string" },
       "stale-after": { type: "string" },
       json: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
@@ -269,6 +272,9 @@ async function statsCommandFromCli(values: Values): Promise<number> {
 }
 
 function quotaCommandFromCli(values: Values): number {
+  const agingMinutes = values["aging-after"] === undefined
+    ? undefined
+    : Number(values["aging-after"]);
   const staleMinutes = values["stale-after"] === undefined
     ? undefined
     : Number(values["stale-after"]);
@@ -276,9 +282,19 @@ function quotaCommandFromCli(values: Values): number {
     console.error(c.red("error: --stale-after must be a positive number of minutes"));
     return 2;
   }
+  if (agingMinutes !== undefined && (!Number.isFinite(agingMinutes) || agingMinutes <= 0)) {
+    console.error(c.red("error: --aging-after must be a positive number of minutes"));
+    return 2;
+  }
+  const effectiveStaleMinutes = staleMinutes ?? DEFAULT_STALE_AFTER_SECONDS / 60;
+  if (agingMinutes !== undefined && agingMinutes >= effectiveStaleMinutes) {
+    console.error(c.red("error: --aging-after must be less than --stale-after"));
+    return 2;
+  }
   return quotaCommand({
     ...(values.db ? { databasePath: path.resolve(values.db) } : {}),
     ...(staleMinutes !== undefined ? { staleAfterSeconds: staleMinutes * 60 } : {}),
+    ...(agingMinutes !== undefined ? { agingAfterSeconds: agingMinutes * 60 } : {}),
   });
 }
 

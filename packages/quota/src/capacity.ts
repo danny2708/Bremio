@@ -3,6 +3,9 @@ import { z } from "zod";
 export const CapacityConfidenceSchema = z.enum(["high", "medium", "low"]);
 export type CapacityConfidence = z.infer<typeof CapacityConfidenceSchema>;
 
+export const CapacityFreshnessSchema = z.enum(["fresh", "aging", "stale", "unknown"]);
+export type CapacityFreshness = z.infer<typeof CapacityFreshnessSchema>;
+
 export const CapacityStatusSchema = z.enum([
   "healthy",
   "limited",
@@ -32,6 +35,7 @@ export const QuotaWindowSchema = z.object({
   windowMinutes: z.number().int().positive().optional(),
   /** Unix seconds when this window was captured by the source. */
   capturedAt: z.number().int().nonnegative(),
+  freshness: CapacityFreshnessSchema,
   confidence: CapacityConfidenceSchema,
 });
 export type QuotaWindow = z.infer<typeof QuotaWindowSchema>;
@@ -47,6 +51,7 @@ export const AgentCapacitySnapshotSchema = z.object({
   }),
   /** Unix seconds represented by the oldest constraining window. */
   capturedAt: z.number().int().nonnegative(),
+  freshness: CapacityFreshnessSchema,
   windows: z.array(QuotaWindowSchema),
 });
 export type AgentCapacitySnapshot = z.infer<typeof AgentCapacitySnapshotSchema>;

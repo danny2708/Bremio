@@ -44,9 +44,9 @@ updated on 2026-07-12. `bremio quota` correctly reports every provider as
 
 ## Target `QuotaProvider` contract
 
-The existing `readAqtQuota()` function is a concrete source adapter, not yet a
-stable provider contract. The contract must preserve multiple account windows
-and per-model Antigravity capacity:
+`readAqtQuota()` remains the concrete AQT source adapter. The canonical
+`QuotaProvider` contract above it preserves multiple account windows and
+per-model Antigravity capacity:
 
 ```ts
 interface QuotaProvider {
@@ -61,6 +61,7 @@ interface AgentCapacitySnapshot {
   availability: "idle" | "busy" | "unavailable" | "unknown";
   status: "healthy" | "limited" | "critical" | "exhausted" | "unknown";
   confidence: "high" | "medium" | "low";
+  freshness: "fresh" | "aging" | "stale" | "unknown";
   source: { name: string; confidenceLabel: string };
   capturedAt: number;
   windows: QuotaWindow[];
@@ -76,9 +77,16 @@ interface QuotaWindow {
   resetsAt?: number;
   windowMinutes?: number;
   capturedAt: number;
+  freshness: "fresh" | "aging" | "stale" | "unknown";
   confidence: "high" | "medium" | "low";
 }
 ```
+
+The default freshness policy marks data as `aging` after half of the stale
+window (15 minutes with the default 30-minute cutoff). Aging reduces source
+confidence by one level; stale data is always low-confidence. Percentages and
+reset times remain visible as last-known observations. Both thresholds are
+configurable through `bremio capacity --aging-after ... --stale-after ...`.
 
 Quota is separate from `AgentAdapter`; provider execution adapters do not own
 or duplicate capacity snapshots.
@@ -278,17 +286,19 @@ telemetry and are never converted into quota percentage.
       through `bremio capacity` while retaining `bremio quota` as an alias.
 - [x] Split requested/actual model and reasoning metadata in reports and the
       ledger without inferring provider defaults.
-- [ ] Add the **Capacity** cards and data-age/source/confidence display.
+- [ ] Add graphical **Capacity** cards; the CLI surface already displays
+      data age, source, confidence, freshness, and every window.
 - [ ] Add re-read refresh, `Open usage`, and unavailable states.
 - [ ] Extend AQT's Claude whitelist only when another structured window is
       verified; do not synthesize "Weekly Fable" from token usage.
 
 ### 4B — Freshness and monitoring
 
-- [ ] Degrade confidence per window as data ages; retain last-known values for
+- [x] Degrade confidence per window as data ages; retain last-known values for
       display while marking them stale.
 - [ ] Let AQT own provider polling (1-5 minutes); Bremio consumes snapshots.
-- [ ] Add low-capacity alerts and last-updated timestamps.
+- [x] Add confidence-gated CLI low-capacity alerts and per-window last-updated
+      timestamps. Stale/unknown/low-confidence data never triggers an alert.
 
 ### 4C — Router integration
 

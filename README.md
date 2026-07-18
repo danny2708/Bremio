@@ -49,8 +49,8 @@ corepack pnpm bremio merge --run <runId> --strategy cherry-pick --repo /path/to/
 # summarize the usage ledger
 corepack pnpm bremio stats --repo /path/to/repo
 
-# inspect normalized AQT quota (read-only; stale/error data becomes unknown)
-corepack pnpm bremio quota
+# inspect normalized AQT capacity with per-window freshness (read-only)
+corepack pnpm bremio capacity --aging-after 15 --stale-after 30
 
 # explicit real-provider smoke (consumes quota; defaults to both lead directions)
 corepack pnpm smoke:providers --lead both --timeout 600
@@ -82,10 +82,11 @@ available, summarized by
 `bremio stats [--since <date>]`.
 Planning entries are counted as coordination rather than tasks, including on
 planning failure. Missing usage remains unknown; no price is estimated.
-`bremio quota`
+`bremio capacity` (`bremio quota` is an alias)
 reads AI-Quota-Tray's schema-v1 SQLite database in read-only mode. Unsupported
-schema versions are rejected; stale, disabled, or errored providers normalize
-to `unknown`. Quota is not yet used by the router.
+schema versions are rejected. Aging snapshots lose confidence, while stale,
+disabled, or errored providers normalize to `unknown` without dropping their
+last-known values. Quota is not yet used by the router.
 
 ## Packages
 `protocol` (Zod contracts) · `adapter-sdk` (the `AgentAdapter` interface) ·

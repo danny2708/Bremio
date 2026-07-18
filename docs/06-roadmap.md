@@ -100,6 +100,12 @@ an alias). Run history now separates requested and provider-confirmed model and
 reasoning metadata. A graphical card surface and native-usage actions remain
 open.
 
+**4B freshness status (2026-07-18):** capacity snapshots and individual
+windows now carry explicit freshness. Confidence degrades as data ages while
+last-known values remain visible; the CLI shows per-window update timestamps
+and suppresses low-capacity alerts for stale, unknown, or low-confidence data.
+AQT-owned polling remains open.
+
 ## Phase 5 — Parallel + VS Code extension
 Run tasks in parallel (PQueue/BullMQ), panel UI. UI is just a surface; the
 value lives in the daemon.
