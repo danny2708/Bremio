@@ -21,3 +21,13 @@ export {
 } from "./types";
 
 export type { AgentAdapter, AgentPluginManifest } from "./adapter";
+
+export {
+  boundedRetryPolicy,
+  classifyAgentError,
+  isRetryableCode,
+  type AgentError,
+  type AgentErrorCode,
+  type BoundedRetryOptions,
+  type RetryPolicy,
+} from "./errors";

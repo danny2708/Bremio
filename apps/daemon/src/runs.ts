@@ -5,6 +5,7 @@ import {
   type BremioRunReport,
 } from "@bremio/orchestrator";
 import type { ReasoningLevel } from "@bremio/protocol";
+import { classifyAgentError } from "@bremio/adapter-sdk";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
@@ -351,15 +352,25 @@ export class RunRegistry {
       );
     } catch (err) {
       const cancelled = controller.signal.aborted;
-      const message = (err as Error).message;
+      // Classify once here so the UI can say "rate limited" or "not signed in"
+      // instead of showing the same generic failure for every cause.
+      const classified = classifyAgentError(err, { provider: input.agentId });
+      const code = cancelled ? "cancelled" : classified.code;
       this.#emitTerminal(
         runId,
-        { kind: "failed", message },
-        cancelled ? "cancelled" : "failed",
         {
-          failureCode: cancelled ? "cancelled" : "execution_failed",
-          failureMessage: message,
+          kind: "failed",
+          message: classified.message,
+          data: {
+            code,
+            retryable: !cancelled && classified.retryable,
+            ...(classified.retryAfterMs !== undefined
+              ? { retryAfterMs: classified.retryAfterMs }
+              : {}),
+          },
         },
+        cancelled ? "cancelled" : "failed",
+        { failureCode: code, failureMessage: classified.message },
       );
     } finally {
       this.#controllers.delete(runId);
