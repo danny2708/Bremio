@@ -163,7 +163,21 @@ export async function startDaemon(options: StartDaemonOptions): Promise<RunningD
     stopping = true;
     registry.stopAccepting();
     await retractEndpoint(endpointFile);
+
+    // Cancel through the same supervisor a user-initiated cancel uses, and
+    // wait for it. Exiting while child processes are still being torn down is
+    // how orphans outlive the daemon that started them.
     registry.cancelAll();
+    const outcomes = await registry.awaitCancellations();
+    const survivors = outcomes.filter((outcome) => !outcome.stopped);
+    if (survivors.length > 0) {
+      // Recorded rather than silently swallowed: the runs are already marked
+      // cancellation_failed, and the operator deserves to hear it here too.
+      console.error(
+        `warning: ${survivors.length} run(s) left processes running after shutdown`,
+      );
+    }
+
     await handle.close();
     store.close();
     await releaseLock();

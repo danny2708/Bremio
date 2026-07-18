@@ -33,9 +33,13 @@ export const MAX_PAYLOAD_BYTES = 16 * 1024;
 export type RunStatus =
   | "queued"
   | "running"
+  /** Cancellation requested; execution has not yet been confirmed stopped. */
+  | "cancelling"
   | "completed"
   | "failed"
   | "cancelled"
+  /** Cancellation was requested but processes survived it. Needs attention. */
+  | "cancellation_failed"
   | "interrupted";
 
 /** Statuses that will never change again without an explicit new action. */
@@ -43,6 +47,9 @@ export const TERMINAL_STATUSES: readonly RunStatus[] = [
   "completed",
   "failed",
   "cancelled",
+  // Terminal because waiting will not resolve it: something is still running
+  // and only the user can decide what to do about it.
+  "cancellation_failed",
   "interrupted",
 ];
 
@@ -338,7 +345,11 @@ export class RunStore {
   /** Runs that were mid-flight when the process died. */
   nonTerminalRuns(): PersistedRun[] {
     const rows = this.db
-      .prepare("SELECT * FROM runs WHERE status IN ('queued', 'running') ORDER BY created_at ASC")
+      .prepare(
+        // `cancelling` counts too: a daemon that died mid-cancellation left the
+        // run in a state only a restart can resolve.
+        "SELECT * FROM runs WHERE status IN ('queued', 'running', 'cancelling') ORDER BY created_at ASC",
+      )
       .all() as Array<Record<string, unknown>>;
     return rows.map(toRun);
   }
