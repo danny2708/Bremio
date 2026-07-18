@@ -173,8 +173,31 @@ remain open;
 no token-to-quota or missing-price estimate is introduced.
 
 ## Phase 5 — Parallel + VS Code extension
-Run tasks in parallel (PQueue/BullMQ), panel UI. UI is just a surface; the
-value lives in the daemon.
+Run tasks in parallel, panel UI. UI is just a surface; the value lives in the
+daemon.
+
+**Parallel execution shipped and real-provider verified (2026-07-18).** The
+scheduler runs ready tasks in waves with bounded concurrency (`--concurrency`,
+default 2) instead of one at a time, still honouring every declared dependency.
+Results are returned in topological order regardless of completion order, so
+reports stay deterministic.
+
+Concurrency covers *agent execution only*: worktree creation and diff capture
+are serialized through a mutex, because `git worktree add` and the capture
+commit contend on shared `.git` metadata. Agent runs dominate wall-clock time,
+so serializing the git steps costs almost nothing and removes a class of
+lock-contention failures. A unit test asserts git operations never overlap
+while four tasks execute concurrently.
+
+Verified for real with a Claude-led Team run: after the implementation task
+completed, the dependent test (Codex) and review (Claude) tasks ran
+concurrently on two different providers; every worktree was based correctly on
+the implementation commit, the main repo stayed clean, and no git lock errors
+occurred. Streamed output is tagged per task, since interleaved lines are
+otherwise unreadable.
+
+Still open in Phase 5: the VS Code extension, and any provider-side
+rate-limit backoff should concurrency be raised well above the default.
 
 ## Phase 6 — Additional providers
 OpenCode (HTTP), Jan (local worker = near-free capacity). Each one = one

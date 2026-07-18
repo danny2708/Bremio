@@ -104,10 +104,34 @@ The first UI slice should provide:
 - manual refresh and provider-specific `Open usage` when a native page exists;
 - explicit unavailable/unknown states instead of fabricated percentages.
 
-The Refresh button initially re-reads AQT SQLite. A true source refresh should
-be added through a stable AQT command/IPC/shared package. Do **not** copy the
-Codex RPC, Claude bridge, or Antigravity process-discovery/CSRF logic into
-Bremio; duplicated provider logic would drift and double the security surface.
+The Refresh button initially re-reads AQT SQLite. Do **not** copy the Codex RPC,
+Claude bridge, or Antigravity process-discovery/CSRF logic into Bremio;
+duplicated provider logic would drift and double the security surface.
+
+## AQT loopback API — the source refresh boundary (2026-07-18)
+
+The "stable AQT command/IPC" this section called for now exists, so capacity is
+active rather than passively read.
+
+AQT binds `127.0.0.1` on an ephemeral port and publishes the port plus a
+per-launch token to `<app data>/bridge/local-api.json`. Endpoints:
+`GET /health`, `GET /overview`, `POST /refresh`.
+
+**The endpoint is a trigger, not a second data source.** Bremio asks AQT to
+fetch, AQT persists to its SQLite, and Bremio reads that database exactly as
+before. One data path means provider parsing is never duplicated, so the two
+projects cannot drift in how a bucket is interpreted.
+
+Trust model: loopback-only bind; a token required on every request; a `Host`
+check to blunt DNS rebinding from a browser page; an 8 KB request cap. Callers
+must already be able to read this user's local app data — the same boundary
+that protects the SQLite database. The endpoint file is a *hint*: it survives a
+crash, so liveness is proven by connecting, and a published-but-dead endpoint
+reports `stale-endpoint`, never `live`.
+
+`bremio capacity` refreshes by default (`--no-refresh` opts out) and always
+states whether the source was LIVE or last-known. The TUI Capacity screen
+refreshes on open, every 30s, and on `r`.
 
 ## Compatibility note
 
@@ -313,7 +337,9 @@ telemetry and are never converted into quota percentage.
 
 - [x] Degrade confidence per window as data ages; retain last-known values for
       display while marking them stale.
-- [ ] Let AQT own provider polling (1-5 minutes); Bremio consumes snapshots.
+- [x] Let AQT own provider polling; Bremio consumes snapshots and can now
+      trigger a fetch through the loopback API instead of waiting for AQT's
+      own 30-900s tick.
 - [x] Add confidence-gated CLI low-capacity alerts and per-window last-updated
       timestamps. Stale/unknown/low-confidence data never triggers an alert.
 

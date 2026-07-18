@@ -7,8 +7,10 @@ import {
   DEFAULT_STALE_AFTER_SECONDS,
   defaultAqtDatabasePath,
   readAqtQuota,
+  refreshAqtIfAvailable,
   toAqtCapacitySnapshots,
   type AgentCapacitySnapshot,
+  type AqtServiceStatus,
 } from "@bremio/quota";
 
 export const AGENT_LABELS: Record<string, string> = {
@@ -51,6 +53,18 @@ export interface CapacityView {
   databasePath: string;
   readAt: number;
   snapshots: AgentCapacitySnapshot[];
+  /** Whether AI-Quota-Tray answered, so the UI can say if the data is live. */
+  service?: AqtServiceStatus;
+}
+
+/**
+ * Ask AI-Quota-Tray to fetch from the providers, then read what it wrote.
+ * AQT owns every provider fetch; a missing tray app degrades to last-known
+ * values rather than failing.
+ */
+export async function loadLiveCapacity(databasePath?: string): Promise<CapacityView> {
+  const { status } = await refreshAqtIfAvailable();
+  return { ...loadCapacity(databasePath), service: status };
 }
 
 /** Read AI-Quota-Tray capacity. Throws with a human-readable reason. */

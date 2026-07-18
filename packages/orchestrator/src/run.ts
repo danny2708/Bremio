@@ -42,6 +42,8 @@ export interface RunBremioOptions {
   reasoningLevel?: ReasoningLevel;
   /** Hard timeout for each lead attempt and worker task. */
   taskTimeoutMs?: number;
+  /** How many independent tasks may execute at once (default 2). */
+  maxConcurrency?: number;
   /** Optional canonical snapshots used by the opt-in capacity-aware router. */
   capacitySnapshots?: readonly AgentCapacitySnapshot[];
   capacityPolicy?: CapacityRoutingPolicyInput;
@@ -196,6 +198,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     runId,
     ledgerPath: ledgerPathFor(repoPath),
     ...(opts.taskTimeoutMs ? { taskTimeoutMs: opts.taskTimeoutMs } : {}),
+    ...(opts.maxConcurrency ? { maxConcurrency: opts.maxConcurrency } : {}),
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.hooks ? { hooks: opts.hooks } : {}),
   });

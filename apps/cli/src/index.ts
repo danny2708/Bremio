@@ -23,7 +23,7 @@ import {
   type AgentCapacitySnapshot,
 } from "@bremio/quota";
 import { mergeCommand } from "./merge";
-import { quotaCommand } from "./quota";
+import { capacityCommand } from "./quota";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
 import { c, compactEvent, printPlan, printReport, statusGlyph } from "./ui";
@@ -57,6 +57,7 @@ ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --model <id>            Model for the Single agent or Team lead (optional).
   --reasoning <level>     Single-agent or Team-lead reasoning level.
   --timeout <seconds>     Hard timeout for the Single run or each Team task.
+  --concurrency <n>       Team tasks to run at once (default: 2, dependency-safe).
   --capacity-routing      Opt in to conservative Team capacity routing.
   --db <path>             Override the AQT database used for capacity routing.
   --comparison <id>       Link this run to a controlled Single/Team experiment.
@@ -78,6 +79,7 @@ ${c.bold("stats")}    summarize the usage ledger (.bremio/ledger.jsonl)
 ${c.bold("capacity")} show canonical agent capacity from AI-Quota-Tray's SQLite database
 ${c.bold("quota")}    backward-compatible alias for capacity
   --db <path>             Override the default AI-Quota-Tray database path.
+  --no-refresh            Read last-known data without asking AQT to fetch.
   --aging-after <minutes> Degrade source confidence after this age (default: 15).
   --stale-after <minutes> Treat older snapshots as unknown (default: 30).`;
 
@@ -94,6 +96,7 @@ function parseCli() {
       model: { type: "string" },
       reasoning: { type: "string" },
       timeout: { type: "string" },
+      concurrency: { type: "string" },
       run: { type: "string" },
       base: { type: "string" },
       strategy: { type: "string" },
@@ -102,6 +105,8 @@ function parseCli() {
       "aging-after": { type: "string" },
       "stale-after": { type: "string" },
       "capacity-routing": { type: "boolean", default: false },
+      // parseArgs has no `--no-x` negation, so the opt-out is its own flag.
+      "no-refresh": { type: "boolean", default: false },
       comparison: { type: "string" },
       json: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
@@ -157,7 +162,7 @@ async function main(): Promise<void> {
       return;
     case "capacity":
     case "quota":
-      process.exitCode = quotaCommandFromCli(values);
+      process.exitCode = await quotaCommandFromCli(values);
       return;
     case "doctor":
       await doctor();
@@ -208,6 +213,16 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   const timeoutSeconds = values.timeout === undefined ? undefined : Number(values.timeout);
   if (timeoutSeconds !== undefined && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
     errors.push("--timeout must be a positive number of seconds");
+  }
+  const concurrency = values.concurrency === undefined ? undefined : Number(values.concurrency);
+  if (
+    concurrency !== undefined &&
+    (!Number.isInteger(concurrency) || concurrency < 1)
+  ) {
+    errors.push("--concurrency must be a positive whole number of tasks");
+  }
+  if (concurrency !== undefined && mode === "single") {
+    errors.push("--concurrency is only valid in Team mode");
   }
   const reasoningLevels = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh"]);
   if (values.reasoning && !reasoningLevels.has(values.reasoning as ReasoningLevel)) {
@@ -270,13 +285,15 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         onPlan: (plan, assign) => printPlan(plan, assign),
         onTaskStart: (task, agentId) =>
           console.log(`\n${c.bold("▶")} ${c.cyan(task.id)} ${task.title} ${c.bold(`→ ${agentId}`)}`),
-        onEvent: (_task, _agentId, ev) => {
+        // Tasks run concurrently by default, so every streamed line and every
+        // completion is tagged — otherwise interleaved output is unreadable.
+        onEvent: (task, _agentId, ev) => {
           const l = compactEvent(ev);
-          if (l) console.log(l);
+          if (l) console.log(`${c.dim(`[${task.id}]`)} ${l}`);
         },
         onTaskComplete: (r) =>
           console.log(
-            `  ${statusGlyph(r.status)} ${c.dim(`(${r.filesChanged.length} file(s), ${Math.round((r.durationMs ?? 0) / 1000)}s)`)}`,
+            `  ${statusGlyph(r.status)} ${c.cyan(r.taskId)} ${c.dim(`(${r.filesChanged.length} file(s), ${Math.round((r.durationMs ?? 0) / 1000)}s)`)}`,
           ),
       };
 
@@ -346,6 +363,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         ? { reasoningLevel: values.reasoning as ReasoningLevel }
         : {}),
       ...(timeoutSeconds !== undefined ? { taskTimeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
+      ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
       ...(capacitySnapshots ? { capacitySnapshots } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
     });
@@ -419,13 +437,14 @@ async function statsCommandFromCli(values: Values): Promise<number> {
   return statsCommand({ repoPath, ...(since ? { since } : {}) });
 }
 
-function quotaCommandFromCli(values: Values): number {
+async function quotaCommandFromCli(values: Values): Promise<number> {
   const timing = parseCapacityTiming(values);
   if (timing.error) {
     console.error(c.red(`error: ${timing.error}`));
     return 2;
   }
-  return quotaCommand({
+  return capacityCommand({
+    refresh: values["no-refresh"] !== true,
     ...(values.db ? { databasePath: path.resolve(values.db) } : {}),
     ...(timing.staleAfterSeconds !== undefined
       ? { staleAfterSeconds: timing.staleAfterSeconds }

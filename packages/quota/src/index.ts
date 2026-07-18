@@ -33,6 +33,18 @@ export {
   type AqtQuotaProviderOptions,
 } from "./aqt-provider";
 export {
+  defaultAqtEndpointPath,
+  describeAqtService,
+  probeAqtService,
+  readAqtServiceEndpoint,
+  refreshAqtIfAvailable,
+  requestAqtRefresh,
+  type AqtRefreshOutcome,
+  type AqtServiceEndpoint,
+  type AqtServiceState,
+  type AqtServiceStatus,
+} from "./aqt-service";
+export {
   DEFAULT_CAPACITY_ROUTING_POLICY,
   assessCapacity,
   resolveCapacityRoutingPolicy,

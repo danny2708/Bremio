@@ -34,7 +34,12 @@ export {
   type AssignAgentsOptions,
 } from "./router";
 
-export { runPlan, type RunPlanOptions, type SchedulerHooks } from "./scheduler";
+export {
+  DEFAULT_MAX_CONCURRENCY,
+  runPlan,
+  type RunPlanOptions,
+  type SchedulerHooks,
+} from "./scheduler";
 
 export {
   buildReport,

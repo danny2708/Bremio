@@ -1,8 +1,12 @@
-import { Box, Text } from "ink";
-import { useEffect, useState } from "react";
+import { Box, Text, useInput } from "ink";
+import { useCallback, useEffect, useState } from "react";
+import type { AqtServiceStatus } from "@bremio/quota";
 import { Header, Spinner, StatusText } from "../components";
-import { AGENT_LABELS, formatAge, loadCapacity, type CapacityView } from "../data";
+import { AGENT_LABELS, formatAge, loadLiveCapacity, type CapacityView } from "../data";
 import { theme } from "../theme";
+
+/** How often to re-ask AI-Quota-Tray while this screen is open. */
+const LIVE_INTERVAL_MS = 30_000;
 
 /** Horizontal meter for remaining capacity; unknown renders as a dim bar. */
 function Meter({ percent }: { percent?: number }): React.JSX.Element {
@@ -21,25 +25,66 @@ function Meter({ percent }: { percent?: number }): React.JSX.Element {
   );
 }
 
+/**
+ * State the liveness of the source before any number. Without it, days-old
+ * values read as current.
+ */
+function SourceBanner({ service }: { service?: AqtServiceStatus }): React.JSX.Element | null {
+  if (!service) return null;
+  if (service.state === "live") {
+    return (
+      <Text color={theme.success}>
+        ● LIVE — AI-Quota-Tray responding{service.version ? ` (v${service.version})` : ""}
+      </Text>
+    );
+  }
+  const reason = service.state === "stale-endpoint"
+    ? "published an endpoint but is not responding"
+    : "is not running";
+  return (
+    <Box flexDirection="column">
+      <Text color={theme.warning}>○ NOT LIVE — AI-Quota-Tray {reason}.</Text>
+      <Text color={theme.muted}>
+        {"  "}Values below are last-known, not current. Start AI-Quota-Tray for live capacity.
+      </Text>
+    </Box>
+  );
+}
+
 export function CapacityScreen(): React.JSX.Element {
   const [view, setView] = useState<CapacityView | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
+    setRefreshing(true);
     try {
-      setView(loadCapacity());
+      setView(await loadLiveCapacity());
+      setError(undefined);
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setRefreshing(false);
     }
   }, []);
+
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), LIVE_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  useInput((input) => {
+    if (input === "r") void load();
+  });
 
   if (error) {
     return (
       <Box flexDirection="column">
-        <Header title="Capacity" subtitle="read-only from AI-Quota-Tray" />
+        <Header title="Capacity" subtitle="live through AI-Quota-Tray" />
         <Text color={theme.danger}>✗ {error}</Text>
         <Text color={theme.muted}>
-          Capacity needs AI-Quota-Tray running; Bremio never fetches provider quota itself.
+          Capacity needs AI-Quota-Tray; Bremio never fetches provider quota itself.
         </Text>
       </Box>
     );
@@ -47,15 +92,17 @@ export function CapacityScreen(): React.JSX.Element {
   if (!view) {
     return (
       <Box flexDirection="column">
-        <Header title="Capacity" subtitle="read-only from AI-Quota-Tray" />
-        <Spinner label="reading quota database…" />
+        <Header title="Capacity" subtitle="live through AI-Quota-Tray" />
+        <Spinner label="asking AI-Quota-Tray to refresh…" />
       </Box>
     );
   }
 
   return (
     <Box flexDirection="column">
-      <Header title="Capacity" subtitle="read-only from AI-Quota-Tray" />
+      <Header title="Capacity" subtitle="live through AI-Quota-Tray" />
+      <SourceBanner {...(view.service ? { service: view.service } : {})} />
+      <Box marginBottom={1} />
       {view.snapshots.map((snapshot) => {
         const age = formatAge(Math.max(0, view.readAt - snapshot.capturedAt));
         return (
@@ -85,6 +132,9 @@ export function CapacityScreen(): React.JSX.Element {
           </Box>
         );
       })}
+      <Text color={theme.muted}>
+        {refreshing ? "  refreshing…" : `  press r to refresh · auto every ${LIVE_INTERVAL_MS / 1000}s`}
+      </Text>
       <Text color={theme.muted}>{`  source: ${view.databasePath}`}</Text>
     </Box>
   );

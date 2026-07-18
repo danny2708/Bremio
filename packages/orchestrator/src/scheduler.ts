@@ -7,6 +7,8 @@ import { buildTaskPrompt } from "./plan-schema";
 import { parseReviewOutput, reviewOutputJsonSchema } from "./quality-gate";
 import { collectRun, type CollectedRun } from "./stream";
 
+export const DEFAULT_MAX_CONCURRENCY = 2;
+
 export interface SchedulerHooks {
   onTaskStart?(task: Task, agentId: string): void;
   onEvent?(task: Task, agentId: string, event: AgentEvent): void;
@@ -26,54 +28,159 @@ export interface RunPlanOptions {
   maxTurns?: number;
   /** Hard timeout for each task's provider run. */
   taskTimeoutMs?: number;
+  /**
+   * How many tasks may execute at once (default 2). Dependency order is always
+   * respected; this only bounds how many *independent* tasks run in parallel.
+   */
+  maxConcurrency?: number;
   signal?: AbortSignal;
   hooks?: SchedulerHooks;
 }
 
 /**
- * Sequential scheduler (Phase 1). Runs tasks in dependency order, one at a
- * time. Each task gets its own worktree + branch; the assigned agent runs
- * there; the diff and logs are collected into a TaskResult. Tasks branch from
- * repo HEAD independently, so a failed task doesn't block the others. On
- * cancellation, the in-flight task is cancelled and remaining tasks are marked
- * cancelled without running.
+ * Serializes async sections. Used to keep git operations one-at-a-time while
+ * agent execution runs concurrently.
+ */
+class Mutex {
+  #tail: Promise<unknown> = Promise.resolve();
+
+  run<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.#tail.then(fn);
+    // Keep the queue alive after a failure: the chain swallows the rejection,
+    // while the caller still receives the real one through `result`.
+    this.#tail = result.catch(() => undefined);
+    return result;
+  }
+}
+
+/**
+ * Dependency-aware scheduler. Runs up to `maxConcurrency` tasks at a time
+ * (default 2); a task starts only once every dependency it declares has
+ * finished.
+ *
+ * Concurrency covers *agent execution* only. Git operations (worktree create,
+ * diff collect) go through a mutex: `git worktree add` and the capture commit
+ * contend on shared `.git` metadata locks, and the agent run dominates
+ * wall-clock time anyway, so serializing the git steps costs almost nothing
+ * while removing a class of lock-contention failures.
+ *
+ * Each task gets its own worktree + branch and starts from its dependencies'
+ * branches (or repo HEAD), so a failed task blocks only its dependents. On
+ * cancellation, in-flight tasks are cancelled and tasks that never started are
+ * recorded as cancelled. Results are returned in topological order regardless
+ * of completion order, so reports stay deterministic.
  */
 export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
   const ordered = topologicalOrder(opts.plan);
-  const results: TaskResult[] = [];
+  const planTaskIds = new Set(ordered.map((t) => t.id));
+  const concurrency = Math.max(1, Math.trunc(opts.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY));
+  const gitLock = new Mutex();
 
-  for (const task of ordered) {
-    const agentId = opts.assign.get(task.id) ?? task.preferredAgents[0] ?? "";
-    const adapter = opts.registry.get(agentId);
-    const dependencyResults = task.dependencies.map((id) => results.find((r) => r.taskId === id));
-    const blockedDependencies = dependencyResults.filter((r) => !r || r.status !== "completed");
+  const results = new Map<string, TaskResult>();
+  const pending = new Map(ordered.map((task) => [task.id, task] as const));
+  /** Resolves with the finished task's id, so the race can evict it directly. */
+  const running = new Map<string, Promise<string>>();
 
-    let result: TaskResult;
-    if (opts.signal?.aborted) {
-      result = cancelledResult(task, agentId, "run cancelled before this task started");
-    } else if (blockedDependencies.length > 0) {
-      const ids = task.dependencies.filter((_, index) => blockedDependencies.includes(dependencyResults[index]));
-      result = failedResult(task, agentId, `blocked by unsuccessful dependencies: ${ids.join(", ")}`);
-    } else if (!adapter) {
-      result = failedResult(task, agentId, `no adapter registered for "${agentId}"`);
-    } else {
-      opts.hooks?.onTaskStart?.(task, agentId);
-      const dependencyRefs = dependencyResults
-        .map((r) => r?.branch)
-        .filter((branch): branch is string => Boolean(branch));
-      try {
-        result = await runOneTask(task, agentId, adapter, opts, dependencyRefs);
-      } catch (err) {
-        result = failedResult(task, agentId, `task setup or execution failed: ${(err as Error).message}`);
+  /**
+   * A dependency is settled once it has a result, or once it is known never to
+   * produce one (an id outside this plan). Unsettled dependencies keep a task
+   * waiting; settled-but-unsuccessful ones block it.
+   */
+  const isSettled = (dependencyId: string): boolean =>
+    results.has(dependencyId) || !planTaskIds.has(dependencyId);
+
+  const blockedBy = (task: Task): string[] =>
+    task.dependencies.filter((id) => results.get(id)?.status !== "completed");
+
+  const settle = async (task: Task, result: TaskResult): Promise<void> => {
+    results.set(task.id, result);
+    pending.delete(task.id);
+    await recordLedger(task, result, opts);
+  };
+
+  while (pending.size > 0 || running.size > 0) {
+    for (const task of [...pending.values()]) {
+      if (running.size >= concurrency) break;
+      if (running.has(task.id)) continue;
+      if (!task.dependencies.every(isSettled)) continue;
+
+      const agentId = opts.assign.get(task.id) ?? task.preferredAgents[0] ?? "";
+      const adapter = opts.registry.get(agentId);
+      const blocked = blockedBy(task);
+
+      if (opts.signal?.aborted) {
+        await settle(task, cancelledResult(task, agentId, "run cancelled before this task started"));
+        continue;
       }
-      opts.hooks?.onTaskComplete?.(result);
+      if (blocked.length > 0) {
+        await settle(
+          task,
+          failedResult(task, agentId, `blocked by unsuccessful dependencies: ${blocked.join(", ")}`),
+        );
+        continue;
+      }
+      if (!adapter) {
+        await settle(task, failedResult(task, agentId, `no adapter registered for "${agentId}"`));
+        continue;
+      }
+
+      opts.hooks?.onTaskStart?.(task, agentId);
+      const dependencyRefs = task.dependencies
+        .map((id) => results.get(id)?.branch)
+        .filter((branch): branch is string => Boolean(branch));
+
+      // Never rejects: a task failure is a TaskResult, and a throwing hook must
+      // not take down the whole run.
+      running.set(
+        task.id,
+        (async () => {
+          let result: TaskResult;
+          try {
+            result = await runOneTask(task, agentId, adapter, opts, dependencyRefs, gitLock);
+          } catch (err) {
+            result = failedResult(
+              task,
+              agentId,
+              `task setup or execution failed: ${(err as Error).message}`,
+            );
+          }
+          try {
+            opts.hooks?.onTaskComplete?.(result);
+          } catch {
+            // a reporting hook must never change the run's outcome
+          }
+          await settle(task, result);
+          return task.id;
+        })(),
+      );
     }
 
-    results.push(result);
-    await recordLedger(task, result, opts);
+    if (running.size === 0) {
+      // Nothing runnable and nothing in flight: the rest is unreachable
+      // (dependencies that failed, or were never part of this plan).
+      for (const task of [...pending.values()]) {
+        const agentId = opts.assign.get(task.id) ?? task.preferredAgents[0] ?? "";
+        const blocked = blockedBy(task);
+        await settle(
+          task,
+          opts.signal?.aborted
+            ? cancelledResult(task, agentId, "run cancelled before this task started")
+            : failedResult(
+                task,
+                agentId,
+                `blocked by unsuccessful dependencies: ${blocked.join(", ")}`,
+              ),
+        );
+      }
+      break;
+    }
+
+    running.delete(await Promise.race(running.values()));
   }
 
-  return results;
+  return ordered
+    .map((task) => results.get(task.id))
+    .filter((result): result is TaskResult => result !== undefined);
 }
 
 /** Append one usage-ledger line for a finished task. Never breaks a run. */
@@ -112,12 +219,15 @@ async function runOneTask(
   adapter: AgentAdapter,
   opts: RunPlanOptions,
   dependencyRefs: string[],
+  gitLock: Mutex,
 ): Promise<TaskResult> {
   const started = Date.now();
-  const worktree = await opts.workspace.create(
-    task.id,
-    agentId,
-    dependencyRefs.length > 0 ? dependencyRefs : "HEAD",
+  const worktree = await gitLock.run(() =>
+    opts.workspace.create(
+      task.id,
+      agentId,
+      dependencyRefs.length > 0 ? dependencyRefs : "HEAD",
+    ),
   );
   const log = new TaskLog(opts.runDir, `${task.id}-${agentId}`);
   log.line(`# Task ${task.id} (${task.kind}) — agent=${agentId} branch=${worktree.branch}`);
@@ -161,7 +271,7 @@ async function runOneTask(
     await log.close();
   }
 
-  const collected = await opts.workspace.collect(worktree);
+  const collected = await gitLock.run(() => opts.workspace.collect(worktree));
 
   let status = run.outcome.status;
   let error = run.outcome.error;

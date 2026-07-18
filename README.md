@@ -16,8 +16,8 @@ the results. ROI goal: **get the most out of the models with the least quota.**
 (vertical slice) is implemented, plus the Phase-2 quality gate and
 early Phase-4 measurement/quota slices — explicit Single/Team modes, Claude
 (Agent SDK) + Codex (`codex exec --json`) as swappable lead/workers, an
-Antigravity worker on the `agy` CLI, an interactive TUI, a validator, a sequential
-scheduler, dependency-aware git-worktree isolation, independent review,
+Antigravity worker on the `agy` CLI, an interactive TUI, a validator, a
+dependency-aware parallel scheduler, git-worktree isolation, independent review,
 exit-code-backed test evidence, review-gated merge, and the CLI. Full design
 lives in [`docs/`](docs/); start at [`docs/README.md`](docs/README.md). Still out
 of scope (see [`docs/06`](docs/06-roadmap.md)): Antigravity lead/test-gate
@@ -88,8 +88,10 @@ corepack pnpm bremio run --mode single --agent claude --repo /path/to/repo "add 
 corepack pnpm bremio run --mode single --agent antigravity --repo /path/to/repo "update the docs"
 
 # Team: lead plans -> orchestrator hands a task to the OTHER agent,
-# which edits code in its own git worktree; results aggregate into one report
+# which edits code in its own git worktree; results aggregate into one report.
+# Independent tasks run 2-at-a-time by default; --concurrency raises the limit.
 corepack pnpm bremio run --mode team --lead codex --timeout 600 --repo /path/to/repo "add a health endpoint"
+corepack pnpm bremio run --mode team --lead claude --concurrency 3 --repo /path/to/repo "refactor the parser"
 corepack pnpm bremio run --mode team --lead claude --repo /path/to/repo "fix the failing test"
 corepack pnpm bremio run --mode team --lead claude --worker antigravity --repo /path/to/repo "add a health endpoint"
 # --lead without --mode remains a backward-compatible alias for Team
@@ -103,8 +105,9 @@ corepack pnpm bremio merge --run <runId> --strategy cherry-pick --repo /path/to/
 # summarize the usage ledger and fail-closed calibration readiness
 corepack pnpm bremio stats --repo /path/to/repo
 
-# inspect normalized AQT capacity with per-window freshness (read-only)
+# ask AI-Quota-Tray to fetch now, then show normalized capacity with freshness
 corepack pnpm bremio capacity --aging-after 15 --stale-after 30
+corepack pnpm bremio capacity --no-refresh   # last-known only, no provider fetch
 
 # explicitly enable the conservative Phase-4C safety router for a run
 corepack pnpm bremio run --mode team --capacity-routing --lead codex --repo /path/to/repo "fix the failing test"
@@ -151,8 +154,11 @@ for Single, or the fail-closed quality gate for Team. `--comparison <id>` can li
 controlled runs of the same request. Stats recommends single-agent until there
 are enough matched comparisons plus provider-reported model, cost, and
 coordination coverage. Missing usage remains unknown; no price is estimated.
-`bremio capacity` (`bremio quota` is an alias)
-reads AI-Quota-Tray's schema-v1 SQLite database in read-only mode. Unsupported
+`bremio capacity` (`bremio quota` is an alias) asks AI-Quota-Tray to fetch from
+the providers through its loopback API, then reads the schema-v1 SQLite
+database AQT writes. The endpoint is a trigger, not a second data source, so
+provider parsing is never duplicated in Bremio. Output always states whether
+the source was LIVE or last-known; `--no-refresh` skips the fetch. Unsupported
 schema versions are rejected. Aging snapshots lose confidence, while stale,
 disabled, or errored providers normalize to `unknown` without dropping their
 last-known values. `bremio run --capacity-routing` opts into the conservative
@@ -162,11 +168,10 @@ This remains opt-in until ledger calibration supports automatic optimization.
 
 ## Packages
 `protocol` (Zod contracts) · `adapter-sdk` (the `AgentAdapter` interface) ·
-`adapter-claude` · `adapter-codex` · `adapter-antigravity` (official Python SDK
-sidecar) · `orchestrator` (direct Single runner plus
-Team lead-manager, validator, router, scheduler, aggregator) · `quota`
-(read-only AQT consumer) · `workspace`
-(worktrees + logs) · `apps/cli`.
+`adapter-claude` · `adapter-codex` · `adapter-antigravity` (`agy` CLI) ·
+`orchestrator` (direct Single runner plus Team lead-manager, validator, router,
+parallel scheduler, aggregator) · `quota` (AQT consumer: SQLite reader plus
+loopback refresh client) · `workspace` (worktrees + logs) · `apps/cli`.
 
 ## Core principles
 - Orchestrator is provider-agnostic — Claude is only the *default lead*.

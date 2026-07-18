@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { useCallback, useRef, useState } from "react";
 import {
+  DEFAULT_MAX_CONCURRENCY,
   createRegistry,
   runBremio,
   runSingleAgent,
@@ -113,11 +114,12 @@ export function RunScreen({
             onLeadStart: (id) => push(`▶ lead ${id} planning…`),
             onLeadEvent: (event) => push(describeEvent(event)),
             onPlan: (plan) => {
-              setStatus(`executing ${plan.tasks.length} task(s)`);
+              setStatus(`executing ${plan.tasks.length} task(s), up to ${DEFAULT_MAX_CONCURRENCY} at a time`);
               push(`✓ plan: ${plan.summary}`);
             },
             onTaskStart: (task, id) => push(`▶ ${task.id} ${task.title} → ${id}`),
-            onEvent: (_task, _id, event) => push(describeEvent(event)),
+            // Independent tasks run concurrently, so each line names its task.
+            onEvent: (task, _id, event) => push(`[${task.id}] ${describeEvent(event)}`),
             onTaskComplete: (taskResult) =>
               push(`${taskResult.status === "completed" ? "✓" : "✗"} ${taskResult.taskId} ${taskResult.status}`),
           },

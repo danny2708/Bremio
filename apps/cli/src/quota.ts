@@ -3,8 +3,10 @@ import {
   DEFAULT_STALE_AFTER_SECONDS,
   defaultAqtDatabasePath,
   readAqtQuota,
+  refreshAqtIfAvailable,
   toAqtCapacitySnapshots,
   type AgentCapacitySnapshot,
+  type AqtServiceStatus,
 } from "@bremio/quota";
 import { c } from "./ui";
 
@@ -12,9 +14,38 @@ export interface QuotaCommandOptions {
   databasePath?: string;
   staleAfterSeconds?: number;
   agingAfterSeconds?: number;
+  /** Ask AI-Quota-Tray to fetch from the providers before reading. */
+  refresh?: boolean;
 }
 
-export function quotaCommand(options: QuotaCommandOptions): number {
+/**
+ * Trigger a live refresh, then read. AQT owns every provider fetch; Bremio only
+ * asks it to run one and then reads the database it writes, so provider parsing
+ * is never duplicated across the two projects.
+ */
+export async function capacityCommand(options: QuotaCommandOptions): Promise<number> {
+  let service: AqtServiceStatus | undefined;
+  if (options.refresh) {
+    const outcome = await refreshAqtIfAvailable();
+    service = outcome.status;
+    if (outcome.status.state === "live") {
+      if (outcome.refresh?.ok) {
+        const refreshed = outcome.refresh.results?.filter((r) => r.refreshed).length ?? 0;
+        console.log(c.dim(`  refreshed ${refreshed} provider(s) through AI-Quota-Tray`));
+      } else {
+        console.error(
+          c.yellow(`warning: refresh failed, showing last-known data: ${outcome.refresh?.error ?? "unknown error"}`),
+        );
+      }
+    }
+  }
+  return quotaCommand(options, service);
+}
+
+export function quotaCommand(
+  options: QuotaCommandOptions,
+  service?: AqtServiceStatus,
+): number {
   const databasePath = options.databasePath ?? defaultAqtDatabasePath();
   if (!databasePath) {
     console.error(c.red("error: cannot locate AI-Quota-Tray database; pass --db <path>"));
@@ -31,6 +62,7 @@ export function quotaCommand(options: QuotaCommandOptions): number {
       staleAfterSeconds: options.staleAfterSeconds ?? DEFAULT_STALE_AFTER_SECONDS,
     });
     console.log(`${c.bold("Bremio · Capacity")} ${c.dim("(read-only from AI-Quota-Tray)")}`);
+    printServiceLine(service);
     console.log(c.dim(`  database: ${snapshot.databasePath}`));
     console.log(c.dim(`  aging after: ${formatAge(options.agingAfterSeconds ?? snapshot.staleAfterSeconds / 2)}`));
     console.log(c.dim(`  stale after: ${formatAge(snapshot.staleAfterSeconds)}`));
@@ -53,6 +85,30 @@ const AGENT_LABELS: Record<string, string> = {
   codex: "Codex",
   antigravity: "Antigravity",
 };
+
+/**
+ * State the liveness of the source up front. Without this the numbers look
+ * authoritative even when the tray app has been closed for days.
+ */
+function printServiceLine(service: AqtServiceStatus | undefined): void {
+  if (!service) return;
+  switch (service.state) {
+    case "live":
+      console.log(
+        c.green(`  source: LIVE — AI-Quota-Tray responding${service.version ? ` (v${service.version})` : ""}`),
+      );
+      return;
+    case "stale-endpoint":
+      console.log(
+        c.yellow("  source: NOT LIVE — AI-Quota-Tray published an endpoint but is not responding; values are last-known"),
+      );
+      return;
+    case "not-published":
+      console.log(
+        c.yellow("  source: NOT LIVE — AI-Quota-Tray is not running; values are last-known. Start it for live capacity."),
+      );
+  }
+}
 
 function printCapacity(
   capacity: AgentCapacitySnapshot,
