@@ -74,8 +74,9 @@ All cloud agents low      → local (Jan) reads code / builds a test skeleton
   reviewer of its own change (the router applies a heavy penalty — see 05).
 - **Reserve lead quota**: keep some quota in reserve for the lead to do the
   final aggregation.
-- **Cancelable**: any running task must be cancellable (timeout or user
-  cancel).
+- **Cancelable**: any running task must be cancellable (Ctrl+C or the
+  per-agent `--timeout <seconds>` hard limit); cancellation propagates to the
+  active adapter and blocks dependent tasks.
 - **Traceable**: every task logs enough to debug why it was assigned and how
   it ran.
 

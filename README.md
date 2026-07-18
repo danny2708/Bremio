@@ -28,7 +28,7 @@ Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
 
 ```sh
 corepack pnpm install
-corepack pnpm test          # 52 tests (incl. a Phase-2 mock E2E run)
+corepack pnpm test          # 54 tests (incl. quality-gate + timeout E2E runs)
 corepack pnpm typecheck
 
 # check adapter health / lead-eligibility
@@ -36,7 +36,7 @@ corepack pnpm bremio doctor
 
 # one prompt -> lead plans -> orchestrator hands a task to the OTHER agent,
 # which edits code in its own git worktree; results aggregate into one report
-corepack pnpm bremio run --lead codex --repo /path/to/repo "add a health endpoint"
+corepack pnpm bremio run --lead codex --timeout 600 --repo /path/to/repo "add a health endpoint"
 corepack pnpm bremio run --lead claude --repo /path/to/repo "fix the failing test"
 
 # after the run's test + independent-review gate passes, review the diff and merge
@@ -50,6 +50,8 @@ corepack pnpm bremio stats --repo /path/to/repo
 Each task runs in `<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
 `bremio/<taskId>-<agent>`; per-task logs and `report.json` land in
 `<repo>/.bremio/runs/<runId>/`. Press **Ctrl+C** to cancel an in-flight run.
+`--timeout <seconds>` applies a hard limit to each planning attempt and worker
+task; timeout cancellation is propagated to the active provider process.
 
 `bremio run` never merges — worktrees are **left for review**. `bremio merge`
 first requires a passed run quality gate, then shows the diff, asks for

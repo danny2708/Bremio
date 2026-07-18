@@ -8,7 +8,7 @@ Only **Claude (lead) + Codex (worker)**, **sequential**. Both return plan
 JSON → enough to prove lead-swapping + delegation. (Antigravity isn't in yet
 because it can't produce JSON — see 04.)
 
-**Implementation status (2026-07-18):** shipped. Local typecheck, 52 tests,
+**Implementation status (2026-07-18):** shipped. Local typecheck, 54 tests,
 and `bremio doctor` pass. A fresh two-provider real-run verification remains
 blocked by the Claude session limit reported at runtime; do not mark this phase
 fully closed until it is rerun after the reset.
@@ -50,8 +50,10 @@ Diff/merge manager, cherry-pick, worktree cleanup, reliable kill-on-timeout.
 
 **Early slice shipped:** `bremio merge` previews a gate-approved task's diff,
 requires confirmation (or `--yes`), merges with `--no-ff`, then removes its
-worktree and branch; conflicts abort cleanly. Cherry-pick, automatic quality
-automatic merge, cherry-pick, and reliable kill-on-timeout remain future work.
+worktree and branch; conflicts abort cleanly. `bremio run --timeout <seconds>`
+applies a hard limit to every planning attempt and task, propagates cancellation
+to the provider adapter, and blocks downstream tasks. Automatic merge and
+cherry-pick remain future work.
 
 ## Phase 4 — Quota-aware routing + efficiency (see 05)
 Usage ledger → consume AI-Quota-Tray → single-vs-multi decision +
