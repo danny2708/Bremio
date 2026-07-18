@@ -207,6 +207,7 @@ function* mapClaudeMessage(
       level: "info",
       message: `session init${model ? ` model=${model}` : ""}`,
     };
+    if (model) yield { type: "usage", runId, ts, model };
     return;
   }
 

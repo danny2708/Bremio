@@ -72,6 +72,8 @@ export const LogEventSchema = z.object({
 export const UsageEventSchema = z.object({
   type: z.literal("usage"),
   ...base,
+  /** Provider-confirmed model id when the stream exposes it. */
+  model: z.string().min(1).optional(),
   inputTokens: z.number().int().nonnegative().optional(),
   outputTokens: z.number().int().nonnegative().optional(),
   costUsd: z.number().nonnegative().optional(),

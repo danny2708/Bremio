@@ -81,8 +81,12 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
 
   const planningStarted = Date.now();
   let leadUsage: UsageSummary | undefined;
+  let observedLeadModel: string | undefined;
   const onLeadEvent = (event: AgentEvent): void => {
-    if (event.type === "usage") leadUsage = addUsage(leadUsage, event);
+    if (event.type === "usage") {
+      leadUsage = addUsage(leadUsage, event);
+      if (event.model) observedLeadModel = event.model;
+    }
     opts.hooks?.onLeadEvent?.(event);
   };
   let plan: Plan;
@@ -93,7 +97,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
       cwd: repoPath,
       runId,
       runDir,
-      ...(opts.model ? { model: opts.model } : {}),
+      ...(observedLeadModel ?? opts.model ? { model: observedLeadModel ?? opts.model } : {}),
       ...(opts.taskTimeoutMs ? { timeoutMs: opts.taskTimeoutMs } : {}),
       ...(opts.signal ? { signal: opts.signal } : {}),
       onEvent: onLeadEvent,
@@ -116,7 +120,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     leadId,
     status: "completed",
     durationMs: Date.now() - planningStarted,
-    ...(opts.model ? { model: opts.model } : {}),
+    ...(observedLeadModel ?? opts.model ? { model: observedLeadModel ?? opts.model } : {}),
     ...(leadUsage ? { usage: leadUsage } : {}),
   });
   logger?.info({ tasks: plan.tasks.length, attempts }, "lead produced a plan");

@@ -55,6 +55,7 @@ export const TaskResultSchema = z.object({
   worktreePath: z.string().optional(),
   logsPath: z.string().optional(),
   durationMs: z.number().int().nonnegative().optional(),
+  model: z.string().optional(),
   usage: UsageSummarySchema.optional(),
   error: z.string().optional(),
 });

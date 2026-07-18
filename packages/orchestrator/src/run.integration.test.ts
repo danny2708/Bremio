@@ -70,7 +70,15 @@ class MockLead extends BaseMock {
         return;
       }
       yield { type: "tool_use", runId: req.runId, ts, name: "Read", input: { file_path: "README.md" } };
-      yield { type: "usage", runId: req.runId, ts, inputTokens: 40, outputTokens: 10, costUsd: 0.01 };
+      yield {
+        type: "usage",
+        runId: req.runId,
+        ts,
+        model: "claude-mock",
+        inputTokens: 40,
+        outputTokens: 10,
+        costUsd: 0.01,
+      };
       const plan = {
         summary: "Add a GREETING file",
         leadAgentId: "claude",
@@ -164,7 +172,14 @@ class MockWorker extends BaseMock {
       });
     }
     const cancelled = req.signal?.aborted === true;
-    yield { type: "usage", runId: req.runId, ts: Date.now(), inputTokens: 120, outputTokens: 30 };
+    yield {
+      type: "usage",
+      runId: req.runId,
+      ts: Date.now(),
+      model: "codex-mock",
+      inputTokens: 120,
+      outputTokens: 30,
+    };
     yield {
       type: "completed",
       runId: req.runId,
@@ -220,6 +235,7 @@ describe("runBremio end-to-end (mock adapters)", () => {
     expect(impl?.result.filesChanged).toContain("GREETING.txt");
     expect(impl?.result.commitHash).toBeTruthy();
     expect(impl?.result.usage).toEqual({ inputTokens: 120, outputTokens: 30 });
+    expect(impl?.result.model).toBe("codex-mock");
     expect(impl?.result.branch).toBe("bremio/TASK-002-codex");
     expect(existsSync(impl?.result.worktreePath ?? "")).toBe(true);
 
@@ -252,10 +268,12 @@ describe("runBremio end-to-end (mock adapters)", () => {
       inputTokens: 120,
       outputTokens: 30,
     });
+    expect(entries.find((entry) => entry.taskId === "TASK-002")?.model).toBe("codex-mock");
     expect(entries.find((entry) => entry.scope === "coordination")).toMatchObject({
       provider: "claude",
       kind: "planning",
       status: "completed",
+      model: "claude-mock",
       usage: { inputTokens: 40, outputTokens: 10, costUsd: 0.01 },
     });
   });

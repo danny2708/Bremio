@@ -11,6 +11,8 @@ export interface CollectedRun {
   tests: TestRun[];
   /** Sum of provider-reported usage events; missing dimensions stay unknown. */
   usage?: UsageSummary;
+  /** Provider-confirmed model, omitted if unavailable or inconsistent. */
+  model?: string;
 }
 
 const SHELL_TOOLS = new Set(["shell", "bash", "Bash"]);
@@ -33,6 +35,7 @@ export async function collectRun(
   let inputTokens: number | undefined;
   let outputTokens: number | undefined;
   let costUsd: number | undefined;
+  const models = new Set<string>();
 
   for await (const event of events) {
     opts.log?.event(event);
@@ -57,6 +60,7 @@ export async function collectRun(
         exitCode,
       });
     } else if (event.type === "usage") {
+      if (event.model) models.add(event.model);
       if (event.inputTokens !== undefined) inputTokens = (inputTokens ?? 0) + event.inputTokens;
       if (event.outputTokens !== undefined) outputTokens = (outputTokens ?? 0) + event.outputTokens;
       if (event.costUsd !== undefined) costUsd = (costUsd ?? 0) + event.costUsd;
@@ -79,5 +83,6 @@ export async function collectRun(
           },
         }
       : {}),
+    ...(models.size === 1 ? { model: [...models][0] } : {}),
   };
 }
