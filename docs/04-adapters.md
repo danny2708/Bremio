@@ -23,7 +23,8 @@ interface AgentAdapter {
 ## Claude Code adapter
 - Surface: **Claude Agent SDK** (TypeScript) — model selection, streaming,
   permissions, structured output, usage + rate-limit events.
-- Quota: the SDK emits a rate-limit event with `utilization` + reset time.
+- Quota in Bremio: consume AQT's opt-in Claude Code status-line bridge (5-hour
+  and 7-day windows). SDK token usage is telemetry, not a quota percentage.
 - Roles: lead, planner, implementer, reviewer. Eligible to be the lead.
 - Risk: lowest of the three. **Start here.**
 
@@ -60,9 +61,11 @@ interface AgentAdapter {
   `structuredOutput=false` ⇒ **Antigravity does NOT lead in the MVP** (a
   lead needs to return plan JSON). This trap is about task *execution*
   output, independent of the quota point below.
-- Quota: **AI-Quota-Tray already reads Antigravity quota via its CLI API**
-  (confirmed 2026-07-17). Bremio's `packages/quota` consumes that source
-  directly — don't re-implement it. If AQT's Antigravity source is ever
+- Quota: **AI-Quota-Tray already reads Antigravity quota per model via the
+  running IDE's local language-server `GetUserStatus` RPC** (process discovery,
+  CSRF token, and `clientModelConfigs[].quotaInfo`; confirmed in AQT source on
+  2026-07-18). Bremio's `packages/quota` consumes the resulting SQLite rows —
+  don't re-implement it. If AQT's Antigravity source is ever
   unavailable at runtime, `getQuota()` falls back to
   `{status:"unknown", source:"estimated", confidence:"low"}` rather than
   guessing.

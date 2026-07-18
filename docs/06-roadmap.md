@@ -76,6 +76,23 @@ provider exposes them, but unreported worker defaults and the outcome baseline
 remain incomplete before efficiency claims. Router wiring waits for fresh AQT
 data and calibration.
 
+**Capacity sub-roadmap:**
+
+1. **4A Observe/display:** canonical `QuotaProvider`; Capacity cards; preserve
+   Claude windows, Codex multi-window limits, and Antigravity per-model limits;
+   show source/confidence/age; manual re-read and native-usage links. Split run
+   history into requested/actual model and requested/provider-confirmed
+   reasoning level without estimating quota consumed per task.
+2. **4B Freshness/monitoring:** AQT-owned polling every 1-5 minutes, per-window
+   confidence degradation, last-updated timestamps, and low-capacity alerts.
+3. **4C Routing:** configurable thresholds, lead reserve, model-aware
+   Antigravity scoring, all-window Codex scoring, hard exclusion only for fresh
+   confident exhaustion, and soft penalties for stale/unknown/low-confidence
+   data. Full checklist and policy live in `05-quota-and-routing.md`.
+
+Do not copy AQT's provider fetch implementations into Bremio. Add a stable AQT
+refresh boundary (command/IPC/shared package) if re-reading SQLite is not enough.
+
 ## Phase 5 — Parallel + VS Code extension
 Run tasks in parallel (PQueue/BullMQ), panel UI. UI is just a surface; the
 value lives in the daemon.

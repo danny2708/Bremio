@@ -4,7 +4,8 @@
 
 1. **Don't rebuild the quota reader.** `AI-Quota-Tray` already reads
    official quota for Codex (`account/rateLimits/read`), Claude Code
-   (status-line bridge), and Antigravity (CLI API). `packages/quota`
+   (status-line bridge), and Antigravity (local language-server
+   `GetUserStatus` RPC). `packages/quota`
    **consumes** that source (reads the cache file AQT writes, or the
    official-source logic is split into a shared package). No UI scraping.
 2. **Be honest about `unknown`.** If a machine-readable source is missing →
@@ -24,17 +25,85 @@ versions are rejected, and disabled/errored providers, missing buckets, or any
 quota window older than 30 minutes normalize to `unknown`. This fail-closed
 behavior prevents a fresh short window from hiding a stale longer-term limit.
 
-## QuotaSnapshot (allows partial data)
+### Coverage audit
+
+| Agent | Already available through AQT SQLite | Gap in Bremio |
+|---|---|---|
+| Claude Code | 5-hour and 7-day windows from the opt-in status-line bridge | No Capacity card/open-native-usage action; extra windows such as "Weekly Fable" are not currently whitelisted by AQT and must remain absent until a structured source is verified. |
+| Codex | Every `rateLimitsByLimitId` entry, including primary/secondary windows and optional individual limits | No Capacity card or router consumption. Multiple windows are already preserved and must not be collapsed to one value. |
+| Antigravity | One bucket per model from `clientModelConfigs[].quotaInfo`, with remaining fraction and reset time | No Capacity card or model-aware router consumption. Routing must score the selected model bucket, not take the minimum across unrelated models. |
+
+Current runtime check on 2026-07-18 found AQT stopped and the database last
+updated on 2026-07-12. `bremio quota` correctly reports every provider as
+`unknown`/stale. The first Capacity UI must show this freshness explicitly.
+
+## Target `QuotaProvider` contract
+
+The existing `readAqtQuota()` function is a concrete source adapter, not yet a
+stable provider contract. The contract must preserve multiple account windows
+and per-model Antigravity capacity:
+
 ```ts
-interface QuotaSnapshot {
-  provider: string; agentId: string;
-  remainingPercent?: number; utilizationPercent?: number; resetsAt?: string;
+interface QuotaProvider {
+  readonly id: string;
+  readSnapshot(): Promise<AgentCapacitySnapshot>;
+  refresh?(): Promise<AgentCapacitySnapshot>; // delegates to AQT; does not copy fetch logic
+  openNativeUsage?(): Promise<void>;
+}
+
+interface AgentCapacitySnapshot {
+  agentId: string;
+  availability: "idle" | "busy" | "unavailable" | "unknown";
   status: "healthy" | "limited" | "critical" | "exhausted" | "unknown";
-  source: "provider-api" | "sdk" | "cli" | "estimated" | "manual";
   confidence: "high" | "medium" | "low";
-  capturedAt: string;
+  source: { name: string; confidenceLabel: string };
+  capturedAt: number;
+  windows: QuotaWindow[];
+}
+
+interface QuotaWindow {
+  id: string;
+  label: string;
+  scope: "account" | "model";
+  modelId?: string;
+  usedPercent?: number;
+  remainingPercent?: number;
+  resetsAt?: number;
+  windowMinutes?: number;
+  capturedAt: number;
+  confidence: "high" | "medium" | "low";
 }
 ```
+
+`AgentAdapter.getQuota()` is currently a Phase-1 placeholder returning
+`unknown`; it should eventually delegate to this contract rather than create a
+second quota representation.
+
+## Capacity surface
+
+Use **Capacity** as the tab name. It is broader than quota and can later include
+agent availability, active-task count, health, recent latency, quota windows,
+and whether the agent can accept more work.
+
+The first UI slice should provide:
+
+- one card per agent, with every quota window/model bucket;
+- used/remaining percentages, reset time, source, confidence, and data age;
+- manual refresh and provider-specific `Open usage` when a native page exists;
+- explicit unavailable/unknown states instead of fabricated percentages.
+
+The Refresh button initially re-reads AQT SQLite. A true source refresh should
+be added through a stable AQT command/IPC/shared package. Do **not** copy the
+Codex RPC, Claude bridge, or Antigravity process-discovery/CSRF logic into
+Bremio; duplicated provider logic would drift and double the security surface.
+
+## Compatibility note
+
+`AgentAdapter.getQuota()` still returns the older single-window
+`QuotaSnapshot`. That shape cannot represent Codex multi-window limits or
+Antigravity per-model limits and is a placeholder only. Do not extend it in
+parallel with `AgentCapacitySnapshot`; migrate the adapter contract once the
+canonical schema is implemented.
 
 ## Efficiency model — "best out of the models, minimal quota"
 
@@ -137,9 +206,91 @@ if (agent.id === task.authorAgentId && task.kind === "review") score -= 100; // 
 if (quota.status === "critical") score -= 40;
 if (!caps.repositoryWrite && task.needsWrite) return -Infinity;
 ```
+
+Target policy (configuration, not hardcoded core logic):
+
+```yaml
+capacityPolicy:
+  healthy:  { remainingPercentMin: 50 }
+  limited:  { remainingPercentMin: 20 }
+  critical: { remainingPercentMin: 5 }
+
+routing:
+  avoidCriticalAgents: true
+  prohibitExhaustedAgents: true
+  reserveLeadCapacityPercent: 15
+  unknownQuotaPenalty: 10
+```
+
+The current observation-only normalizer uses fixed thresholds of 25%/10%/0%
+for limited/critical/exhausted. Before router integration, move thresholds to
+configuration and test the 50%/20%/5% policy above. Capacity cards should show
+raw percentages regardless of the configured label.
+
+Router rules:
+
+- Codex capacity is the minimum remaining value across the applicable account
+  windows; all windows remain visible in the UI.
+- Antigravity capacity is evaluated for the candidate model. A limited model
+  must not make every other Antigravity model unavailable.
+- A fresh, high-confidence exhausted window may prohibit that candidate.
+- Low-confidence, stale, or unknown quota is a **soft scoring signal only**.
+  It may apply `unknownQuotaPenalty`; it must never be the sole hard exclusion.
+- Reserve lead capacity before assigning additional worker tasks to the lead.
+
 Tiered model policy (trivial→critical) lives in `config/routing.yaml`; model
 names are NEVER hardcoded in core — each adapter maps
 `reasoningRequirement` → its own provider's model.
+
+## Run-history fields (separate from quota)
+
+Do not infer "TASK-018 consumed 3.7% quota." Keep the inexpensive facts Bremio
+already controls or receives:
+
+```ts
+interface RunExecutionMetadata {
+  requestedModel?: string;
+  actualModel?: string;
+  requestedReasoningLevel?: string;
+  actualReasoningLevel?: string;
+  durationMs: number;
+  status: "completed" | "failed" | "cancelled";
+}
+```
+
+Duration/status and a single provider-confirmed `model` are already recorded.
+TODO: split requested vs actual model, record requested reasoning, and preserve
+actual reasoning only when the provider confirms it. Provider token/cost events
+may remain optional telemetry, but are never converted into quota percentage.
+
+## Capacity implementation checklist
+
+### 4A — Observe and display
+
+- [x] Read AQT schema-v1 SQLite read-only.
+- [x] Preserve Codex multi-window buckets.
+- [x] Preserve Antigravity per-model buckets.
+- [x] Expose observation through `bremio quota`.
+- [ ] Introduce `QuotaProvider` and one canonical capacity schema.
+- [ ] Add the **Capacity** cards and data-age/source/confidence display.
+- [ ] Add re-read refresh, `Open usage`, and unavailable states.
+- [ ] Extend AQT's Claude whitelist only when another structured window is
+      verified; do not synthesize "Weekly Fable" from token usage.
+
+### 4B — Freshness and monitoring
+
+- [ ] Degrade confidence per window as data ages; retain last-known values for
+      display while marking them stale.
+- [ ] Let AQT own provider polling (1-5 minutes); Bremio consumes snapshots.
+- [ ] Add low-capacity alerts and last-updated timestamps.
+
+### 4C — Router integration
+
+- [ ] Add configurable thresholds and lead reserve.
+- [ ] Apply hard exclusion only to fresh, sufficiently confident exhaustion.
+- [ ] Apply soft penalties to unknown/low-confidence/stale data.
+- [ ] Select Antigravity capacity by candidate model and Codex capacity by all
+      applicable rate-limit windows.
 
 ## Build order for this section
 1. Ledger first (log the cost of every run, even before smart routing exists).

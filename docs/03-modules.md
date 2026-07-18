@@ -43,7 +43,9 @@ TaskResults → report). **Knows nothing** about specific providers.
 **quota** — currently reads AI-Quota-Tray's schema-v1 SQLite cache read-only
 and normalizes provider/bucket freshness for `bremio quota`. It **consumes**
 AI-Quota-Tray instead of reading provider sources itself (see 05); router
-integration remains gated on calibration.
+integration remains gated on calibration. Planned: a canonical `QuotaProvider`
+contract supporting multiple account windows, per-model windows, source age,
+and confidence; `AgentAdapter.getQuota()` will delegate to it.
 
 **workspace** — manages git isolation. Details below.
 

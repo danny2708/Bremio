@@ -41,9 +41,9 @@ A **control plane** that orchestrates multiple coding agents:
 
 `D:\Work\Side-Projects\AI-Quota-Tray` **already** reads official quota for
 Codex (`account/rateLimits/read`), Claude Code (status-line bridge), and
-Antigravity (CLI API). Bremio **does not rebuild** this — it **consumes**
-that output (see `05-quota-and-routing.md`). Otherwise we'd be writing the
-same hardest piece of logic twice, in the same directory.
+Antigravity (local language-server RPC). Bremio **does not rebuild** this —
+it **consumes** that output (see `05-quota-and-routing.md`). Otherwise we'd
+be writing the same hardest piece of logic twice, in the same directory.
 
 ## Success criteria (MVP)
 
