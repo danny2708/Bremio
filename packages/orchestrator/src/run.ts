@@ -31,6 +31,8 @@ export interface RunBremioHooks extends SchedulerHooks {
 
 export interface RunBremioOptions {
   leadId: string;
+  /** Explicit Team worker. Defaults to the first registered non-lead adapter. */
+  workerId?: string;
   repoPath: string;
   prompt: string;
   registry: AgentRegistry;
@@ -83,12 +85,21 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     );
   }
 
+  // Worker defaults to the first other provider; an explicit worker enables
+  // deterministic three-provider Team runs.
+  const workerId = opts.workerId ?? [...registry.keys()].find((id) => id !== leadId) ?? leadId;
+  if (!registry.has(workerId)) {
+    throw new Error(
+      `worker "${workerId}" is not registered (available: ${[...registry.keys()].join(", ") || "none"})`,
+    );
+  }
+  if (workerId === leadId && registry.size > 1) {
+    throw new Error("Team worker must be different from the lead");
+  }
+
   const workspace = new WorktreeManager(repoPath, { runToken: runId.slice(-6) });
   await workspace.assertUsable();
   const baseBranch = await getCurrentBranch(repoPath);
-
-  // Worker = the other registered provider; falls back to the lead (single-agent).
-  const workerId = [...registry.keys()].find((id) => id !== leadId) ?? leadId;
 
   const capabilitiesByAgent = new Map<string, AgentCapabilities>();
   for (const [id, adapter] of registry) {
@@ -162,6 +173,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     ? new Map(opts.capacitySnapshots.map((snapshot) => [snapshot.agentId, snapshot] as const))
     : undefined;
   const assign = assignAgents(plan, leadId, workerId, {
+    capabilitiesByAgent,
     ...(capacityByAgent ? { capacityByAgent } : {}),
     ...(opts.capacityPolicy ? { capacityPolicy: opts.capacityPolicy } : {}),
     ...(opts.modelByAgent ? { modelByAgent: opts.modelByAgent } : {}),

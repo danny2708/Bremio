@@ -14,18 +14,32 @@ the results. ROI goal: **get the most out of the models with the least quota.**
 ## Status
 **Phase 1 (vertical slice) implemented**, plus the Phase-2 quality gate and
 early Phase-4 measurement/quota slices — explicit Single/Team modes, Claude
-(Agent SDK) + Codex
-(`codex exec --json`) as swappable lead/worker, a validator, a sequential
+(Agent SDK) + Codex (`codex exec --json`) as swappable lead/workers, and an
+Antigravity SDK worker, a validator, a sequential
 scheduler, dependency-aware git-worktree isolation, independent review,
 exit-code-backed test evidence, review-gated merge, and the CLI. Full design
 lives in [`docs/`](docs/); start at [`docs/README.md`](docs/README.md). Still out
-of scope (see [`docs/06`](docs/06-roadmap.md)): Antigravity execution,
-automatically enabled/calibrated quota optimization, parallelism, dashboard.
+of scope (see [`docs/06`](docs/06-roadmap.md)): Antigravity lead/test-gate
+roles, automatically enabled/calibrated quota optimization, parallelism,
+dashboard.
 
 ## Quickstart
 Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
 `PATH` and logged in (`codex login`), and Claude auth for the Agent SDK
 (`ANTHROPIC_API_KEY` or a Claude Code login).
+
+Antigravity is optional. It needs Python 3.10+, the official SDK, and either
+`GEMINI_API_KEY` or Vertex credentials. Install it in a dedicated environment
+and point Bremio at that interpreter (PowerShell example):
+
+```powershell
+py -3.12 -m venv .bremio\antigravity-venv
+& .bremio\antigravity-venv\Scripts\python.exe -m pip install -r packages\adapter-antigravity\requirements.txt
+$env:BREMIO_ANTIGRAVITY_PYTHON = (Resolve-Path .bremio\antigravity-venv\Scripts\python.exe).Path
+```
+
+Keep credentials outside the repository. `bremio doctor` reports Antigravity
+as `degraded` until supported credentials are visible to the sidecar.
 
 ```sh
 corepack pnpm install
@@ -38,11 +52,13 @@ corepack pnpm bremio doctor
 # Single: one adapter call in the current workspace; no plan/scheduler/worktree/merge
 corepack pnpm bremio run --mode single --agent codex --timeout 600 --repo /path/to/repo "fix the failing test"
 corepack pnpm bremio run --mode single --agent claude --repo /path/to/repo "add a health endpoint"
+corepack pnpm bremio run --mode single --agent antigravity --repo /path/to/repo "update the docs"
 
 # Team: lead plans -> orchestrator hands a task to the OTHER agent,
 # which edits code in its own git worktree; results aggregate into one report
 corepack pnpm bremio run --mode team --lead codex --timeout 600 --repo /path/to/repo "add a health endpoint"
 corepack pnpm bremio run --mode team --lead claude --repo /path/to/repo "fix the failing test"
+corepack pnpm bremio run --mode team --lead claude --worker antigravity --repo /path/to/repo "add a health endpoint"
 # --lead without --mode remains a backward-compatible alias for Team
 corepack pnpm bremio run --lead codex --model gpt-5.6-terra --reasoning high --repo /path/to/repo "review this change"
 
@@ -108,7 +124,8 @@ This remains opt-in until ledger calibration supports automatic optimization.
 
 ## Packages
 `protocol` (Zod contracts) · `adapter-sdk` (the `AgentAdapter` interface) ·
-`adapter-claude` · `adapter-codex` · `orchestrator` (direct Single runner plus
+`adapter-claude` · `adapter-codex` · `adapter-antigravity` (official Python SDK
+sidecar) · `orchestrator` (direct Single runner plus
 Team lead-manager, validator, router, scheduler, aggregator) · `quota`
 (read-only AQT consumer) · `workspace`
 (worktrees + logs) · `apps/cli`.
@@ -128,4 +145,5 @@ Claude (lead) + Codex (worker), sequential. See
 
 ## Stack (planned)
 Node 22 · TypeScript · pnpm workspaces · Zod · SQLite · simple-git · Pino · Vitest.
-Adapters: Claude Agent SDK · Codex app-server/exec · Antigravity `agy -p` (pty).
+Adapters: Claude Agent SDK · Codex app-server/exec · official Antigravity
+Python SDK sidecar.

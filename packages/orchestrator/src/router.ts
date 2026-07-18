@@ -1,4 +1,4 @@
-import type { AgentRole, Permission } from "@bremio/adapter-sdk";
+import type { AgentCapabilities, AgentRole, Permission } from "@bremio/adapter-sdk";
 import type { Plan, Task, TaskKind } from "@bremio/protocol";
 import {
   assessCapacity,
@@ -8,8 +8,10 @@ import {
   type CapacityRoutingPolicy,
   type CapacityRoutingPolicyInput,
 } from "@bremio/quota";
+import { capabilityHolds } from "./validator";
 
 export interface AssignAgentsOptions {
+  capabilitiesByAgent?: ReadonlyMap<string, AgentCapabilities>;
   capacityByAgent?: ReadonlyMap<string, AgentCapacitySnapshot>;
   capacityPolicy?: CapacityRoutingPolicyInput;
   /** Provider-confirmed model id selected for each candidate agent. */
@@ -21,7 +23,7 @@ export class CapacityRoutingError extends Error {
     readonly taskId: string,
     detail: string,
   ) {
-    super(`no capacity-eligible agent for ${taskId}: ${detail}`);
+    super(`no eligible agent for ${taskId}: ${detail}`);
     this.name = "CapacityRoutingError";
   }
 }
@@ -110,13 +112,20 @@ function chooseAgent(
     };
   });
   const eligible = candidates
-    .filter((candidate) => !candidate.assessment?.hardExcluded && !candidate.reserveBlocked)
+    .filter((candidate) =>
+      supportsTask(candidate.agentId, task, options) &&
+      !candidate.assessment?.hardExcluded &&
+      !candidate.reserveBlocked
+    )
     .sort((a, b) => b.score - a.score);
   if (eligible[0]) return eligible[0].agentId;
 
   const detail = candidates.map((candidate) => {
     if (candidate.reserveBlocked) {
       return `${candidate.agentId} is held for the ${policy.reserveLeadCapacityPercent}% lead reserve`;
+    }
+    if (!supportsTask(candidate.agentId, task, options)) {
+      return `${candidate.agentId} lacks a required capability`;
     }
     return `${candidate.agentId}: ${candidate.assessment?.reason ?? "unavailable"}`;
   }).join("; ");
@@ -131,8 +140,27 @@ function isCapacityEligible(
   policy: CapacityRoutingPolicy,
 ): boolean {
   const assessment = assessmentFor(agentId, options, policy);
-  return !assessment?.hardExcluded &&
+  return supportsTask(agentId, task, options) && !assessment?.hardExcluded &&
     !isLeadReserveBlocked(agentId, task, leadId, assessment, policy);
+}
+
+function supportsTask(
+  agentId: string,
+  task: Task,
+  options: AssignAgentsOptions,
+): boolean {
+  const capabilities = options.capabilitiesByAgent?.get(agentId);
+  if (!capabilities) return true;
+  const roleSupported = task.kind === "analysis"
+    ? capabilities.planning && capabilities.repositoryRead
+    : task.kind === "test"
+      ? capabilities.testing && capabilities.shell
+      : task.kind === "review"
+        ? capabilities.repositoryRead
+        : capabilities.repositoryWrite;
+  return roleSupported && task.requiredCapabilities.every((token) =>
+    capabilityHolds(token, capabilities)
+  );
 }
 
 function assessmentFor(

@@ -23,13 +23,15 @@ Still deferred after the manual-mode evidence gate:
 - extracting Single into another package (keep it as an orchestrator module
   until a concrete package boundary is justified).
 
-The next execution milestone is Phase 1.5: establish and implement the real
-Antigravity adapter surface, then add Antigravity as Single and Team worker.
+Phase 1.5 now provides Antigravity as a Single agent and explicit Team
+implementation worker. The next execution milestone is real-provider
+Antigravity verification once SDK credentials are configured, then Phase 2/3
+hardening that is still open.
 
 ## Phase 1 — Vertical slice (the real MVP)
 Only **Claude (lead) + Codex (worker)**, **sequential**. Both return plan
-JSON → enough to prove lead-swapping + delegation. (Antigravity isn't in yet
-because it can't produce JSON — see 04.)
+JSON → enough to prove lead-swapping + delegation. Antigravity was deliberately
+outside the Phase-1 scope and arrived in Phase 1.5.
 
 **Implementation status (2026-07-18):** closed. Local typecheck, test suite,
 and `bremio doctor` pass. After the Claude quota reset, fresh Team fixtures
@@ -50,13 +52,22 @@ is intentionally excluded from the normal test suite.
 ✓ a task can be cancelled
 ✓ logs exist for debugging
 ```
-Not needed yet: dashboard, parallelism, auto-merge, quota, Antigravity,
+Not needed yet: dashboard, parallelism, auto-merge, automatic quota routing,
 OpenCode/Jan.
 
 ## Phase 1.5 — Antigravity worker
-Add the Antigravity adapter: **pty wrapper** (guards against non-TTY
-swallowing output), reviewer/implementer runs in a **throwaway worktree**.
-Not allowed to be the lead.
+**Implemented locally (2026-07-18):** official `google-antigravity==0.1.7`
+Python SDK sidecar, normalized JSONL events, health/auth diagnostics,
+workspace-scoped read/write policies, cancellation, usage, Single selection,
+and explicit Team worker selection. Capability-aware routing keeps planning
+and test gates on Claude/Codex. Typecheck and 112 tests pass; a clean isolated
+SDK install passes `pip check`. Real billed execution remains unverified
+because no `GEMINI_API_KEY` or complete Vertex configuration was present;
+`doctor` correctly reports `degraded`.
+
+Antigravity is not allowed to lead (`planning=false`) and is not a test-gate
+agent until the SDK exposes reliable shell exit codes through its response
+stream.
 
 ## Phase 2 — Lead swap (already possible since P1) + quality gate opens up
 Add independent review (avoid-self-review), test gate, conflict detection,

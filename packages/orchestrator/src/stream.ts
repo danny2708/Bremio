@@ -22,7 +22,7 @@ export interface CollectedRun {
   actualReasoningLevel?: ReasoningLevel;
 }
 
-const SHELL_TOOLS = new Set(["shell", "bash", "Bash"]);
+const SHELL_TOOLS = new Set(["shell", "bash", "Bash", "run_command"]);
 
 /**
  * Drain an adapter's event stream: mirror every event to the task log and an

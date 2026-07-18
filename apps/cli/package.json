@@ -7,6 +7,7 @@
     "bremio": "./src/index.ts"
   },
   "dependencies": {
+    "@bremio/adapter-antigravity": "workspace:*",
     "@bremio/adapter-claude": "workspace:*",
     "@bremio/adapter-codex": "workspace:*",
     "@bremio/adapter-sdk": "workspace:*",

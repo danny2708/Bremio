@@ -41,26 +41,27 @@ interface AgentAdapter {
   re-read it.
 - Roles: lead, implementer, reviewer, tester. Eligible to be the lead.
 
-## Antigravity adapter — READ CAREFULLY (verified via web search, `agy` v1.1.0, 07/2026)
-- Surface: `agy -p "<prompt>"` (non-interactive, alias `--print`), with
-  `--model`, `--add-dir`, `--dangerously-skip-permissions`, `--print-timeout`
-  (default 5m). The CLI is **real** and does edit the local repo.
-- ⚠️ **TRAP 1 — non-TTY swallows output:** `agy -p` under a non-TTY
-  (pipe/subprocess/CI) can **silently drop the final response**, with exit
-  code still 0 ("succeeded but did nothing"). This is the most dangerous
-  failure mode for an orchestrator spawning a child process. **Mandatory**:
-  wrap it in a **pseudo-TTY (pty)**, parse text defensively, prefer
-  API-key auth.
-- ⚠️ **TRAP 2 — no read-only mode in `-p`:** it auto-approves **every** tool
-  call, including `write_file`/shell (no `--approval-mode plan` yet). →
-  a reviewer cannot be forced read-only at the CLI layer. Mitigation: run
-  the Antigravity reviewer inside a **throwaway worktree**, grant it no
-  secrets, and treat any writes it makes as discardable — only its
-  findings/text are kept.
-- ⚠️ **No `--output-format json`** → output must be parsed as text. Set
-  `structuredOutput=false` ⇒ **Antigravity does NOT lead in the MVP** (a
-  lead needs to return plan JSON). This trap is about task *execution*
-  output, independent of the quota point below.
+## Antigravity adapter (official SDK 0.1.7, verified 2026-07-18)
+- Surface: the official `google-antigravity` Python SDK behind a one-process,
+  one-run JSONL sidecar. Bremio does not drive the IDE or wrap the interactive
+  `agy` TUI.
+- Auth: `GEMINI_API_KEY`, or Vertex/Enterprise environment configuration plus
+  ADC. The SDK does **not** reuse an Antigravity IDE login or its subscription
+  quota. `doctor` distinguishes missing SDK (`unavailable`) from installed SDK
+  without detected credentials (`degraded`).
+- Permissions: both modes disable subagents and scope file tools to the task
+  workspace. `read-only` exposes only the SDK's read-only built-ins.
+  `workspace-write` additionally exposes create/edit/shell and uses the SDK's
+  declarative allow policy. The SDK's `run_command` is not filesystem-sandboxed
+  like its file tools, so Bremio never enables it for a read-only task.
+- Streaming: text, thoughts, tool calls, structured output, session id, and
+  provider token usage normalize into `AgentEvent`. SDK 0.1.7 does not expose
+  reliable shell exit codes through `ChatResponse`, so Antigravity is not
+  eligible for Bremio test gates yet.
+- Roles: Single implementer and explicit Team implementation worker via
+  `--worker antigravity`. `planning=false` and `testing=false`, so it cannot be
+  selected as lead or test gate. Structured output support is retained for
+  future roles rather than being inferred from text.
 - Quota: **AI-Quota-Tray already reads Antigravity quota per model via the
   running IDE's local language-server `GetUserStatus` RPC** (process discovery,
   CSRF token, and `clientModelConfigs[].quotaInfo`; confirmed in AQT source on
@@ -68,8 +69,9 @@ interface AgentAdapter {
   don't re-implement it. If AQT's Antigravity source is ever
   unavailable at runtime, `@bremio/quota` returns an explicit unknown or
   unavailable capacity snapshot rather than guessing.
-- Practical MVP roles: implementer (simple tasks), tester/UI-check.
-  **Not lead** (blocked by the JSON-output trap above, not by quota).
+- Package pin and setup live in
+  `packages/adapter-antigravity/requirements.txt`; the interpreter can be
+  selected with `BREMIO_ANTIGRAVITY_PYTHON`.
 
 ## OpenCode / Jan (future, not the MVP)
 - **OpenCode**: has a headless HTTP server (`opencode serve`) → the adapter

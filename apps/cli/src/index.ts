@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { pino } from "pino";
+import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
 import {
@@ -29,8 +30,8 @@ import { c, compactEvent, printPlan, printReport, statusGlyph } from "./ui";
 const USAGE = `${c.bold("bremio")} — provider-agnostic orchestrator for AI coding agents
 
 ${c.bold("Usage")}
-  bremio run --mode single --agent <claude|codex> --repo <path> "<prompt>"
-  bremio run --mode team --lead <claude|codex> --repo <path> "<prompt>"
+  bremio run --mode single --agent <claude|codex|antigravity> --repo <path> "<prompt>"
+  bremio run --mode team --lead <claude|codex> [--worker <agent>] --repo <path> "<prompt>"
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
@@ -40,8 +41,9 @@ ${c.bold("Usage")}
 
 ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --mode <single|team>    Explicit execution mode. Required for new commands.
-  --agent <claude|codex>  Agent for Single mode.
+  --agent <agent>         Agent for Single mode: claude, codex, or antigravity.
   --lead <claude|codex>   Lead for Team mode. Without --mode, implies Team.
+  --worker <agent>        Explicit Team worker (including antigravity).
   --repo <path>           Target git repository. Required.
   --model <id>            Model for the Single agent or Team lead (optional).
   --reasoning <level>     Single-agent or Team-lead reasoning level.
@@ -77,6 +79,7 @@ function parseCli() {
       mode: { type: "string" },
       agent: { type: "string" },
       lead: { type: "string" },
+      worker: { type: "string" },
       repo: { type: "string" },
       prompt: { type: "string" },
       model: { type: "string" },
@@ -143,14 +146,24 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   if (!parsedMode.success) {
     errors.push("--mode must be 'single' or 'team'");
   }
-  if (mode === "single" && values.agent !== "claude" && values.agent !== "codex") {
-    errors.push("Single mode requires --agent 'claude' or 'codex'");
+  const agentIds = new Set(["claude", "codex", "antigravity"]);
+  if (mode === "single" && !agentIds.has(values.agent ?? "")) {
+    errors.push("Single mode requires --agent 'claude', 'codex', or 'antigravity'");
   }
   if (mode === "team" && values.lead !== "claude" && values.lead !== "codex") {
     errors.push("Team mode requires --lead 'claude' or 'codex'");
   }
   if (mode === "single" && values.lead) {
     errors.push("--lead is only valid in Team mode; use --agent for Single mode");
+  }
+  if (mode === "single" && values.worker) {
+    errors.push("--worker is only valid in Team mode");
+  }
+  if (mode === "team" && values.worker && !agentIds.has(values.worker)) {
+    errors.push("--worker must be 'claude', 'codex', or 'antigravity'");
+  }
+  if (mode === "team" && values.worker === values.lead) {
+    errors.push("--worker must be different from --lead");
   }
   if (mode === "team" && values.agent) {
     errors.push("--agent is only valid in Single mode; use --lead for Team mode");
@@ -191,7 +204,11 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
 
   const json = values.json === true;
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
-  const registry = createRegistry([new ClaudeAdapter(), new CodexAdapter()]);
+  const registry = createRegistry([
+    new ClaudeAdapter(),
+    new CodexAdapter(),
+    new AntigravityAdapter(),
+  ]);
   const capacitySnapshots = mode === "team" && values["capacity-routing"]
     ? readRoutingCapacity(values, capacityTiming)
     : undefined;
@@ -263,7 +280,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   try {
     if (mode === "single") {
       const report = await runSingleAgent({
-        primaryAgentId: values.agent as "claude" | "codex",
+        primaryAgentId: values.agent as string,
         repoPath,
         prompt,
         registry,
@@ -285,6 +302,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
 
     const report = await runBremio({
       leadId: values.lead as "claude" | "codex",
+      ...(values.worker ? { workerId: values.worker } : {}),
       repoPath,
       prompt,
       registry,
@@ -453,7 +471,11 @@ function readRoutingCapacity(
 
 async function doctor(): Promise<void> {
   console.log(c.bold("bremio doctor — adapter health\n"));
-  for (const adapter of [new ClaudeAdapter(), new CodexAdapter()]) {
+  for (const adapter of [
+    new ClaudeAdapter(),
+    new CodexAdapter(),
+    new AntigravityAdapter(),
+  ]) {
     const health = await adapter.healthCheck();
     const caps = await adapter.getCapabilities();
     const glyph =

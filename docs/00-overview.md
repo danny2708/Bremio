@@ -24,8 +24,9 @@ A **control plane** with two explicit manual execution modes:
 - The **orchestrator** (independent of every provider) makes the final call
   on which agent does which task, with what permissions, in which worktree,
   with which model.
-- The lead can be **swapped** (Claude / Codex / Antigravity / later
-  OpenCode, Jan).
+- The lead can be **swapped** between Claude and Codex. Antigravity is a
+  Single/Team implementation worker until its planning and test-gate contracts
+  are strong enough; later providers may expand the lead pool.
 - The lead **can also** take on code tasks, depending on quota.
 - **Auto** selection and Single→Team escalation are later phases, not aliases
   for either manual mode.
@@ -53,8 +54,9 @@ be writing the same hardest piece of logic twice, in the same directory.
 ## Success criteria (MVP)
 
 See `06-roadmap.md`. In short: one prompt can run either directly through one
-Claude/Codex adapter in the current workspace (Single), or through a
-Claude/Codex lead that returns Plan JSON and delegates isolated tasks (Team).
+Claude/Codex/Antigravity adapter in the current workspace (Single), or through
+a Claude/Codex lead that returns Plan JSON and delegates isolated tasks (Team),
+optionally to Antigravity for implementation.
 Both paths are cancellable, observable, and leave durable reports/logs.
 
 ## Core values guiding the design

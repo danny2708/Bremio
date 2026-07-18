@@ -10,14 +10,15 @@ already exists in the same Side-Projects directory. If Bremio re-reads
 quota itself = writing the hardest piece of logic twice. → Consume AQT;
 quota is Phase 4, not the MVP.
 
-**R2 — Antigravity non-TTY swallows output.** `agy -p` under a subprocess
-can return empty while exiting 0. Trusting the exit code alone means the
-orchestrator thinks it "succeeded" while nothing happened. → pty wrapper +
-defensive parsing; test this case specifically before integrating.
+**R2 — Antigravity auth is a different capacity pool.** The official SDK uses
+Gemini API-key or Vertex credentials; it does not reuse the Antigravity IDE
+login/subscription whose quota AQT observes. → report SDK auth separately and
+never route from IDE quota as though it guaranteed SDK execution capacity.
 
-**R3 — Antigravity can't be forced read-only.** `-p` auto-approves every
-write. An Antigravity reviewer could be prompt-injected into writing/
-deleting files. → throwaway worktree, no secrets granted.
+**R3 — Antigravity shell is not workspace-sandboxed.** SDK file policies are
+workspace-scoped, but `run_command` can still mutate outside that boundary.
+→ disable shell for read-only runs and keep Antigravity out of test gates until
+the SDK exposes both a stronger sandbox and reliable command exit codes.
 
 **R4 — Handoff loss can make multi-agent worse than single.** An agent
 receiving a plan loses the original agent's reasoning. → baseline = best
@@ -46,8 +47,8 @@ expanding.
       streaming + turn control.
 - [ ] Codex RPC `account/rateLimits/read` — current schema (cross-check
       against AQT's code).
-- [ ] `agy --help` on the actual machine: confirm `-p`, `--model`, real
-      non-TTY behavior.
+- [x] Antigravity programmatic surface → official `google-antigravity==0.1.7`
+      inspected and integrated through a JSONL Python sidecar.
 - [x] Where/how AQT writes its quota cache → confirmed schema-v1 SQLite under
       AQT's LocalAppData directory; Bremio reads it read-only.
 

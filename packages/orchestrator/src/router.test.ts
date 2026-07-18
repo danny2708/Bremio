@@ -3,6 +3,25 @@ import { PlanSchema, type Plan } from "@bremio/protocol";
 import type { AgentCapacitySnapshot } from "@bremio/quota";
 import { assignAgents, topologicalOrder } from "./router";
 
+const LEAD_CAPS = {
+  planning: true,
+  structuredOutput: true,
+  repositoryRead: true,
+  repositoryWrite: true,
+  shell: true,
+  testing: true,
+  browser: false,
+  vision: false,
+  resumableSessions: true,
+};
+
+const ANTIGRAVITY_CAPS = {
+  ...LEAD_CAPS,
+  planning: false,
+  testing: false,
+  resumableSessions: false,
+};
+
 function plan(tasks: unknown[]): Plan {
   return PlanSchema.parse({ summary: "s", leadAgentId: "claude", tasks });
 }
@@ -121,6 +140,29 @@ describe("assignAgents (lead ≠ worker)", () => {
     });
 
     expect(assign.get("T1")).toBe("codex");
+  });
+
+  it("uses Antigravity for implementation but falls back for test gates", () => {
+    const p = plan([
+      { id: "T1", title: "impl", kind: "implementation", risk: "low" },
+      {
+        id: "T2",
+        title: "test",
+        kind: "test",
+        risk: "low",
+        dependencies: ["T1"],
+        requiredCapabilities: ["shell", "test"],
+      },
+    ]);
+    const assign = assignAgents(p, "claude", "antigravity", {
+      capabilitiesByAgent: new Map([
+        ["claude", LEAD_CAPS],
+        ["antigravity", ANTIGRAVITY_CAPS],
+      ]),
+    });
+
+    expect(assign.get("T1")).toBe("antigravity");
+    expect(assign.get("T2")).toBe("claude");
   });
 });
 

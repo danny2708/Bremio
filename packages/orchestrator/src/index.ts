@@ -23,7 +23,7 @@ export {
   type CreatePlanResult,
 } from "./lead-manager";
 
-export { validatePlan, PlanValidationError } from "./validator";
+export { validatePlan, capabilityHolds, PlanValidationError } from "./validator";
 
 export {
   assignAgents,

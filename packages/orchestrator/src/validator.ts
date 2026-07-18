@@ -9,7 +9,7 @@ export class PlanValidationError extends Error {
 }
 
 /** Map a task capability token to the adapter capability boolean it needs. */
-function capabilityHolds(token: RequiredCapability, cap: AgentCapabilities): boolean {
+export function capabilityHolds(token: RequiredCapability, cap: AgentCapabilities): boolean {
   switch (token) {
     case "repository.read":
       return cap.repositoryRead;
