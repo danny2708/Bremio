@@ -42,3 +42,15 @@ export {
 } from "./plan-schema";
 
 export { collectRun, type CollectedRun } from "./stream";
+
+export {
+  appendLedgerEntry,
+  readLedger,
+  computeStats,
+  ledgerPathFor,
+  LedgerEntrySchema,
+  type LedgerEntry,
+  type LedgerStats,
+  type ProviderStats,
+  type ReadLedgerOptions,
+} from "./ledger";

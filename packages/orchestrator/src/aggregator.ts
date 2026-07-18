@@ -13,6 +13,8 @@ export interface RunReport {
   leadAgentId: string;
   repoPath: string;
   runDir: string;
+  /** Branch the repo was on when the run started; merge target for tasks. */
+  baseBranch?: string;
   plan: Plan;
   tasks: RunReportTask[];
   summary: {
@@ -30,6 +32,7 @@ export interface BuildReportInput {
   leadAgentId: string;
   repoPath: string;
   runDir: string;
+  baseBranch?: string;
   plan: Plan;
   assign: Map<string, string>;
   results: TaskResult[];
@@ -63,6 +66,7 @@ export function buildReport(input: BuildReportInput): RunReport {
     leadAgentId: input.leadAgentId,
     repoPath: input.repoPath,
     runDir: input.runDir,
+    ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
     plan: input.plan,
     tasks,
     summary,

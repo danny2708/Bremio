@@ -1,6 +1,7 @@
 import type { AgentAdapter } from "@bremio/adapter-sdk";
 import type { AgentEvent, Plan, Task, TaskResult } from "@bremio/protocol";
 import { TaskLog, type WorktreeManager } from "@bremio/workspace";
+import { appendLedgerEntry } from "./ledger";
 import { permissionForKind, roleForKind, topologicalOrder } from "./router";
 import { buildTaskPrompt } from "./plan-schema";
 import { collectRun } from "./stream";
@@ -18,6 +19,9 @@ export interface RunPlanOptions {
   registry: Map<string, AgentAdapter>;
   workspace: WorktreeManager;
   runDir: string;
+  runId: string;
+  /** Append-only usage ledger; when set, one line is written per task. */
+  ledgerPath?: string;
   maxTurns?: number;
   signal?: AbortSignal;
   hooks?: SchedulerHooks;
@@ -39,22 +43,42 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
     const agentId = opts.assign.get(task.id) ?? task.preferredAgents[0] ?? "";
     const adapter = opts.registry.get(agentId);
 
+    let result: TaskResult;
     if (opts.signal?.aborted) {
-      results.push(cancelledResult(task, agentId, "run cancelled before this task started"));
-      continue;
-    }
-    if (!adapter) {
-      results.push(failedResult(task, agentId, `no adapter registered for "${agentId}"`));
-      continue;
+      result = cancelledResult(task, agentId, "run cancelled before this task started");
+    } else if (!adapter) {
+      result = failedResult(task, agentId, `no adapter registered for "${agentId}"`);
+    } else {
+      opts.hooks?.onTaskStart?.(task, agentId);
+      result = await runOneTask(task, agentId, adapter, opts);
+      opts.hooks?.onTaskComplete?.(result);
     }
 
-    opts.hooks?.onTaskStart?.(task, agentId);
-    const result = await runOneTask(task, agentId, adapter, opts);
     results.push(result);
-    opts.hooks?.onTaskComplete?.(result);
+    await recordLedger(task, result, opts);
   }
 
   return results;
+}
+
+/** Append one usage-ledger line for a finished task. Never breaks a run. */
+async function recordLedger(task: Task, result: TaskResult, opts: RunPlanOptions): Promise<void> {
+  if (!opts.ledgerPath) return;
+  try {
+    await appendLedgerEntry(opts.ledgerPath, {
+      ts: new Date().toISOString(),
+      runId: opts.runId,
+      taskId: task.id,
+      provider: result.agentId,
+      role: roleForKind(task.kind),
+      kind: task.kind,
+      status: result.status,
+      filesChanged: result.filesChanged.length,
+      ...(result.durationMs !== undefined ? { durationMs: result.durationMs } : {}),
+    });
+  } catch {
+    // measurement is best-effort; a ledger write must never fail a run
+  }
 }
 
 async function runOneTask(

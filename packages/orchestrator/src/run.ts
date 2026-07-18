@@ -4,9 +4,10 @@ import path from "node:path";
 import type { Logger } from "pino";
 import type { AgentCapabilities } from "@bremio/adapter-sdk";
 import type { AgentEvent, Plan, Task } from "@bremio/protocol";
-import { WorktreeManager } from "@bremio/workspace";
+import { WorktreeManager, getCurrentBranch } from "@bremio/workspace";
 import { buildReport, type RunReport } from "./aggregator";
 import { createPlan } from "./lead-manager";
+import { ledgerPathFor } from "./ledger";
 import type { AgentRegistry } from "./registry";
 import { assignAgents } from "./router";
 import { runPlan, type SchedulerHooks } from "./scheduler";
@@ -48,8 +49,11 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
   const { leadId, prompt, registry, logger } = opts;
   const repoPath = path.resolve(opts.repoPath);
   const runId = createRunId();
-  const runDir = path.join(repoPath, ".bremio", "runs", runId);
+  const bremioDir = path.join(repoPath, ".bremio");
+  const runDir = path.join(bremioDir, "runs", runId);
   await fs.mkdir(runDir, { recursive: true });
+  // Keep Bremio's own state out of the target repo's git status.
+  await fs.writeFile(path.join(bremioDir, ".gitignore"), "*\n", "utf8").catch(() => {});
 
   const lead = registry.get(leadId);
   if (!lead) {
@@ -60,6 +64,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
 
   const workspace = new WorktreeManager(repoPath, { runToken: runId.slice(-6) });
   await workspace.assertUsable();
+  const baseBranch = await getCurrentBranch(repoPath);
 
   // Worker = the other registered provider; falls back to the lead (single-agent).
   const workerId = [...registry.keys()].find((id) => id !== leadId) ?? leadId;
@@ -98,6 +103,8 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     registry,
     workspace,
     runDir,
+    runId,
+    ledgerPath: ledgerPathFor(repoPath),
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.hooks ? { hooks: opts.hooks } : {}),
   });
@@ -108,6 +115,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     leadAgentId: leadId,
     repoPath,
     runDir,
+    baseBranch,
     plan,
     assign,
     results,

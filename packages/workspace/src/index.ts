@@ -11,3 +11,11 @@ export {
 } from "./worktree";
 
 export { TaskLog, formatEvent } from "./logs";
+
+export {
+  MergeManager,
+  MergeConflictError,
+  MergeStateError,
+  getCurrentBranch,
+  type DiffResult,
+} from "./merge";

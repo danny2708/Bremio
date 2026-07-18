@@ -11,55 +11,88 @@ import {
   runBremio,
   type RunBremioHooks,
 } from "@bremio/orchestrator";
+import { mergeCommand } from "./merge";
+import { statsCommand } from "./stats";
 import { c, compactEvent, printPlan, printReport, statusGlyph } from "./ui";
 
 const USAGE = `${c.bold("bremio")} — provider-agnostic orchestrator for AI coding agents
 
 ${c.bold("Usage")}
   bremio run --lead <claude|codex> --repo <path> "<prompt>"
+  bremio merge <taskId> [--run <runId>] [--repo <path>] [--yes]
+  bremio stats [--since <date>] [--repo <path>]
   bremio doctor
   bremio --help
 
-${c.bold("run options")}
+${c.bold("run")}      plan + delegate + execute in isolated worktrees (left for review)
   --lead <claude|codex>   Which agent leads (plans). Required.
   --repo <path>           Target git repository. Required.
   --model <id>            Model for the lead's planning run (optional).
   --json                  Print the report as JSON (suppresses progress).
   --verbose               Emit structured operational logs to stderr.
 
-The lead plans; the orchestrator hands off tasks to the OTHER agent, each in
-its own git worktree under .bremio/worktrees/ (left for manual review).`;
+${c.bold("merge")}    review a completed task's diff, then merge it into the base branch
+  <taskId>                The task to merge (e.g. TASK-002).
+  --run <runId>           Merge every task in a run (or disambiguate a taskId).
+  --repo <path>           Repo to look in (default: current directory).
+  --base <branch>         Override the merge target (default: run's base branch).
+  --yes                   Skip the confirmation prompt.
 
-async function main(): Promise<void> {
-  const { values, positionals } = parseArgs({
+${c.bold("stats")}    summarize the usage ledger (.bremio/ledger.jsonl)
+  --since <date>          Only count tasks on/after this date (e.g. 2026-07-01).
+  --repo <path>           Repo to look in (default: current directory).`;
+
+function parseCli() {
+  return parseArgs({
     allowPositionals: true,
     options: {
       lead: { type: "string" },
       repo: { type: "string" },
       prompt: { type: "string" },
       model: { type: "string" },
+      run: { type: "string" },
+      base: { type: "string" },
+      since: { type: "string" },
       json: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
+      yes: { type: "boolean", short: "y", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
+}
 
+type Values = ReturnType<typeof parseCli>["values"];
+
+async function main(): Promise<void> {
+  const { values, positionals } = parseCli();
   const command = positionals[0];
+
   if (values.help || !command) {
     console.log(USAGE);
     return;
   }
-  if (command === "doctor") {
-    await doctor();
-    return;
-  }
-  if (command !== "run") {
-    console.error(c.red(`unknown command: ${command}`));
-    console.log(USAGE);
-    process.exitCode = 2;
-    return;
-  }
 
+  switch (command) {
+    case "run":
+      await runCommand(values, positionals);
+      return;
+    case "merge":
+      process.exitCode = await mergeCommandFromCli(values, positionals);
+      return;
+    case "stats":
+      process.exitCode = await statsCommandFromCli(values);
+      return;
+    case "doctor":
+      await doctor();
+      return;
+    default:
+      console.error(c.red(`unknown command: ${command}`));
+      console.log(USAGE);
+      process.exitCode = 2;
+  }
+}
+
+async function runCommand(values: Values, positionals: string[]): Promise<void> {
   const prompt = (values.prompt ?? positionals.slice(1).join(" ")).trim();
   const errors: string[] = [];
   if (values.lead !== "claude" && values.lead !== "codex") {
@@ -83,10 +116,7 @@ async function main(): Promise<void> {
 
   const leadId = values.lead as "claude" | "codex";
   const json = values.json === true;
-  const logger = pino(
-    { level: values.verbose ? "info" : "silent" },
-    process.stderr,
-  );
+  const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
   const registry = createRegistry([new ClaudeAdapter(), new CodexAdapter()]);
 
   // Cancellation: first Ctrl+C aborts the run; a second forces exit.
@@ -154,6 +184,47 @@ async function main(): Promise<void> {
   }
 }
 
+function resolveRepo(values: Values): string | undefined {
+  const repoPath = path.resolve(values.repo ?? ".");
+  if (!existsSync(repoPath)) {
+    console.error(c.red(`error: repo path does not exist: ${repoPath}`));
+    return undefined;
+  }
+  return repoPath;
+}
+
+async function mergeCommandFromCli(values: Values, positionals: string[]): Promise<number> {
+  const repoPath = resolveRepo(values);
+  if (!repoPath) return 2;
+  const taskId = positionals[1];
+  if (!taskId && !values.run) {
+    console.error(c.red("error: specify a <taskId> or --run <runId>"));
+    console.log(`\n${USAGE}`);
+    return 2;
+  }
+  return mergeCommand({
+    repoPath,
+    assumeYes: values.yes === true,
+    ...(taskId ? { taskId } : {}),
+    ...(values.run ? { runId: values.run } : {}),
+    ...(values.base ? { base: values.base } : {}),
+  });
+}
+
+async function statsCommandFromCli(values: Values): Promise<number> {
+  const repoPath = resolveRepo(values);
+  if (!repoPath) return 2;
+  let since: Date | undefined;
+  if (values.since) {
+    since = new Date(values.since);
+    if (Number.isNaN(since.getTime())) {
+      console.error(c.red(`error: invalid --since date: ${values.since}`));
+      return 2;
+    }
+  }
+  return statsCommand({ repoPath, ...(since ? { since } : {}) });
+}
+
 async function doctor(): Promise<void> {
   console.log(c.bold("bremio doctor — adapter health\n"));
   for (const adapter of [new ClaudeAdapter(), new CodexAdapter()]) {
@@ -165,9 +236,7 @@ async function doctor(): Promise<void> {
         : health.status === "degraded"
           ? c.yellow("degraded")
           : c.red("unavailable");
-    console.log(
-      `  ${adapter.id.padEnd(8)} ${glyph}   ${c.dim(health.detail ?? "")}`,
-    );
+    console.log(`  ${adapter.id.padEnd(8)} ${glyph}   ${c.dim(health.detail ?? "")}`);
     console.log(
       c.dim(
         `           lead-eligible: ${caps.planning && caps.structuredOutput ? "yes" : "no"}  ` +
