@@ -67,6 +67,30 @@ describe("computeStats", () => {
     expect(stats.completionRate).toBe(0);
     expect(stats.avgDurationMs).toBe(0);
   });
+
+  it("counts coordination overhead without inflating task outcomes", () => {
+    const stats = computeStats([
+      entry({
+        scope: "coordination",
+        taskId: "r1::lead",
+        kind: "planning",
+        role: "planner",
+        status: "failed",
+        filesChanged: 0,
+        usage: { inputTokens: 25 },
+      }),
+      entry({ taskId: "T1", status: "completed" }),
+    ]);
+
+    expect(stats.totalRuns).toBe(1);
+    expect(stats.totalTasks).toBe(1);
+    expect(stats.completed).toBe(1);
+    expect(stats.failed).toBe(0);
+    expect(stats.coordinationEntries).toBe(1);
+    expect(stats.coordinationFailed).toBe(1);
+    expect(stats.coordinationCancelled).toBe(0);
+    expect(stats.reportedInputTokens).toBe(25);
+  });
 });
 
 describe("readLedger", () => {

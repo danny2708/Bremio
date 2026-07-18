@@ -3,11 +3,11 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { Logger } from "pino";
 import type { AgentCapabilities } from "@bremio/adapter-sdk";
-import type { AgentEvent, Plan, Task } from "@bremio/protocol";
+import type { AgentEvent, Plan, Task, UsageSummary } from "@bremio/protocol";
 import { WorktreeManager, getCurrentBranch } from "@bremio/workspace";
 import { buildReport, type RunReport } from "./aggregator";
-import { createPlan } from "./lead-manager";
-import { ledgerPathFor } from "./ledger";
+import { createPlan, LeadPlanError } from "./lead-manager";
+import { appendLedgerEntry, ledgerPathFor } from "./ledger";
 import type { AgentRegistry } from "./registry";
 import { assignAgents } from "./router";
 import { runPlan, type SchedulerHooks } from "./scheduler";
@@ -79,15 +79,45 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
   logger?.info({ runId, leadId, workerId, repoPath }, "starting Bremio run");
   opts.hooks?.onLeadStart?.(leadId);
 
-  const { plan, attempts } = await createPlan(lead, {
-    prompt,
-    cwd: repoPath,
+  const planningStarted = Date.now();
+  let leadUsage: UsageSummary | undefined;
+  const onLeadEvent = (event: AgentEvent): void => {
+    if (event.type === "usage") leadUsage = addUsage(leadUsage, event);
+    opts.hooks?.onLeadEvent?.(event);
+  };
+  let plan: Plan;
+  let attempts: number;
+  try {
+    ({ plan, attempts } = await createPlan(lead, {
+      prompt,
+      cwd: repoPath,
+      runId,
+      runDir,
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.taskTimeoutMs ? { timeoutMs: opts.taskTimeoutMs } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      onEvent: onLeadEvent,
+    }));
+  } catch (err) {
+    await recordPlanningLedger({
+      ledgerPath: ledgerPathFor(repoPath),
+      runId,
+      leadId,
+      status: err instanceof LeadPlanError ? err.status : "failed",
+      durationMs: Date.now() - planningStarted,
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(leadUsage ? { usage: leadUsage } : {}),
+    });
+    throw err;
+  }
+  await recordPlanningLedger({
+    ledgerPath: ledgerPathFor(repoPath),
     runId,
-    runDir,
+    leadId,
+    status: "completed",
+    durationMs: Date.now() - planningStarted,
     ...(opts.model ? { model: opts.model } : {}),
-    ...(opts.taskTimeoutMs ? { timeoutMs: opts.taskTimeoutMs } : {}),
-    ...(opts.signal ? { signal: opts.signal } : {}),
-    ...(opts.hooks?.onLeadEvent ? { onEvent: opts.hooks.onLeadEvent } : {}),
+    ...(leadUsage ? { usage: leadUsage } : {}),
   });
   logger?.info({ tasks: plan.tasks.length, attempts }, "lead produced a plan");
 
@@ -136,3 +166,52 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
 }
 
 export type { Task };
+
+function addUsage(
+  current: UsageSummary | undefined,
+  event: Extract<AgentEvent, { type: "usage" }>,
+): UsageSummary {
+  return {
+    ...(current?.inputTokens !== undefined || event.inputTokens !== undefined
+      ? { inputTokens: (current?.inputTokens ?? 0) + (event.inputTokens ?? 0) }
+      : {}),
+    ...(current?.outputTokens !== undefined || event.outputTokens !== undefined
+      ? { outputTokens: (current?.outputTokens ?? 0) + (event.outputTokens ?? 0) }
+      : {}),
+    ...(current?.costUsd !== undefined || event.costUsd !== undefined
+      ? { costUsd: (current?.costUsd ?? 0) + (event.costUsd ?? 0) }
+      : {}),
+  };
+}
+
+interface PlanningLedgerInput {
+  ledgerPath: string;
+  runId: string;
+  leadId: string;
+  status: "completed" | "failed" | "cancelled";
+  durationMs: number;
+  model?: string;
+  usage?: UsageSummary;
+}
+
+/** Record orchestration overhead without ever masking the actual run outcome. */
+async function recordPlanningLedger(input: PlanningLedgerInput): Promise<void> {
+  try {
+    await appendLedgerEntry(input.ledgerPath, {
+      ts: new Date().toISOString(),
+      runId: input.runId,
+      taskId: `${input.runId}::lead`,
+      scope: "coordination",
+      provider: input.leadId,
+      role: "planner",
+      kind: "planning",
+      status: input.status,
+      filesChanged: 0,
+      durationMs: input.durationMs,
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.usage ? { usage: input.usage } : {}),
+    });
+  } catch {
+    // measurement is best-effort; a ledger write must never replace the run result
+  }
+}

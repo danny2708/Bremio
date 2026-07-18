@@ -13,6 +13,8 @@ export const LedgerEntrySchema = z.object({
   ts: z.string(), // ISO 8601
   runId: z.string(),
   taskId: z.string(),
+  /** Missing on legacy entries, which are task entries. */
+  scope: z.enum(["task", "coordination"]).optional(),
   provider: z.string(), // the agent that ran it (TaskResult.agentId)
   role: z.string(),
   kind: z.string(),
@@ -86,6 +88,9 @@ export interface LedgerStats {
   completionRate: number; // 0..1
   avgDurationMs: number;
   totalFilesChanged: number;
+  coordinationEntries: number;
+  coordinationFailed: number;
+  coordinationCancelled: number;
   usageEntries: number;
   reportedInputTokens: number;
   reportedOutputTokens: number;
@@ -109,11 +114,23 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
   let reportedOutputTokens = 0;
   let reportedCostUsd = 0;
   let reportedCostEntries = 0;
+  let coordinationEntries = 0;
+  let coordinationFailed = 0;
+  let coordinationCancelled = 0;
+  let totalTasks = 0;
 
   for (const e of entries) {
     runs.add(e.runId);
+    const scope = e.scope ?? "task";
+    if (scope === "coordination") {
+      coordinationEntries += 1;
+      if (e.status === "failed") coordinationFailed += 1;
+      else if (e.status === "cancelled") coordinationCancelled += 1;
+    } else {
+      totalTasks += 1;
+    }
     totalFilesChanged += e.filesChanged;
-    if (typeof e.durationMs === "number") {
+    if (scope === "task" && typeof e.durationMs === "number") {
       durationSum += e.durationMs;
       durationCount += 1;
     }
@@ -124,21 +141,24 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
       reportedCostUsd += e.usage.costUsd ?? 0;
       if (e.usage.costUsd !== undefined) reportedCostEntries += 1;
     }
-    if (e.status === "completed") completed += 1;
-    else if (e.status === "failed") failed += 1;
-    else cancelled += 1;
+    if (scope === "task") {
+      if (e.status === "completed") completed += 1;
+      else if (e.status === "failed") failed += 1;
+      else cancelled += 1;
+    }
 
-    const p = (byProvider[e.provider] ??= {
-      tasks: 0,
-      completed: 0,
-      failed: 0,
-      cancelled: 0,
-    });
-    p.tasks += 1;
-    p[e.status] += 1;
+    if (scope === "task") {
+      const p = (byProvider[e.provider] ??= {
+        tasks: 0,
+        completed: 0,
+        failed: 0,
+        cancelled: 0,
+      });
+      p.tasks += 1;
+      p[e.status] += 1;
+    }
   }
 
-  const totalTasks = entries.length;
   return {
     totalRuns: runs.size,
     totalTasks,
@@ -148,6 +168,9 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
     completionRate: totalTasks > 0 ? completed / totalTasks : 0,
     avgDurationMs: durationCount > 0 ? Math.round(durationSum / durationCount) : 0,
     totalFilesChanged,
+    coordinationEntries,
+    coordinationFailed,
+    coordinationCancelled,
     usageEntries,
     reportedInputTokens,
     reportedOutputTokens,

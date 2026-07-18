@@ -1,5 +1,5 @@
 import type { AgentAdapter } from "@bremio/adapter-sdk";
-import { PlanSchema, type AgentEvent, type Plan } from "@bremio/protocol";
+import { PlanSchema, type AgentEvent, type Plan, type TaskStatus } from "@bremio/protocol";
 import { TaskLog } from "@bremio/workspace";
 import {
   LEAD_SYSTEM_PROMPT,
@@ -10,9 +10,12 @@ import {
 import { collectRun, type CollectedRun } from "./stream";
 
 export class LeadPlanError extends Error {
-  constructor(message: string) {
+  readonly status: Exclude<TaskStatus, "completed">;
+
+  constructor(message: string, status: Exclude<TaskStatus, "completed"> = "failed") {
     super(message);
     this.name = "LeadPlanError";
+    this.status = status;
   }
 }
 
@@ -87,6 +90,7 @@ function assertLeadRunCompleted(run: CollectedRun, leadId: string): void {
   const status = run.outcome.status === "cancelled" ? "was cancelled" : "failed";
   throw new LeadPlanError(
     `Lead "${leadId}" ${status} during planning${detail ? `: ${detail}` : "."}`,
+    run.outcome.status,
   );
 }
 

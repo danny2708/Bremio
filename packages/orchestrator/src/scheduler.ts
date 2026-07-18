@@ -84,6 +84,7 @@ async function recordLedger(task: Task, result: TaskResult, opts: RunPlanOptions
       ts: new Date().toISOString(),
       runId: opts.runId,
       taskId: task.id,
+      scope: "task",
       provider: result.agentId,
       role: roleForKind(task.kind),
       kind: task.kind,

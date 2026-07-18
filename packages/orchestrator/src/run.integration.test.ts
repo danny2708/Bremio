@@ -59,7 +59,18 @@ class MockLead extends BaseMock {
     const ts = Date.now();
     yield { type: "started", runId: req.runId, ts };
     if (req.prompt.includes("PLAN RULES")) {
+      if (req.prompt.includes("fail planning")) {
+        yield { type: "usage", runId: req.runId, ts, inputTokens: 7, outputTokens: 1 };
+        yield {
+          type: "completed",
+          runId: req.runId,
+          ts,
+          outcome: { status: "failed", error: "mock planning failure" },
+        };
+        return;
+      }
       yield { type: "tool_use", runId: req.runId, ts, name: "Read", input: { file_path: "README.md" } };
+      yield { type: "usage", runId: req.runId, ts, inputTokens: 40, outputTokens: 10, costUsd: 0.01 };
       const plan = {
         summary: "Add a GREETING file",
         leadAgentId: "claude",
@@ -241,6 +252,12 @@ describe("runBremio end-to-end (mock adapters)", () => {
       inputTokens: 120,
       outputTokens: 30,
     });
+    expect(entries.find((entry) => entry.scope === "coordination")).toMatchObject({
+      provider: "claude",
+      kind: "planning",
+      status: "completed",
+      usage: { inputTokens: 40, outputTokens: 10, costUsd: 0.01 },
+    });
   });
 
   it("cancels an in-flight task", async () => {
@@ -281,5 +298,28 @@ describe("runBremio end-to-end (mock adapters)", () => {
       /blocked by unsuccessful dependencies/,
     );
     expect(report.qualityGate.status).toBe("failed");
+  });
+
+  it("records lead usage when planning fails", async () => {
+    const before = await readLedger(ledgerPathFor(repo));
+    const registry = createRegistry([new MockLead(), new MockWorker()]);
+
+    await expect(runBremio({
+      leadId: "claude",
+      repoPath: repo,
+      prompt: "fail planning",
+      registry,
+    })).rejects.toThrow("mock planning failure");
+
+    const after = await readLedger(ledgerPathFor(repo));
+    const added = after.slice(before.length);
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({
+      scope: "coordination",
+      provider: "claude",
+      kind: "planning",
+      status: "failed",
+      usage: { inputTokens: 7, outputTokens: 1 },
+    });
   });
 });

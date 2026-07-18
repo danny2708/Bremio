@@ -15,7 +15,7 @@ export async function statsCommand(opts: StatsCommandOptions): Promise<number> {
   const scope = opts.since ? `since ${opts.since.toISOString().slice(0, 10)}` : "all time";
   console.log(`${c.bold("Bremio stats")} ${c.dim(`(${scope})`)}`);
 
-  if (stats.totalTasks === 0) {
+  if (stats.totalTasks === 0 && stats.coordinationEntries === 0) {
     console.log(c.dim(`  no ledger entries at ${ledgerPath}`));
     return 0;
   }
@@ -24,6 +24,17 @@ export async function statsCommand(opts: StatsCommandOptions): Promise<number> {
   const avgS = (stats.avgDurationMs / 1000).toFixed(1);
   console.log(`  runs:            ${stats.totalRuns}`);
   console.log(`  tasks:           ${stats.totalTasks}`);
+  if (stats.coordinationEntries > 0) {
+    const failed = stats.coordinationFailed > 0 ? `${stats.coordinationFailed} failed` : "";
+    const cancelled = stats.coordinationCancelled > 0
+      ? `${stats.coordinationCancelled} cancelled`
+      : "";
+    const unsuccessful = [failed, cancelled].filter(Boolean).join(", ");
+    console.log(
+      `  coordination:    ${stats.coordinationEntries} planning run(s)` +
+        (unsuccessful ? c.red(` (${unsuccessful})`) : ""),
+    );
+  }
   console.log(
     `  completion:      ${pct}%  ${c.dim(`(${stats.completed} completed, ${stats.failed} failed, ${stats.cancelled} cancelled)`)}`,
   );
@@ -33,18 +44,19 @@ export async function statsCommand(opts: StatsCommandOptions): Promise<number> {
     console.log(
       `  reported usage:  ${stats.reportedInputTokens.toLocaleString()} in / ` +
         `${stats.reportedOutputTokens.toLocaleString()} out ` +
-        `${c.dim(`(${stats.usageEntries}/${stats.totalTasks} tasks)`)}`,
+        `${c.dim(`(${stats.usageEntries}/${stats.totalTasks + stats.coordinationEntries} ledger entries)`)}`,
     );
     if (stats.reportedCostEntries > 0) {
       console.log(
         `  reported cost:   $${stats.reportedCostUsd.toFixed(4)} ` +
-          `${c.dim(`(${stats.reportedCostEntries}/${stats.totalTasks} tasks; partial)`)}`,
+          `${c.dim(`(${stats.reportedCostEntries}/${stats.totalTasks + stats.coordinationEntries} entries; partial)`)}`,
       );
     }
   }
 
-  console.log(`\n  ${c.bold("by provider")}`);
   const providers = Object.keys(stats.byProvider).sort();
+  if (providers.length === 0) return 0;
+  console.log(`\n  ${c.bold("by provider")}`);
   for (const p of providers) {
     const s = stats.byProvider[p];
     if (!s) continue;
