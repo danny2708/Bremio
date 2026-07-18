@@ -68,9 +68,10 @@ estimation (including failed planning attempts), plus a
 read-only schema-v1 AI-Quota-Tray SQLite consumer and `bremio quota`. Stale,
 missing, errored, disabled, or unsupported quota fails closed rather than
 influencing routing. Quota-aware routing, kill-switch, and `net_gain`
-enforcement are not implemented yet; worker model identity and the outcome
-baseline remain incomplete before efficiency claims. Router wiring waits for
-fresh AQT data and calibration.
+enforcement are not implemented yet; confirmed model ids are preserved when a
+provider exposes them, but unreported worker defaults and the outcome baseline
+remain incomplete before efficiency claims. Router wiring waits for fresh AQT
+data and calibration.
 
 ## Phase 5 — Parallel + VS Code extension
 Run tasks in parallel (PQueue/BullMQ), panel UI. UI is just a surface; the

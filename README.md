@@ -66,7 +66,8 @@ their dependency branches, so they inspect the implementation rather than HEAD.
 order, excluding inherited dependency history; conflicts also abort cleanly.
 Every task also appends a line to `.bremio/ledger.jsonl` (measurement only, no
 routing yet), including provider-reported task and lead-planning token/cost
-usage when available and summarized by `bremio stats [--since <date>]`.
+usage plus confirmed model identity when available, summarized by
+`bremio stats [--since <date>]`.
 Planning entries are counted as coordination rather than tasks, including on
 planning failure. Missing usage remains unknown; no price is estimated.
 `bremio quota`

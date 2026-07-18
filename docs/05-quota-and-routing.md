@@ -100,9 +100,11 @@ and lead planning/repair. Planning entries use `scope:"coordination"`, remain
 separate from task completion metrics, and are recorded best-effort even when
 planning fails. `bremio stats` reports coverage; missing dimensions remain
 unknown and Bremio never estimates a price. Worker model/default identity and
-the single-agent outcome baseline remain incomplete, so this data is not yet
-sufficient to calculate `net_gain` and nothing routes on it. The richer target
-shape below remains the Phase-4 calibration target.
+the single-agent outcome baseline remain incomplete. Provider-confirmed model
+ids are recorded when exposed (including Claude's system event), while an
+unreported Codex default remains unknown rather than inferred. This data is not
+yet sufficient to calculate `net_gain` and nothing routes on it. The richer
+target shape below remains the Phase-4 calibration target.
 
 ```json
 { "provider":"codex", "model":"gpt-5.6-terra", "effort":"medium",
