@@ -1,4 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { processSupervisor } from "@bremio/adapter-sdk";
 import type {
   CanUseTool,
   Options,
@@ -76,6 +77,14 @@ export class ClaudeAdapter implements AgentAdapter {
 
     const abort = new AbortController();
     this.controllers.set(req.runId, abort);
+    // The supervisor cannot kill an in-process SDK call, so this handle is the
+    // only proof the call actually ended. It must be invoked on every exit
+    // path, or a cancellation would never be confirmable.
+    const markSettled = processSupervisor.registerCancellable(
+      req.runId,
+      abort,
+      `claude sdk run ${req.runId}`,
+    );
     const onExternalAbort = () => abort.abort();
     req.signal?.addEventListener("abort", onExternalAbort, { once: true });
     // A signal already aborted before we attached the listener won't fire it.
@@ -159,6 +168,10 @@ export class ClaudeAdapter implements AgentAdapter {
     } finally {
       req.signal?.removeEventListener("abort", onExternalAbort);
       this.controllers.delete(req.runId);
+      // Whether it completed, threw, or honoured the abort, the SDK call is
+      // over — this is what lets a cancellation be confirmed rather than
+      // assumed.
+      markSettled();
     }
 
     const wasCancelled = this.cancelled.delete(req.runId);
@@ -177,11 +190,25 @@ export class ClaudeAdapter implements AgentAdapter {
     throw new Error("resumeRun is not implemented in Phase 1");
   }
 
+  /**
+   * Cooperative cancellation only.
+   *
+   * The Agent SDK runs in-process and owns no child process, so aborting is
+   * the entire mechanism — there is nothing to signal and nothing to kill. The
+   * supervisor therefore waits for the SDK call to actually settle before
+   * calling this stopped. An SDK that ignored its AbortSignal would still be
+   * running, and reporting success there would be indistinguishable from a
+   * real cancellation.
+   */
   async cancelRun(runId: string): Promise<void> {
     const controller = this.controllers.get(runId);
     if (!controller) return;
     this.cancelled.add(runId);
     controller.abort();
+    const outcome = await processSupervisor.terminate(runId);
+    if (!outcome.stopped) {
+      throw new Error(`could not stop the Claude run ${runId}: ${outcome.reason}`);
+    }
   }
 }
 

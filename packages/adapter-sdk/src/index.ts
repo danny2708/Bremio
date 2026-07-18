@@ -31,3 +31,12 @@ export {
   type BoundedRetryOptions,
   type RetryPolicy,
 } from "./errors";
+
+export {
+  ProcessSupervisor,
+  collectTree,
+  pidAlive,
+  processSupervisor,
+  type TerminateOptions,
+  type TerminationOutcome,
+} from "./process-supervisor";

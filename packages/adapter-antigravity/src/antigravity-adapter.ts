@@ -1,5 +1,6 @@
 import path from "node:path";
 import readline from "node:readline";
+import { processSupervisor } from "@bremio/adapter-sdk";
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -194,6 +195,7 @@ export class AntigravityAdapter implements AgentAdapter {
     const lines: string[] = [];
     const child = spawnAgy(bin, [...this.agyArgs, ...args]);
     this.children.set(req.runId, child);
+    processSupervisor.adopt(req.runId, child);
     child.on("error", (error) => {
       spawnError = error;
     });
@@ -256,11 +258,19 @@ export class AntigravityAdapter implements AgentAdapter {
     throw new Error("Antigravity resumeRun is not implemented (agy --continue is not wired)");
   }
 
+  /**
+   * Ask the supervisor to stop the whole tree and report whether it did.
+   * `agy` spawns its own children, so killing this pid alone left them running.
+   */
   async cancelRun(runId: string): Promise<void> {
-    const child = this.children.get(runId);
-    if (!child) return;
+    if (!this.children.has(runId)) return;
     this.cancelled.add(runId);
-    child.kill();
+    const outcome = await processSupervisor.terminate(runId);
+    if (!outcome.stopped) {
+      throw new Error(
+        `could not stop the agy process tree for ${runId}: ${outcome.reason} (pids ${outcome.survivingPids.join(", ")})`,
+      );
+    }
   }
 
   private async readVersion(bin: string): Promise<string | undefined> {

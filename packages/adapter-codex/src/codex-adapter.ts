@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { processSupervisor } from "@bremio/adapter-sdk";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type {
   AgentAdapter,
@@ -125,6 +126,9 @@ export class CodexAdapter implements AgentAdapter {
     let stderr = "";
     const child = spawnCodex(this.bin, args, req.cwd);
     this.children.set(req.runId, child);
+    // The supervisor owns the tree: `codex` spawns its own children, and
+    // killing only this pid would leave them running against the worktree.
+    processSupervisor.adopt(req.runId, child);
 
     child.on("error", (e) => {
       spawnError = e;
@@ -201,13 +205,19 @@ export class CodexAdapter implements AgentAdapter {
     throw new Error("resumeRun is not implemented in Phase 1");
   }
 
+  /**
+   * Ask the supervisor to stop the whole tree and report whether it did.
+   * Returning without confirmation would let a caller announce a cancellation
+   * while `codex` and its children were still writing.
+   */
   async cancelRun(runId: string): Promise<void> {
-    const child = this.children.get(runId);
-    if (!child) return;
+    if (!this.children.has(runId)) return;
     this.cancelled.add(runId);
-    child.kill(); // SIGTERM (best-effort on Windows)
-    setTimeout(() => {
-      if (this.children.has(runId)) child.kill("SIGKILL");
-    }, 3000).unref?.();
+    const outcome = await processSupervisor.terminate(runId);
+    if (!outcome.stopped) {
+      throw new Error(
+        `could not stop the codex process tree for ${runId}: ${outcome.reason} (pids ${outcome.survivingPids.join(", ")})`,
+      );
+    }
   }
 }
