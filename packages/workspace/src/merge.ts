@@ -13,6 +13,19 @@ export class MergeConflictError extends Error {
   }
 }
 
+/** Raised when cherry-picking a task commit conflicts; the cherry-pick is aborted first. */
+export class CherryPickConflictError extends Error {
+  constructor(
+    public readonly commit: string,
+    public readonly files: string[],
+  ) {
+    super(
+      `cherry-pick of "${commit}" hit conflicts in: ${files.join(", ") || "(unknown files)"}`,
+    );
+    this.name = "CherryPickConflictError";
+  }
+}
+
 /** Raised for pre-flight problems that make a merge unsafe (dirty tree, wrong branch). */
 export class MergeStateError extends Error {
   constructor(message: string) {
@@ -85,6 +98,13 @@ export class MergeManager {
     return { stat: stat.trim(), patch: patch.trim() };
   }
 
+  /** The task-owned change in one captured commit (excludes inherited dependencies). */
+  async getCommitDiff(commit: string): Promise<DiffResult> {
+    const stat = await this.git.raw(["show", "--stat", "--format=", commit]);
+    const patch = await this.git.raw(["show", "--format=", "--no-ext-diff", commit]);
+    return { stat: stat.trim(), patch: patch.trim() };
+  }
+
   /**
    * Merge `branch` into `base`. Requires the main working tree to be ON `base`
    * and clean (we never switch branches or touch uncommitted work behind the
@@ -92,17 +112,7 @@ export class MergeManager {
    * leaving the repo exactly as it was.
    */
   async merge(branch: string, base: string): Promise<{ mergeCommit: string }> {
-    const current = await this.currentBranch();
-    if (current !== base) {
-      throw new MergeStateError(
-        `repository is on "${current}", not the base branch "${base}". Check out "${base}" first (git checkout ${base}).`,
-      );
-    }
-    if (await this.hasTrackedChanges()) {
-      throw new MergeStateError(
-        "the working tree has uncommitted changes to tracked files. Commit or stash them before merging.",
-      );
-    }
+    await this.assertIntegrationState(base);
 
     // NOTE: simple-git's `.raw(["merge", ...])` resolves (does NOT throw) on a
     // merge conflict — it just returns the "CONFLICT" text. So we detect
@@ -127,6 +137,49 @@ export class MergeManager {
 
     const mergeCommit = (await this.git.revparse(["HEAD"])).trim();
     return { mergeCommit };
+  }
+
+  /**
+   * Cherry-pick exactly one task-owned commit onto `base`. Dependency commits
+   * are intentionally excluded; callers process task commits in plan order.
+   */
+  async cherryPick(commit: string, base: string): Promise<{ cherryPickCommit: string }> {
+    await this.assertIntegrationState(base);
+
+    let cherryPickError: unknown;
+    try {
+      await this.git.raw(["cherry-pick", commit]);
+    } catch (err) {
+      cherryPickError = err;
+    }
+
+    const conflicted = (await this.git.status()).conflicted;
+    if (conflicted.length > 0) {
+      try {
+        await this.git.raw(["cherry-pick", "--abort"]);
+      } catch {
+        // best-effort restore
+      }
+      throw new CherryPickConflictError(commit, conflicted);
+    }
+    if (cherryPickError) throw cherryPickError;
+
+    const cherryPickCommit = (await this.git.revparse(["HEAD"])).trim();
+    return { cherryPickCommit };
+  }
+
+  private async assertIntegrationState(base: string): Promise<void> {
+    const current = await this.currentBranch();
+    if (current !== base) {
+      throw new MergeStateError(
+        `repository is on "${current}", not the base branch "${base}". Check out "${base}" first (git checkout ${base}).`,
+      );
+    }
+    if (await this.hasTrackedChanges()) {
+      throw new MergeStateError(
+        "the working tree has uncommitted changes to tracked files. Commit or stash them before integrating task changes.",
+      );
+    }
   }
 
   /** Remove a task's worktree and delete its (now-merged) branch. */

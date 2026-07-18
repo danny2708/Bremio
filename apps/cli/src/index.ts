@@ -19,7 +19,7 @@ const USAGE = `${c.bold("bremio")} — provider-agnostic orchestrator for AI cod
 
 ${c.bold("Usage")}
   bremio run --lead <claude|codex> --repo <path> "<prompt>"
-  bremio merge <taskId> [--run <runId>] [--repo <path>] [--yes]
+  bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
   bremio doctor
   bremio --help
@@ -37,6 +37,7 @@ ${c.bold("merge")}    review a completed task's diff, then merge it into the bas
   --run <runId>           Merge every task in a run (or disambiguate a taskId).
   --repo <path>           Repo to look in (default: current directory).
   --base <branch>         Override the merge target (default: run's base branch).
+  --strategy <mode>       Integrate task branches with merge (default) or cherry-pick.
   --yes                   Skip the confirmation prompt.
 
 ${c.bold("stats")}    summarize the usage ledger (.bremio/ledger.jsonl)
@@ -54,6 +55,7 @@ function parseCli() {
       timeout: { type: "string" },
       run: { type: "string" },
       base: { type: "string" },
+      strategy: { type: "string" },
       since: { type: "string" },
       json: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
@@ -214,12 +216,17 @@ async function mergeCommandFromCli(values: Values, positionals: string[]): Promi
     console.log(`\n${USAGE}`);
     return 2;
   }
+  if (values.strategy !== undefined && values.strategy !== "merge" && values.strategy !== "cherry-pick") {
+    console.error(c.red("error: --strategy must be 'merge' or 'cherry-pick'"));
+    return 2;
+  }
   return mergeCommand({
     repoPath,
     assumeYes: values.yes === true,
     ...(taskId ? { taskId } : {}),
     ...(values.run ? { runId: values.run } : {}),
     ...(values.base ? { base: values.base } : {}),
+    ...(values.strategy ? { strategy: values.strategy as "merge" | "cherry-pick" } : {}),
   });
 }
 

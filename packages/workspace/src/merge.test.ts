@@ -3,7 +3,12 @@ import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MergeConflictError, MergeManager, MergeStateError } from "./merge";
+import {
+  CherryPickConflictError,
+  MergeConflictError,
+  MergeManager,
+  MergeStateError,
+} from "./merge";
 
 let repo: string;
 const git = (args: string[], cwd = repo) => execFileSync("git", args, { cwd, stdio: "pipe" });
@@ -58,6 +63,19 @@ describe("MergeManager", () => {
     expect(subject).toBe("bremio: merge bremio/T1");
   });
 
+  it("cherry-picks exactly one captured task commit", async () => {
+    await branchWithChange("bremio/T1", "FEATURE.txt", "hello\n");
+    const commit = git(["rev-parse", "bremio/T1"]).toString().trim();
+    const mgr = new MergeManager(repo);
+    const diff = await mgr.getCommitDiff(commit);
+    expect(diff.patch).toContain("FEATURE.txt");
+
+    const { cherryPickCommit } = await mgr.cherryPick(commit, "main");
+    expect(cherryPickCommit).toMatch(/^[0-9a-f]{7,}$/);
+    expect(existsSync(path.join(repo, "FEATURE.txt"))).toBe(true);
+    expect(git(["log", "-1", "--pretty=%s"]).toString().trim()).toBe("change FEATURE.txt");
+  });
+
   it("aborts on conflict and leaves the repo unchanged", async () => {
     await write("shared.txt", "base\n");
     git(["add", "-A"]);
@@ -80,6 +98,26 @@ describe("MergeManager", () => {
     // repo is restored: clean, on main, main's content intact
     expect(await mgr.isClean()).toBe(true);
     expect(await mgr.currentBranch()).toBe("main");
+    expect(await fs.readFile(path.join(repo, "shared.txt"), "utf8")).toBe("main side\n");
+  });
+
+  it("aborts a conflicting cherry-pick and leaves the repo unchanged", async () => {
+    await write("shared.txt", "base\n");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "add shared"]);
+    git(["checkout", "-q", "-b", "bremio/T2-cherry"]);
+    await write("shared.txt", "task side\n");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "task edit"]);
+    const commit = git(["rev-parse", "HEAD"]).toString().trim();
+    git(["checkout", "-q", "main"]);
+    await write("shared.txt", "main side\n");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "main edit"]);
+
+    const mgr = new MergeManager(repo);
+    await expect(mgr.cherryPick(commit, "main")).rejects.toBeInstanceOf(CherryPickConflictError);
+    expect(await mgr.isClean()).toBe(true);
     expect(await fs.readFile(path.join(repo, "shared.txt"), "utf8")).toBe("main side\n");
   });
 

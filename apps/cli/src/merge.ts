@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
-import { MergeConflictError, MergeManager, MergeStateError } from "@bremio/workspace";
+import {
+  CherryPickConflictError,
+  MergeConflictError,
+  MergeManager,
+  MergeStateError,
+} from "@bremio/workspace";
 import type { RunReport, RunReportTask } from "@bremio/orchestrator";
 import { c } from "./ui";
 import {
@@ -15,6 +20,7 @@ export interface MergeCommandOptions {
   taskId?: string;
   runId?: string;
   base?: string;
+  strategy?: "merge" | "cherry-pick";
   assumeYes: boolean;
 }
 
@@ -87,6 +93,7 @@ export async function mergeCommand(opts: MergeCommandOptions): Promise<number> {
     return 2;
   }
   const { report, tasks } = resolved;
+  const strategy = opts.strategy ?? "merge";
 
   if (!report.qualityGate || report.qualityGate.status !== "passed") {
     const status = report.qualityGate?.status ?? "missing";
@@ -138,20 +145,30 @@ export async function mergeCommand(opts: MergeCommandOptions): Promise<number> {
     if (result.worktreePath && !existsSync(result.worktreePath)) {
       console.log(`${label} ${c.dim("note: worktree dir is gone; merging from the branch anyway")}`);
     }
-    const ahead = await mgr.commitsAhead(branch, base);
-    if (ahead === 0) {
-      console.log(`\n${label} ${c.yellow("no changes to merge (empty branch) — skipping")}`);
+    if (strategy === "cherry-pick" && !result.commitHash) {
+      await mgr.cleanup(result.worktreePath ?? "", branch);
+      console.log(`\n${label} ${c.yellow("no task-owned commit — cleaned up without integrating")}`);
       continue;
     }
+    if (strategy === "merge") {
+      const ahead = await mgr.commitsAhead(branch, base);
+      if (ahead === 0) {
+        await mgr.cleanup(result.worktreePath ?? "", branch);
+        console.log(`\n${label} ${c.yellow("no changes left to merge — cleaned up")}`);
+        continue;
+      }
+    }
 
-    const diff = await mgr.getDiff(branch, base);
+    const diff = strategy === "cherry-pick"
+      ? await mgr.getCommitDiff(result.commitHash as string)
+      : await mgr.getDiff(branch, base);
     printTaskForMerge(entry, diff);
 
     const ok = opts.assumeYes
       ? true
       : process.stdin.isTTY
-        ? await confirm(c.bold(`\nMerge ${branch} into ${base}? [y/N] `))
-        : (console.log(c.yellow("  not a TTY; re-run with --yes to merge non-interactively — skipping")), false);
+        ? await confirm(c.bold(`\n${strategy === "cherry-pick" ? "Cherry-pick" : "Merge"} ${branch} into ${base}? [y/N] `))
+        : (console.log(c.yellow(`  not a TTY; re-run with --yes to ${strategy} non-interactively — skipping`)), false);
 
     if (!ok) {
       console.log(c.dim(`  left untouched. Inspect: git -C ${result.worktreePath ?? "."} diff ${base}...${branch}`));
@@ -159,13 +176,21 @@ export async function mergeCommand(opts: MergeCommandOptions): Promise<number> {
     }
 
     try {
-      const { mergeCommit } = await mgr.merge(branch, base);
+      const integratedCommit = strategy === "cherry-pick"
+        ? (await mgr.cherryPick(result.commitHash as string, base)).cherryPickCommit
+        : (await mgr.merge(branch, base)).mergeCommit;
       await mgr.cleanup(result.worktreePath ?? "", branch);
       merged += 1;
       console.log(
-        c.green(`  ✓ merged ${branch} into ${base} (${mergeCommit.slice(0, 10)}); worktree removed, branch deleted`),
+        c.green(`  ✓ ${strategy === "cherry-pick" ? "cherry-picked" : "merged"} ${branch} into ${base} (${integratedCommit.slice(0, 10)}); worktree removed, branch deleted`),
       );
     } catch (err) {
+      if (err instanceof CherryPickConflictError) {
+        console.error(c.red(`\n  ✗ cherry-pick conflict in: ${err.files.join(", ") || "(unknown)"}`));
+        console.error(c.dim("  the cherry-pick was aborted; your repo is unchanged. Resolve manually:"));
+        console.error(c.dim(`    git checkout ${base} && git cherry-pick ${err.commit}`));
+        return 1;
+      }
       if (err instanceof MergeConflictError) {
         console.error(c.red(`\n  ✗ merge conflict in: ${err.files.join(", ") || "(unknown)"}`));
         console.error(c.dim("  the merge was aborted; your repo is unchanged. Resolve manually:"));

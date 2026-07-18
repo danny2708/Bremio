@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mergeCommand } from "./merge";
 
 let repo: string;
+let taskCommit: string;
 const git = (args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
 
 beforeEach(async () => {
@@ -13,6 +14,7 @@ beforeEach(async () => {
   git(["init", "-q", "-b", "main"]);
   git(["config", "user.email", "t@bremio.local"]);
   git(["config", "user.name", "Bremio Test"]);
+  git(["config", "core.autocrlf", "false"]);
   await fs.writeFile(path.join(repo, "README.md"), "# base\n");
   git(["add", "-A"]);
   git(["commit", "-q", "-m", "init"]);
@@ -20,6 +22,7 @@ beforeEach(async () => {
   await fs.writeFile(path.join(repo, "FEATURE.txt"), "feature\n");
   git(["add", "-A"]);
   git(["commit", "-q", "-m", "feature"]);
+  taskCommit = git(["rev-parse", "HEAD"]).toString().trim();
   git(["checkout", "-q", "main"]);
 });
 
@@ -108,5 +111,72 @@ describe("bremio merge quality gate", () => {
     expect(git(["branch", "--list", "bremio/T1-codex"]).toString()).toContain(
       "bremio/T1-codex",
     );
+  });
+
+  it("cherry-picks a gate-approved task commit and cleans up its branch", async () => {
+    const runDir = path.join(repo, ".bremio", "runs", "run-cherry-pick");
+    await fs.mkdir(runDir, { recursive: true });
+    const task = {
+      id: "T1",
+      title: "implement",
+      kind: "implementation",
+      requiredCapabilities: [],
+      preferredAgents: [],
+      risk: "low",
+      dependencies: [],
+      acceptanceCriteria: [],
+    };
+    await fs.writeFile(
+      path.join(runDir, "report.json"),
+      JSON.stringify({
+        runId: "run-cherry-pick",
+        createdAt: new Date().toISOString(),
+        prompt: "add feature",
+        leadAgentId: "claude",
+        repoPath: repo,
+        runDir,
+        baseBranch: "main",
+        plan: { summary: "add feature", leadAgentId: "claude", tasks: [task] },
+        tasks: [
+          {
+            task,
+            agentId: "codex",
+            result: {
+              taskId: "T1",
+              agentId: "codex",
+              status: "completed",
+              summary: "done",
+              filesChanged: ["FEATURE.txt"],
+              commandsExecuted: [],
+              tests: [],
+              findings: [],
+              branch: "bremio/T1-codex",
+              commitHash: taskCommit,
+            },
+          },
+        ],
+        qualityGate: {
+          status: "passed",
+          testTaskIds: ["T2"],
+          reviewTaskIds: ["T3"],
+          reasons: [],
+        },
+        summary: { total: 1, completed: 1, failed: 0, cancelled: 0, filesChanged: 1 },
+      }),
+      "utf8",
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const code = await mergeCommand({
+      repoPath: repo,
+      taskId: "T1",
+      runId: "run-cherry-pick",
+      strategy: "cherry-pick",
+      assumeYes: true,
+    });
+
+    expect(code).toBe(0);
+    expect(await fs.readFile(path.join(repo, "FEATURE.txt"), "utf8")).toBe("feature\n");
+    expect(git(["branch", "--list", "bremio/T1-codex"]).toString().trim()).toBe("");
   });
 });
