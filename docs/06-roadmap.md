@@ -93,6 +93,12 @@ data and calibration.
 Do not copy AQT's provider fetch implementations into Bremio. Add a stable AQT
 refresh boundary (command/IPC/shared package) if re-reading SQLite is not enough.
 
+**4A contract status (2026-07-18):** the canonical capacity schema and
+`QuotaProvider` are implemented. AQT snapshots now map to one Claude, Codex,
+and Antigravity capacity card through `bremio capacity` (`bremio quota` remains
+an alias). A graphical card surface, native-usage actions, and richer run
+history fields remain open.
+
 ## Phase 5 — Parallel + VS Code extension
 Run tasks in parallel (PQueue/BullMQ), panel UI. UI is just a surface; the
 value lives in the daemon.

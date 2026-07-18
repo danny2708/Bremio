@@ -22,6 +22,7 @@ ${c.bold("Usage")}
   bremio run --lead <claude|codex> --repo <path> "<prompt>"
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
+  bremio capacity [--db <path>] [--stale-after <minutes>]
   bremio quota [--db <path>] [--stale-after <minutes>]
   bremio doctor
   bremio --help
@@ -46,7 +47,8 @@ ${c.bold("stats")}    summarize the usage ledger (.bremio/ledger.jsonl)
   --since <date>          Only count tasks on/after this date (e.g. 2026-07-01).
   --repo <path>           Repo to look in (default: current directory).
 
-${c.bold("quota")}    read normalized quota from AI-Quota-Tray's SQLite database
+${c.bold("capacity")} show canonical agent capacity from AI-Quota-Tray's SQLite database
+${c.bold("quota")}    backward-compatible alias for capacity
   --db <path>             Override the default AI-Quota-Tray database path.
   --stale-after <minutes> Treat older snapshots as unknown (default: 30).`;
 
@@ -94,6 +96,7 @@ async function main(): Promise<void> {
     case "stats":
       process.exitCode = await statsCommandFromCli(values);
       return;
+    case "capacity":
     case "quota":
       process.exitCode = quotaCommandFromCli(values);
       return;

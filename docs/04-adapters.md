@@ -9,7 +9,6 @@ interface AgentAdapter {
   healthCheck(): Promise<AgentHealth>;
   getCapabilities(): Promise<AgentCapabilities>;
   listModels(): Promise<ModelDescriptor[]>;
-  getQuota(): Promise<QuotaSnapshot>;
   startRun(request: AgentRunRequest): AsyncIterable<AgentEvent>;
   resumeRun(sessionId: string, request: AgentRunRequest): AsyncIterable<AgentEvent>;
   cancelRun(runId: string): Promise<void>;
@@ -66,9 +65,8 @@ interface AgentAdapter {
   CSRF token, and `clientModelConfigs[].quotaInfo`; confirmed in AQT source on
   2026-07-18). Bremio's `packages/quota` consumes the resulting SQLite rows —
   don't re-implement it. If AQT's Antigravity source is ever
-  unavailable at runtime, `getQuota()` falls back to
-  `{status:"unknown", source:"estimated", confidence:"low"}` rather than
-  guessing.
+  unavailable at runtime, `@bremio/quota` returns an explicit unknown or
+  unavailable capacity snapshot rather than guessing.
 - Practical MVP roles: implementer (simple tasks), tester/UI-check.
   **Not lead** (blocked by the JSON-output trap above, not by quota).
 

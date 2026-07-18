@@ -15,10 +15,8 @@ export {
 export {
   AgentHealthSchema,
   ModelDescriptorSchema,
-  QuotaSnapshotSchema,
   type AgentHealth,
   type ModelDescriptor,
-  type QuotaSnapshot,
   type AgentRunRequest,
 } from "./types";
 

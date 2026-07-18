@@ -33,6 +33,11 @@ behavior prevents a fresh short window from hiding a stale longer-term limit.
 | Codex | Every `rateLimitsByLimitId` entry, including primary/secondary windows and optional individual limits | No Capacity card or router consumption. Multiple windows are already preserved and must not be collapsed to one value. |
 | Antigravity | One bucket per model from `clientModelConfigs[].quotaInfo`, with remaining fraction and reset time | No Capacity card or model-aware router consumption. Routing must score the selected model bucket, not take the minimum across unrelated models. |
 
+AQT currently persists Antigravity's display-derived bucket key, not a verified
+provider model id. Bremio therefore marks those windows as model-scoped but
+does not populate `modelId`; 4C must add an explicit mapping before routing on
+them.
+
 Current runtime check on 2026-07-18 found AQT stopped and the database last
 updated on 2026-07-12. `bremio quota` correctly reports every provider as
 `unknown`/stale. The first Capacity UI must show this freshness explicitly.
@@ -75,9 +80,8 @@ interface QuotaWindow {
 }
 ```
 
-`AgentAdapter.getQuota()` is currently a Phase-1 placeholder returning
-`unknown`; it should eventually delegate to this contract rather than create a
-second quota representation.
+Quota is separate from `AgentAdapter`; provider execution adapters do not own
+or duplicate capacity snapshots.
 
 ## Capacity surface
 
@@ -99,11 +103,8 @@ Bremio; duplicated provider logic would drift and double the security surface.
 
 ## Compatibility note
 
-`AgentAdapter.getQuota()` still returns the older single-window
-`QuotaSnapshot`. That shape cannot represent Codex multi-window limits or
-Antigravity per-model limits and is a placeholder only. Do not extend it in
-parallel with `AgentCapacitySnapshot`; migrate the adapter contract once the
-canonical schema is implemented.
+The old single-window `AgentAdapter.getQuota()` placeholder has been removed.
+`AgentCapacitySnapshot` is the only normalized quota representation in Bremio.
 
 ## Efficiency model — "best out of the models, minimal quota"
 
@@ -271,7 +272,9 @@ may remain optional telemetry, but are never converted into quota percentage.
 - [x] Preserve Codex multi-window buckets.
 - [x] Preserve Antigravity per-model buckets.
 - [x] Expose observation through `bremio quota`.
-- [ ] Introduce `QuotaProvider` and one canonical capacity schema.
+- [x] Introduce `QuotaProvider` and one canonical capacity schema.
+- [x] Map the AQT source to one canonical card per supported agent; expose it
+      through `bremio capacity` while retaining `bremio quota` as an alias.
 - [ ] Add the **Capacity** cards and data-age/source/confidence display.
 - [ ] Add re-read refresh, `Open usage`, and unavailable states.
 - [ ] Extend AQT's Claude whitelist only when another structured window is

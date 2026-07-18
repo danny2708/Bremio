@@ -17,23 +17,6 @@ export const ModelDescriptorSchema = z.object({
 export type ModelDescriptor = z.infer<typeof ModelDescriptorSchema>;
 
 /**
- * QuotaSnapshot — normalized quota reading. QUOTA IS OUT OF SCOPE for Phase 1:
- * adapters return `{ status: "unknown", source: "estimated", confidence: "low" }`.
- * The richer fields exist so Phase 4 routing can populate them without a
- * protocol change.
- */
-export const QuotaSnapshotSchema = z.object({
-  status: z.enum(["unknown", "ok", "low", "exhausted"]),
-  source: z.enum(["official", "estimated"]).optional(),
-  confidence: z.enum(["low", "medium", "high"]).optional(),
-  /** Fraction of the window consumed, 0..1. */
-  utilization: z.number().min(0).max(1).optional(),
-  /** Epoch ms when the window resets. */
-  resetsAt: z.number().int().nonnegative().optional(),
-});
-export type QuotaSnapshot = z.infer<typeof QuotaSnapshotSchema>;
-
-/**
  * AgentRunRequest — the normalized instruction the orchestrator passes to
  * `startRun`. Defined as a plain interface (not a Zod schema) because it
  * carries a live `AbortSignal` and an arbitrary JSON-Schema object.

@@ -9,7 +9,6 @@ import type {
   AgentHealth,
   AgentRunRequest,
   ModelDescriptor,
-  QuotaSnapshot,
 } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
 import { ledgerPathFor, readLedger } from "./ledger";
@@ -34,9 +33,6 @@ abstract class BaseMock implements AgentAdapter {
   abstract readonly provider: string;
   async getCapabilities(): Promise<AgentCapabilities> {
     return FULL_CAPS;
-  }
-  async getQuota(): Promise<QuotaSnapshot> {
-    return { status: "unknown" };
   }
   async listModels(): Promise<ModelDescriptor[]> {
     return [];

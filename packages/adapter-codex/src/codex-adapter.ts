@@ -10,7 +10,6 @@ import type {
   AgentHealth,
   AgentRunRequest,
   ModelDescriptor,
-  QuotaSnapshot,
 } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
 import { mapCodexLine } from "./events";
@@ -47,11 +46,6 @@ export class CodexAdapter implements AgentAdapter {
 
   async getCapabilities(): Promise<AgentCapabilities> {
     return CAPABILITIES;
-  }
-
-  async getQuota(): Promise<QuotaSnapshot> {
-    // Quota is out of scope for Phase 1 (consumed from AI-Quota-Tray later).
-    return { status: "unknown", source: "estimated", confidence: "low" };
   }
 
   async listModels(): Promise<ModelDescriptor[]> {

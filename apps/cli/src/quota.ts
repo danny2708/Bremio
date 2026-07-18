@@ -3,7 +3,8 @@ import {
   DEFAULT_STALE_AFTER_SECONDS,
   defaultAqtDatabasePath,
   readAqtQuota,
-  type ProviderQuota,
+  toAqtCapacitySnapshots,
+  type AgentCapacitySnapshot,
 } from "@bremio/quota";
 import { c } from "./ui";
 
@@ -28,10 +29,12 @@ export function quotaCommand(options: QuotaCommandOptions): number {
       databasePath,
       staleAfterSeconds: options.staleAfterSeconds ?? DEFAULT_STALE_AFTER_SECONDS,
     });
-    console.log(`${c.bold("Bremio quota")} ${c.dim("(read-only from AI-Quota-Tray)")}`);
+    console.log(`${c.bold("Bremio · Capacity")} ${c.dim("(read-only from AI-Quota-Tray)")}`);
     console.log(c.dim(`  database: ${snapshot.databasePath}`));
     console.log(c.dim(`  stale after: ${formatAge(snapshot.staleAfterSeconds)}`));
-    for (const provider of snapshot.providers) printProvider(provider);
+    for (const capacity of toAqtCapacitySnapshots(snapshot)) {
+      printCapacity(capacity, snapshot.readAt, snapshot.staleAfterSeconds);
+    }
     return 0;
   } catch (err) {
     console.error(c.red(`error: could not read AI-Quota-Tray quota: ${(err as Error).message}`));
@@ -39,22 +42,42 @@ export function quotaCommand(options: QuotaCommandOptions): number {
   }
 }
 
-function printProvider(provider: ProviderQuota): void {
-  const status = provider.status === "healthy"
-    ? c.green(provider.status)
-    : provider.status === "unknown"
-      ? c.yellow(provider.status)
-      : c.red(provider.status);
-  const age = provider.ageSeconds === undefined ? "no snapshot" : `${formatAge(provider.ageSeconds)} old`;
-  console.log(`\n  ${c.bold(provider.displayName)} ${c.dim(`(${provider.providerId})`)}  ${status}`);
-  console.log(`    source: ${provider.sourceName} | ${provider.confidence} | ${age}${provider.stale ? " | STALE" : ""}`);
-  if (provider.errorMessage) console.log(c.dim(`    provider: ${provider.errorMessage}`));
-  for (const bucket of provider.buckets) {
-    const remaining = bucket.remainingPercent === undefined
+const AGENT_LABELS: Record<string, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  antigravity: "Antigravity",
+};
+
+function printCapacity(
+  capacity: AgentCapacitySnapshot,
+  readAt: number,
+  staleAfterSeconds: number,
+): void {
+  const status = capacity.status === "healthy"
+    ? c.green(capacity.status)
+    : capacity.status === "unknown"
+      ? c.yellow(capacity.status)
+      : c.red(capacity.status);
+  const ageSeconds = Math.max(0, readAt - capacity.capturedAt);
+  const age = `${formatAge(ageSeconds)} old`;
+  const stale = ageSeconds > staleAfterSeconds ? " | STALE" : "";
+  const sourceUnavailable = capacity.source.confidenceLabel === "unavailable"
+    ? " | SOURCE UNAVAILABLE"
+    : "";
+  console.log(`\n  ${c.bold(AGENT_LABELS[capacity.agentId] ?? capacity.agentId)}  ${status}`);
+  console.log(
+    `    source: ${capacity.source.name} | ${capacity.source.confidenceLabel}` +
+      ` (${capacity.confidence}) | ${age}${stale}${sourceUnavailable}`,
+  );
+  if (capacity.windows.length === 0) console.log(c.dim("    no quota windows available"));
+  for (const window of capacity.windows) {
+    const remaining = window.remainingPercent === undefined
       ? "unknown"
-      : `${bucket.remainingPercent.toFixed(1)}% remaining`;
-    const reset = bucket.resetsAt ? ` | resets ${new Date(bucket.resetsAt * 1000).toISOString()}` : "";
-    console.log(`    - ${bucket.bucketName}: ${remaining}${reset}`);
+      : `${window.remainingPercent.toFixed(1)}% remaining`;
+    const reset = window.resetsAt
+      ? ` | resets ${new Date(window.resetsAt * 1000).toISOString()}`
+      : "";
+    console.log(`    - ${window.label}: ${remaining}${reset}`);
   }
 }
 

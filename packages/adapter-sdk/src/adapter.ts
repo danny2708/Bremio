@@ -4,7 +4,6 @@ import type {
   AgentHealth,
   AgentRunRequest,
   ModelDescriptor,
-  QuotaSnapshot,
 } from "./types";
 
 /**
@@ -12,10 +11,9 @@ import type {
  * (docs/04). The orchestrator talks only to this interface; swapping or adding
  * a provider never touches core.
  *
- * Phase 1 fully implements `startRun`, `getCapabilities`, and `cancelRun`.
- * `getQuota` returns `{ status: "unknown" }` (quota is out of scope).
- * `healthCheck` / `listModels` / `resumeRun` are present for contract fidelity
- * and may be thin.
+ * `healthCheck` / `listModels` / `resumeRun` may be thin. Quota is deliberately
+ * separate because one adapter-level window cannot represent provider account
+ * windows and model-scoped capacity; see `@bremio/quota`.
  */
 export interface AgentAdapter {
   /** Stable adapter id, e.g. "claude" or "codex". */
@@ -26,7 +24,6 @@ export interface AgentAdapter {
   healthCheck(): Promise<AgentHealth>;
   getCapabilities(): Promise<AgentCapabilities>;
   listModels(): Promise<ModelDescriptor[]>;
-  getQuota(): Promise<QuotaSnapshot>;
 
   /** Start a run and stream normalized events until a terminal `completed`. */
   startRun(request: AgentRunRequest): AsyncIterable<AgentEvent>;
