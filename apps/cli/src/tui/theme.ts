@@ -1,19 +1,55 @@
 /**
- * Bremio TUI theme. The brand red is the primary accent; everything else is a
- * neutral or a status colour so the red stays meaningful rather than decorative.
+ * Bremio TUI theme.
+ *
+ * Three separate layers of meaning, deliberately never mixed:
+ *   blue        = Bremio itself — brand, navigation, selection, active state
+ *   yellow      = lead role, actions, and things wanting attention
+ *   agent colour = provider identity
+ *
+ * Yellow is reserved for small marks. Large yellow areas read as a warning
+ * dashboard and would drown out real alerts.
+ *
+ * The background/surface/border tokens from the brand palette are deliberately
+ * absent: a terminal owns its own background, so painting one here would fight
+ * the user's colour scheme (and look broken on light themes). Those tokens
+ * belong to the VS Code webview, which does own its surface.
  */
 export const theme = {
-  /** Brand red — headings, selection, focus. */
-  primary: "#d43002",
-  /** Softer red for secondary brand marks. */
-  primaryDim: "#8f2202",
-  text: "white",
-  muted: "gray",
+  /** Brand blue — headings, selection, focus, active state. */
+  primary: "#2563eb",
+  primaryHover: "#3b82f6",
+  primaryActive: "#1d4ed8",
+  /** Softer brand blue for secondary marks. */
+  primaryDim: "#172554",
+  /** Accent yellow — lead badge, run action, attention. Never large areas. */
+  accent: "#f4c542",
+  accentHover: "#ffd75e",
+  accentActive: "#d9a91e",
+  text: "#f8fafc",
+  textSecondary: "#b8c2d1",
+  muted: "#7f8a9c",
   success: "green",
-  warning: "yellow",
+  warning: "#f4c542",
   danger: "red",
   info: "cyan",
 } as const;
+
+/**
+ * Provider identity colours, desaturated so they never compete with the brand
+ * blue. Keyed by Bremio adapter id — `antigravity` is the adapter; Gemini is
+ * only the model behind it.
+ */
+export const AGENT_COLORS: Record<string, string> = {
+  claude: "#c9864a",
+  codex: "#34a77b",
+  antigravity: "#7c83f6",
+  opencode: "#a071d1",
+  jan: "#32b8c6",
+};
+
+export function colorForAgent(agentId: string): string {
+  return AGENT_COLORS[agentId] ?? theme.textSecondary;
+}
 
 export type StatusTone = "success" | "warning" | "danger" | "muted" | "info";
 

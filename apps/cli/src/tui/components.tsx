@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { useEffect, useState } from "react";
-import { colorForTone, glyphForStatus, theme, toneForStatus } from "./theme";
+import { colorForAgent, colorForTone, glyphForStatus, theme, toneForStatus } from "./theme";
 
 /** The Bremio wordmark. Kept small so it never dominates a short terminal. */
 export function Banner({ version }: { version: string }): React.JSX.Element {
@@ -15,10 +15,10 @@ export function Banner({ version }: { version: string }): React.JSX.Element {
       <Text color={theme.primary} bold>
         ██████╔╝██████╔╝█████╗  ██╔████╔██║██║██║   ██║
       </Text>
-      <Text color={theme.primaryDim}>
+      <Text color={theme.primaryActive}>
         ██╔══██╗██╔══██╗██╔══╝  ██║╚██╔╝██║██║██║   ██║
       </Text>
-      <Text color={theme.primaryDim}>
+      <Text color={theme.primaryActive}>
         ██████╔╝██║  ██║███████╗██║ ╚═╝ ██║██║╚██████╔╝
       </Text>
       <Text color={theme.muted}>
@@ -55,6 +55,16 @@ export function StatusText({ status }: { status: string }): React.JSX.Element {
       {glyphForStatus(status)} {status}
     </Text>
   );
+}
+
+/** Provider name in its own identity colour, so agents stay distinguishable. */
+export function AgentName({ agentId, label }: { agentId: string; label?: string }): React.JSX.Element {
+  return <Text color={colorForAgent(agentId)}>{label ?? agentId}</Text>;
+}
+
+/** Yellow marks the lead role — the one agent steering the run. */
+export function LeadBadge(): React.JSX.Element {
+  return <Text color={theme.accent} bold> LEAD </Text>;
 }
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

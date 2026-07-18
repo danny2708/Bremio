@@ -52,8 +52,9 @@ async function main(): Promise<void> {
     ["renders the menu", plain.includes("Doctor") && plain.includes("Capacity")],
     ["renders the run entry", plain.includes("Run")],
     // Colour cannot be observed here: chalk strips styling when the target is
-    // not a TTY, so assert the brand token itself instead.
-    ["brand red is the primary accent", theme.primary === "#d43002"],
+    // not a TTY, so assert the brand tokens themselves instead.
+    ["brand blue is the primary accent", theme.primary === "#2563eb"],
+    ["yellow is reserved for the action accent", theme.accent === "#f4c542"],
   ];
 
   const failures = expectations.filter(([, ok]) => !ok).map(([label]) => label);
