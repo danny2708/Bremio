@@ -165,7 +165,9 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
     ...(opts.capacityPolicy ? { capacityPolicy: opts.capacityPolicy } : {}),
     ...(opts.modelByAgent ? { modelByAgent: opts.modelByAgent } : {}),
   });
-  const flowMode = new Set(assign.values()).size <= 1 ? "single-agent" : "multi-agent";
+  // Team remains a coordinated flow even if routing happens to assign every
+  // planned task to one provider. Only runSingleAgent records single-agent.
+  const flowMode = "multi-agent" as const;
   opts.hooks?.onPlan?.(plan, assign);
   logger?.info(
     { assignments: Object.fromEntries(assign) },
@@ -321,6 +323,7 @@ async function recordRunSummary(input: RunSummaryLedgerInput): Promise<void> {
       flowMode: input.flowMode,
       ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
       qualityGatePassed,
+      outcomeVerified: qualityGatePassed,
     });
   } catch {
     // calibration measurement is best-effort; it must never replace the run result

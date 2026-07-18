@@ -8,6 +8,7 @@ export interface RunReportTask {
 }
 
 export interface RunReport {
+  mode: "team";
   runId: string;
   createdAt: string;
   prompt: string;
@@ -27,6 +28,8 @@ export interface RunReport {
     filesChanged: number;
   };
 }
+
+export type BremioRunReport = RunReport | import("./single-run").SingleRunReport;
 
 export interface BuildReportInput {
   runId: string;
@@ -63,6 +66,7 @@ export function buildReport(input: BuildReportInput): RunReport {
   const qualityGate = evaluateQualityGate(input.plan, tasks);
 
   return {
+    mode: "team",
     runId: input.runId,
     createdAt: new Date().toISOString(),
     prompt: input.prompt,

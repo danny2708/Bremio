@@ -12,7 +12,6 @@ import {
   findTaskAcrossReports,
   listReports,
   loadReportByRunId,
-  type StoredReport,
 } from "./report-store";
 
 export interface MergeCommandOptions {
@@ -36,6 +35,13 @@ async function resolveTargets(
   if (opts.runId) {
     const stored = await loadReportByRunId(opts.repoPath, opts.runId);
     if (!stored) return { error: `no run "${opts.runId}" found` };
+    if (stored.report.mode === "single") {
+      return {
+        error:
+          `run "${opts.runId}" used Single mode and edited the current workspace directly; ` +
+          "there is no Bremio branch to merge",
+      };
+    }
     const tasks = opts.taskId
       ? stored.report.tasks.filter((t) => t.task.id === opts.taskId)
       : stored.report.tasks;
@@ -49,7 +55,7 @@ async function resolveTargets(
     const matches = findTaskAcrossReports(reports, opts.taskId);
     if (matches.length === 0) return { error: `task "${opts.taskId}" not found in any run` };
     if (matches.length > 1) {
-      const runs = matches.map((m: { stored: StoredReport }) => m.stored.runId).join(", ");
+      const runs = matches.map((m) => m.stored.runId).join(", ");
       return {
         error: `task "${opts.taskId}" appears in multiple runs (${runs}); disambiguate with --run <runId>`,
       };

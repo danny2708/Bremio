@@ -9,9 +9,11 @@ import {
   PlanValidationError,
   createRegistry,
   runBremio,
+  runSingleAgent,
   type RunBremioHooks,
+  type SingleRunHooks,
 } from "@bremio/orchestrator";
-import type { ReasoningLevel } from "@bremio/protocol";
+import { ExecutionModeSchema, type ReasoningLevel } from "@bremio/protocol";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
   defaultAqtDatabasePath,
@@ -27,7 +29,8 @@ import { c, compactEvent, printPlan, printReport, statusGlyph } from "./ui";
 const USAGE = `${c.bold("bremio")} — provider-agnostic orchestrator for AI coding agents
 
 ${c.bold("Usage")}
-  bremio run --lead <claude|codex> --repo <path> "<prompt>"
+  bremio run --mode single --agent <claude|codex> --repo <path> "<prompt>"
+  bremio run --mode team --lead <claude|codex> --repo <path> "<prompt>"
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
@@ -35,15 +38,17 @@ ${c.bold("Usage")}
   bremio doctor
   bremio --help
 
-${c.bold("run")}      plan + delegate + execute in isolated worktrees (left for review)
-  --lead <claude|codex>   Which agent leads (plans). Required.
+${c.bold("run")}      run one agent directly or orchestrate an isolated team
+  --mode <single|team>    Explicit execution mode. Required for new commands.
+  --agent <claude|codex>  Agent for Single mode.
+  --lead <claude|codex>   Lead for Team mode. Without --mode, implies Team.
   --repo <path>           Target git repository. Required.
-  --model <id>            Model for the lead's planning run (optional).
-  --reasoning <level>     Lead reasoning: low, medium, high, or xhigh.
-  --timeout <seconds>      Hard timeout for each lead attempt and worker task.
-  --capacity-routing      Opt in to conservative AQT-backed capacity routing.
+  --model <id>            Model for the Single agent or Team lead (optional).
+  --reasoning <level>     Single-agent or Team-lead reasoning level.
+  --timeout <seconds>     Hard timeout for the Single run or each Team task.
+  --capacity-routing      Opt in to conservative Team capacity routing.
   --db <path>             Override the AQT database used for capacity routing.
-  --comparison <id>      Link this run to a controlled single/multi experiment.
+  --comparison <id>       Link this run to a controlled Single/Team experiment.
   --json                  Print the report as JSON (suppresses progress).
   --verbose               Emit structured operational logs to stderr.
 
@@ -69,6 +74,8 @@ function parseCli() {
   return parseArgs({
     allowPositionals: true,
     options: {
+      mode: { type: "string" },
+      agent: { type: "string" },
       lead: { type: "string" },
       repo: { type: "string" },
       prompt: { type: "string" },
@@ -130,8 +137,26 @@ async function main(): Promise<void> {
 async function runCommand(values: Values, positionals: string[]): Promise<void> {
   const prompt = (values.prompt ?? positionals.slice(1).join(" ")).trim();
   const errors: string[] = [];
-  if (values.lead !== "claude" && values.lead !== "codex") {
-    errors.push("--lead must be 'claude' or 'codex'");
+  const requestedMode = values.mode ?? (values.lead ? "team" : undefined);
+  const parsedMode = ExecutionModeSchema.safeParse(requestedMode);
+  const mode = parsedMode.success ? parsedMode.data : undefined;
+  if (!parsedMode.success) {
+    errors.push("--mode must be 'single' or 'team'");
+  }
+  if (mode === "single" && values.agent !== "claude" && values.agent !== "codex") {
+    errors.push("Single mode requires --agent 'claude' or 'codex'");
+  }
+  if (mode === "team" && values.lead !== "claude" && values.lead !== "codex") {
+    errors.push("Team mode requires --lead 'claude' or 'codex'");
+  }
+  if (mode === "single" && values.lead) {
+    errors.push("--lead is only valid in Team mode; use --agent for Single mode");
+  }
+  if (mode === "team" && values.agent) {
+    errors.push("--agent is only valid in Single mode; use --lead for Team mode");
+  }
+  if (mode === "single" && values["capacity-routing"]) {
+    errors.push("--capacity-routing is only valid in Team mode");
   }
   if (!values.repo) errors.push("--repo <path> is required");
   if (!prompt) errors.push('a prompt is required, e.g. bremio run ... "add a health endpoint"');
@@ -164,11 +189,10 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     return;
   }
 
-  const leadId = values.lead as "claude" | "codex";
   const json = values.json === true;
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
   const registry = createRegistry([new ClaudeAdapter(), new CodexAdapter()]);
-  const capacitySnapshots = values["capacity-routing"]
+  const capacitySnapshots = mode === "team" && values["capacity-routing"]
     ? readRoutingCapacity(values, capacityTiming)
     : undefined;
 
@@ -185,7 +209,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     ac.abort();
   });
 
-  const hooks: RunBremioHooks = json
+  const teamHooks: RunBremioHooks = json
     ? {}
     : {
         onLeadStart: (id) =>
@@ -207,15 +231,66 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
           ),
       };
 
+  const singleHooks: SingleRunHooks = json
+    ? {}
+    : {
+        onWorkspaceReady: (dirtyFiles) => {
+          if (dirtyFiles.length === 0) return;
+          console.error(
+            c.yellow(
+              `warning: Single mode will use the current workspace with ${dirtyFiles.length} pre-existing dirty file(s)`,
+            ),
+          );
+          for (const file of dirtyFiles.slice(0, 10)) console.error(c.yellow(`  - ${file}`));
+          if (dirtyFiles.length > 10) {
+            console.error(c.yellow(`  - ...and ${dirtyFiles.length - 10} more`));
+          }
+        },
+        onStart: (id) =>
+          console.log(
+            `${c.bold("●")} Single Agent ${c.cyan(id)} is working directly in ${c.dim(repoPath)}…`,
+          ),
+        onEvent: (event) => {
+          const line = compactEvent(event);
+          if (line) console.log(line);
+        },
+        onComplete: (result) =>
+          console.log(
+            `  ${statusGlyph(result.status)} ${c.dim(`(${result.filesChanged.length} file(s), ${Math.round(result.durationMs / 1000)}s)`)}`,
+          ),
+      };
+
   try {
+    if (mode === "single") {
+      const report = await runSingleAgent({
+        primaryAgentId: values.agent as "claude" | "codex",
+        repoPath,
+        prompt,
+        registry,
+        signal: ac.signal,
+        hooks: singleHooks,
+        ...(values.model ? { model: values.model } : {}),
+        ...(values.reasoning
+          ? { reasoningLevel: values.reasoning as ReasoningLevel }
+          : {}),
+        ...(timeoutSeconds !== undefined ? { timeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
+        ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
+      });
+
+      if (json) console.log(JSON.stringify(report, null, 2));
+      else printReport(report);
+      process.exitCode = report.result.status === "completed" ? 0 : 1;
+      return;
+    }
+
     const report = await runBremio({
-      leadId,
+      leadId: values.lead as "claude" | "codex",
       repoPath,
       prompt,
       registry,
       logger,
       signal: ac.signal,
-      hooks,
+      hooks: teamHooks,
       ...(values.model ? { model: values.model } : {}),
       ...(values.reasoning
         ? { reasoningLevel: values.reasoning as ReasoningLevel }

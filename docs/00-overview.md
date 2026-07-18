@@ -16,14 +16,19 @@ Bremio targets **#1 first** (a single entry point with task assignment), and
 
 ## What Bremio IS
 
-A **control plane** that orchestrates multiple coding agents:
-- One prompt → a **lead** (a role, not the system's owner) creates a plan.
+A **control plane** with two explicit manual execution modes:
+- **Single** → pass the original prompt directly to one selected adapter in the
+  current workspace. The agent may reason internally, but Bremio does not
+  create a Plan, schedule tasks, create worktrees, or aggregate model output.
+- **Team** → a **lead** (a role, not the system's owner) creates a plan.
 - The **orchestrator** (independent of every provider) makes the final call
   on which agent does which task, with what permissions, in which worktree,
   with which model.
 - The lead can be **swapped** (Claude / Codex / Antigravity / later
   OpenCode, Jan).
 - The lead **can also** take on code tasks, depending on quota.
+- **Auto** selection and Single→Team escalation are later phases, not aliases
+  for either manual mode.
 
 ## What Bremio is NOT (Non-goals)
 
@@ -47,10 +52,10 @@ be writing the same hardest piece of logic twice, in the same directory.
 
 ## Success criteria (MVP)
 
-See `06-roadmap.md` §Phase 1. In short: one prompt → pick a lead (Claude or
-Codex) → the lead returns a valid plan JSON → the orchestrator hands off ≥1
-task to another agent → that agent edits code in its own worktree → results
-are aggregated into one place → the run can be cancelled → logs exist.
+See `06-roadmap.md`. In short: one prompt can run either directly through one
+Claude/Codex adapter in the current workspace (Single), or through a
+Claude/Codex lead that returns Plan JSON and delegates isolated tasks (Team).
+Both paths are cancellable, observable, and leave durable reports/logs.
 
 ## Core values guiding the design
 
@@ -64,10 +69,10 @@ expensive thing before proving the cheap thing works) · Honesty (if quota is
   chosen when `outcome ≥ best-single-agent baseline` **and** `net_gain > 0`
   (quota saved minus orchestration cost). Otherwise → single-agent. Details
   and formula in `05`.
-- **P2 — Single-agent is a valid flow and the default for small tasks.** The
-  lead is always allowed to **zero-delegate**: do the whole thing itself, or
-  hand it entirely to one agent. Don't force-decompose a simple task into
-  multiple pieces (avoids handoff loss + unnecessary worktrees).
+- **P2 — Single-agent is a first-class flow.** It is a direct adapter path,
+  not a one-task Team plan and not a lead choosing zero-delegation. Manual mode
+  selection comes first; Auto may default small tasks to Single only after
+  calibration proves its policy.
 - **P3 — Measure net, not gross.** "efficiency > 0" is a vacuous condition;
   the thing that must be enforced and measured is `net_gain > 0` against a
   fixed baseline. Without a usage ledger, no savings claim is allowed. See

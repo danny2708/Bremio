@@ -3,12 +3,30 @@
 Principle: **prove the cheap thing before building the expensive one.** No
 dashboard/quota/parallelism before the core loop runs.
 
+## Execution modes — manual before automatic
+
+**Implementation status (2026-07-18):** explicit `Single` and `Team` modes are
+shipped for Claude and Codex. Single is one direct adapter call in the current
+workspace with dirty-state warning, logs/report, cancellation, requested/actual
+identity, usage, and recognizable verification-command evidence. It does not
+create a plan, scheduler tasks, worktrees, an independent review, or a merge
+target. Team is the existing plan/delegate/review flow. Legacy `--lead` without
+`--mode` still means Team.
+
+Deferred until both manual modes have real-run evidence:
+
+- `Auto` mode selection;
+- user-approved Single→Team escalation;
+- Antigravity Single execution (requires the real adapter first);
+- extracting Single into another package (keep it as an orchestrator module
+  until a concrete package boundary is justified).
+
 ## Phase 1 — Vertical slice (the real MVP)
 Only **Claude (lead) + Codex (worker)**, **sequential**. Both return plan
 JSON → enough to prove lead-swapping + delegation. (Antigravity isn't in yet
 because it can't produce JSON — see 04.)
 
-**Implementation status (2026-07-18):** shipped. Local typecheck, 66 tests,
+**Implementation status (2026-07-18):** shipped. Local typecheck, test suite,
 and `bremio doctor` pass. A fresh two-provider real-run verification remains
 blocked by the Claude session limit reported at runtime; do not mark this phase
 fully closed until it is rerun after the reset.
@@ -23,8 +41,7 @@ is intentionally excluded from the normal test suite.
 ✓ lead returns a valid plan JSON (matching PlanSchema)
 ✓ orchestrator hands off ≥1 task to a DIFFERENT agent
 ✓ that agent edits code in its own worktree
-✓ single-agent path exists (lead does it itself / hands the whole small
-  task to one agent)
+✓ direct single-agent path exists (one adapter call; no Team plan/worktree)
 ✓ results are aggregated into one report
 ✓ a task can be cancelled
 ✓ logs exist for debugging
@@ -73,8 +90,8 @@ quota-aware safety router is available only through explicit opt-in; stale,
 missing, errored, disabled, or unsupported quota cannot hard-exclude an agent.
 Automatic optimization, the kill-switch, and `net_gain` enforcement are not
 implemented yet; confirmed model ids are preserved when a provider exposes
-them, but unreported worker defaults and the outcome baseline remain incomplete
-before efficiency claims.
+them, but unreported worker defaults and paired baseline/cost evidence remain
+incomplete before efficiency claims.
 
 **Capacity sub-roadmap:**
 
@@ -114,12 +131,13 @@ treats stale/unknown/low-confidence data as a soft signal. Automatic enablement
 remains behind ledger calibration. Antigravity routing remains blocked until
 AQT exposes or Bremio can explicitly map verified provider model ids.
 
-**4D calibration status (2026-07-18):** aggregated runs now record derived
-single/multi flow mode and objective quality-gate outcome; `--comparison <id>`
-links controlled runs. `bremio stats` evaluates configurable minimum paired
+**4D calibration status (2026-07-18):** Single and Team runs now record flow
+mode and a mode-appropriate objective outcome; `--comparison <id>` links
+controlled runs. `bremio stats` evaluates configurable minimum paired
 evidence, non-inferiority, actual-model coverage, provider-reported cost
-coverage, and coordination coverage. It recommends single-agent while evidence
-is insufficient. Automatic flow selection and the cost kill-switch remain open;
+coverage, and Team-only coordination coverage. It recommends Single while
+evidence is insufficient. Automatic flow selection and the cost kill-switch
+remain open;
 no token-to-quota or missing-price estimate is introduced.
 
 ## Phase 5 — Parallel + VS Code extension

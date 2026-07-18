@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { RunReport } from "@bremio/orchestrator";
+import type { BremioRunReport, RunReport, SingleRunReport } from "@bremio/orchestrator";
 import type { AgentEvent, Plan, TaskStatus } from "@bremio/protocol";
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -60,7 +60,15 @@ export function printPlan(plan: Plan, assign: Map<string, string>): void {
   }
 }
 
-export function printReport(report: RunReport): void {
+export function printReport(report: BremioRunReport): void {
+  if (report.mode === "single") {
+    printSingleReport(report);
+    return;
+  }
+  printTeamReport(report);
+}
+
+function printTeamReport(report: RunReport): void {
   const rel = (p?: string) => (p ? path.relative(report.repoPath, p) || p : "");
   const line = "─".repeat(60);
   console.log(`\n${line}`);
@@ -119,5 +127,46 @@ export function printReport(report: RunReport): void {
   console.log(
     ` ${c.dim("worktrees left under .bremio/worktrees/ for manual review (no auto-merge)")}`,
   );
+  console.log(line);
+}
+
+function printSingleReport(report: SingleRunReport): void {
+  const rel = (p?: string) => (p ? path.relative(report.repoPath, p) || p : "");
+  const line = "─".repeat(60);
+  const { result, verification } = report;
+  console.log(`\n${line}`);
+  console.log(` ${c.bold("Bremio report")}  ${c.dim(report.runId)}`);
+  console.log(
+    ` mode: ${c.cyan("Single Agent")}   agent: ${c.cyan(report.primaryAgentId)} ` +
+      `  repo: ${c.dim(report.repoPath)}`,
+  );
+  console.log(line);
+  console.log(` status: ${statusGlyph(result.status)}   files: ${result.filesChanged.length}`);
+  const verificationText = verification.status === "passed"
+    ? c.green("passed")
+    : verification.status === "failed"
+      ? c.red("failed")
+      : c.yellow("unverified");
+  console.log(` verification: ${verificationText}`);
+  for (const reason of verification.reasons) console.log(`   ${c.dim(`- ${reason}`)}`);
+  const execution = [
+    `duration=${(result.durationMs / 1000).toFixed(1)}s`,
+    result.requestedModel ? `model requested=${result.requestedModel}` : undefined,
+    result.actualModel ? `model actual=${result.actualModel}` : undefined,
+    result.requestedReasoningLevel
+      ? `reasoning requested=${result.requestedReasoningLevel}`
+      : undefined,
+    result.actualReasoningLevel
+      ? `reasoning actual=${result.actualReasoningLevel}`
+      : undefined,
+  ].filter((value): value is string => Boolean(value));
+  console.log(` execution: ${c.dim(execution.join(" | "))}`);
+  if (result.filesChanged.length > 0) {
+    console.log(` changed/dirty: ${c.dim(result.filesChanged.join(", "))}`);
+  }
+  if (result.error) console.log(` ${c.red(`error: ${result.error}`)}`);
+  console.log(` log:       ${c.dim(rel(result.logsPath))}`);
+  console.log(` report:    ${c.dim(rel(path.join(report.runDir, "report.json")))}`);
+  console.log(c.dim(" current workspace was used directly; no worktree or merge step was created"));
   console.log(line);
 }

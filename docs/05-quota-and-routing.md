@@ -153,12 +153,14 @@ Per-task:  chosen_flow.outcome ≥ best_single_agent_baseline.outcome
 Per-run:   net_gain > 0   (otherwise → fall back to single-agent)
 ```
 
-## Single-agent escape hatch (must exist)
-The lead is ALWAYS allowed to choose **zero-delegation**: do the whole thing
-itself, or hand it **entirely** to one agent. For a sufficiently simple
-task, this is the correct choice — no multi-task plan, no extra worktrees,
-no handoff loss. The router must treat "single-agent" as a valid flow and
-usually the default for small tasks.
+## Single-agent baseline (implemented)
+
+Single is an explicit direct adapter path: one selected agent receives the
+original prompt in the current workspace. It does not invoke the lead planner,
+router, scheduler, worktree manager, reviewer, or aggregation model. This makes
+it an honest low-overhead baseline rather than a Team run labeled
+"zero-delegation." Auto may later prefer it for small tasks, but manual mode
+selection is the current policy.
 
 ## The escalation double-pay trap (bias check — Thinking Fast & Slow)
 Cheap-model-first that guesses wrong means paying for **both the failed
@@ -176,8 +178,8 @@ to `.bremio/ledger.jsonl` with `ts`, `runId`, `taskId`, `provider`, `role`,
 output tokens and cost are also preserved when present for both worker tasks
 and lead planning/repair. Planning entries use `scope:"coordination"`, remain
 separate from task completion metrics, and are recorded best-effort even when
-planning fails. Runs that reach aggregation now add `scope:"run"` entries with the derived
-`flowMode`, fail-closed quality-gate outcome, and optional user-supplied
+planning fails. Both paths add `scope:"run"` entries with explicit `flowMode`,
+a mode-appropriate `outcomeVerified`, and optional user-supplied
 `comparisonId`. `bremio stats` reports coverage and calibration blockers;
 missing dimensions remain unknown and Bremio never estimates a price.
 Provider-confirmed model ids are recorded when exposed (including Claude's
@@ -204,15 +206,17 @@ enough samples, the ledger yields an empirical task→model map.
 The implemented readiness gate defaults to five controlled comparison groups,
 90% multi-agent non-inferiority, 80% actual-model coverage, 80%
 provider-reported cost coverage, and complete coordination coverage. A group is
-evaluable only when a single-agent run with the same `comparisonId` passes the
-objective quality gate. Until every threshold passes, the recommendation is
+evaluable only when a Single run with the same `comparisonId` passes its
+recognizable verification-command check. A Team run remains non-inferior only
+when its fail-closed quality gate passes. Until every threshold passes, the
+recommendation is
 `single-agent`; readiness means only `controlled-multi-agent`, not automatic
 optimization. Policy thresholds are programmatically configurable.
 
 This deliberately does not claim subjective quality equivalence or convert
 tokens into subscription quota. The automatic kill-switch remains open because
-provider-reported cost coverage is currently partial and a CLI single-agent
-baseline collection mode does not exist yet.
+provider-reported cost coverage is currently partial. The CLI can now collect
+explicit Single baselines, but automatic mode selection remains disabled.
 
 ## Router scoring (Phase 4, once the ledger exists)
 The lead only describes the **need**, never picks a model name:
@@ -331,11 +335,12 @@ ledger has enough evidence to enable optimization automatically.
 
 ### 4D — Calibration readiness
 
-- [x] Record run-level flow mode and objective quality-gate outcome.
+- [x] Record run-level flow mode and mode-appropriate objective outcome.
 - [x] Support explicit `comparisonId` metadata for controlled paired runs.
 - [x] Report paired evidence, non-inferiority, model/cost/coordination coverage,
       blockers, and a fail-closed single-agent recommendation in `bremio stats`.
-- [ ] Add an explicit CLI single-agent baseline execution mode.
+- [x] Add an explicit direct CLI Single baseline execution mode for Claude
+      and Codex.
 - [ ] Enforce an automatic orchestration-cost kill-switch only after reported
       cost coverage meets the calibration gate.
 
@@ -344,7 +349,7 @@ ledger has enough evidence to enable optimization automatically.
 2. Consume quota from AI-Quota-Tray (Codex + Claude official; Antigravity per
    current AQT coverage). **Read-only observation slice shipped; router wiring
    waits for fresh-data calibration.**
-3. Single-agent-vs-multi evidence gate. **Readiness reporting shipped; baseline
-   execution mode and automatic kill-switch remain open.**
+3. Single-agent-vs-multi evidence gate. **Readiness reporting and direct
+   baseline execution shipped; automatic selection and kill-switch remain open.**
 4. Scoring router + calibration gate. **Capacity safety routing is opt-in;
    cheap-first remains disabled until paired evidence passes the gate.**

@@ -109,6 +109,7 @@ describe("computeStats", () => {
 
     expect(stats.runEntries).toBe(1);
     expect(stats.qualityPassedRuns).toBe(1);
+    expect(stats.verifiedRuns).toBe(1);
     expect(stats.totalTasks).toBe(1);
     expect(stats.coordinationEntries).toBe(0);
   });
@@ -166,7 +167,7 @@ describe("LedgerEntrySchema", () => {
       scope: "run",
       flowMode: "single-agent",
       comparisonId: "case-1",
-      qualityGatePassed: true,
+      outcomeVerified: true,
     })).success).toBe(true);
   });
 });

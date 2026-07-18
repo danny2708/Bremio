@@ -32,6 +32,47 @@ afterEach(async () => {
 });
 
 describe("bremio merge quality gate", () => {
+  it("explains that Single runs have no Bremio branch to merge", async () => {
+    const runDir = path.join(repo, ".bremio", "runs", "run-single");
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "report.json"),
+      JSON.stringify({
+        mode: "single",
+        runId: "run-single",
+        createdAt: new Date().toISOString(),
+        prompt: "edit directly",
+        primaryAgentId: "codex",
+        repoPath: repo,
+        runDir,
+        result: {
+          status: "completed",
+          summary: "done",
+          filesChanged: [],
+          commandsExecuted: [],
+          tests: [],
+          logsPath: path.join(runDir, "single.log"),
+          durationMs: 1,
+        },
+        verification: { status: "unverified", reasons: [] },
+        workspace: { dirtyBefore: [], dirtyAfter: [] },
+      }),
+      "utf8",
+    );
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line = "") => errors.push(String(line)));
+
+    const code = await mergeCommand({
+      repoPath: repo,
+      runId: "run-single",
+      assumeYes: true,
+    });
+
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toContain("edited the current workspace directly");
+    expect(errors.join("\n")).toContain("no Bremio branch to merge");
+  });
+
   it("refuses to merge a completed task when the run gate failed", async () => {
     const runDir = path.join(repo, ".bremio", "runs", "run-gate-failed");
     await fs.mkdir(runDir, { recursive: true });

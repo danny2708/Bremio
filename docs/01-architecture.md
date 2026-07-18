@@ -8,6 +8,10 @@ becomes the lead later, the core must not need to be rewritten.
 
 ## Layer diagram
 
+The entry layer dispatches explicit manual modes. Single calls one adapter
+directly; Team enters the orchestration stack shown below. Auto is not yet an
+execution path.
+
 ```text
                     ONE PROMPT UI
           VS Code panel / CLI / Antigravity
@@ -67,11 +71,12 @@ The router maps *task needs* → *capability* → *actual agent+model*. Model
 names (sonnet, gpt-5.6-sol, gemini-flash) are **never hardcoded in core** —
 each adapter maps them internally.
 
-## Core concept 4 — Isolation by default
+## Core concept 4 — Isolation is mode-specific
 
-No agent modifies the main working tree directly. Every task runs in its
-**own git worktree**, returning a diff/commit; the lead + quality gate
-review before merging. Details in `03-modules.md` §workspace.
+Single intentionally modifies the selected current workspace directly and
+warns when that workspace is already dirty. Team tasks run in their **own git
+worktrees**, returning diffs/commits for quality-gated review before merging.
+Details in `03-modules.md` §workspace.
 
 ## The three backbone schemas
 

@@ -34,6 +34,8 @@ export const LedgerEntrySchema = z.object({
   comparisonId: z.string().min(1).optional(),
   /** Objective fail-closed report gate outcome, present on scope:"run" entries. */
   qualityGatePassed: z.boolean().optional(),
+  /** Mode-appropriate objective outcome; never substitutes subjective review. */
+  outcomeVerified: z.boolean().optional(),
 });
 export type LedgerEntry = z.infer<typeof LedgerEntrySchema>;
 
@@ -104,6 +106,7 @@ export interface LedgerStats {
   coordinationCancelled: number;
   runEntries: number;
   qualityPassedRuns: number;
+  verifiedRuns: number;
   usageEntries: number;
   reportedInputTokens: number;
   reportedOutputTokens: number;
@@ -132,6 +135,7 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
   let coordinationCancelled = 0;
   let runEntries = 0;
   let qualityPassedRuns = 0;
+  let verifiedRuns = 0;
   let totalTasks = 0;
 
   for (const e of entries) {
@@ -144,6 +148,7 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
     } else if (scope === "run") {
       runEntries += 1;
       if (e.qualityGatePassed === true) qualityPassedRuns += 1;
+      if ((e.outcomeVerified ?? e.qualityGatePassed) === true) verifiedRuns += 1;
     } else {
       totalTasks += 1;
     }
@@ -191,6 +196,7 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
     coordinationCancelled,
     runEntries,
     qualityPassedRuns,
+    verifiedRuns,
     usageEntries,
     reportedInputTokens,
     reportedOutputTokens,

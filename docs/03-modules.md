@@ -26,16 +26,17 @@ bremio/
 
 ## Responsibilities per package
 
-**protocol** — the source of truth for data shapes. No logic. Zod schemas +
-types. Every other package imports from here. A change here is a breaking
-change.
+**protocol** — the source of truth for data shapes, including the explicit
+`single | team` execution-mode discriminator. No logic. Zod schemas + types.
+Every other package imports from here. A change here is a breaking change.
 
 **adapter-sdk** — defines `AgentAdapter` (see `04-adapters.md`) and
 `AgentPluginManifest` (id, displayName, adapterFactory, supportedRoles,
 configurationSchema). Adding a new provider = adding one package that
 implements this interface.
 
-**orchestrator** — `lead-manager` (selects/coordinates the lead),
+**orchestrator** — `single-run` (one direct adapter pass-through in the current
+workspace), `lead-manager` (selects/coordinates the Team lead),
 `scheduler` (runs tasks by dependency order, sequential in Phase 1),
 `router` (scoring to pick agent+model), `result-aggregator` (collects
 TaskResults → report). **Knows nothing** about specific providers.
@@ -47,15 +48,19 @@ integration remains gated on calibration. Its canonical `QuotaProvider`
 contract supports multiple account windows, per-model windows, source age, and
 confidence. Quota is intentionally separate from `AgentAdapter`.
 
-**workspace** — manages git isolation. Details below.
+**workspace** — manages Team git isolation and shared durable logs. Single uses
+the current workspace and only reuses the logging primitive. Details below.
 
 **daemon** — the main process; holds state, spawns child processes (agent
 CLI/SDK), streams events over WebSocket, manages worktree lifecycle, kills
 on timeout.
 
-## Workspace isolation (git worktree)
+## Workspace behavior by mode
 
-No agent is allowed to edit the same folder as another. One worktree per task:
+Single uses the current repo path directly, warns on pre-existing dirty files,
+and creates no Bremio branch/worktree. Team uses git worktree isolation:
+
+No Team agent is allowed to edit the same folder as another. One worktree per task:
 
 ```text
 repo/

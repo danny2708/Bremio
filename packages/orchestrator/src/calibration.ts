@@ -39,7 +39,8 @@ interface ComparisonGroup {
 /**
  * Determine whether observed, paired evidence is sufficient to permit a
  * controlled multi-agent experiment. No quota, price, or outcome is inferred:
- * cost must be provider-reported and outcome is the fail-closed quality gate.
+ * cost must be provider-reported and outcomes must be objectively verified by
+ * the execution mode (Single verification or Team quality gate).
  */
 export function evaluateCalibrationReadiness(
   entries: readonly LedgerEntry[],
@@ -60,16 +61,19 @@ export function evaluateCalibrationReadiness(
   const paired = [...groups.values()].filter(
     (group) => group.single.length > 0 && group.multi.length > 0,
   );
-  // A multi-agent result is comparable only when at least one single-agent
-  // baseline for the same comparison id passed the objective quality gate.
+  // A multi-agent result is comparable only when every matching Single
+  // baseline passed its mode-appropriate objective verification.
   const evaluable = paired.filter((group) =>
-    group.single.every((summary) => summary.qualityGatePassed === true));
+    group.single.every(isOutcomeVerified));
   const nonInferior = evaluable.filter((group) =>
-    group.multi.every((summary) => summary.qualityGatePassed === true));
+    group.multi.every(isOutcomeVerified));
   const nonInferiorRate = ratio(nonInferior.length, evaluable.length);
 
   const relevantRunIds = new Set(
     evaluable.flatMap((group) => [...group.single, ...group.multi].map((entry) => entry.runId)),
+  );
+  const relevantMultiRunIds = new Set(
+    evaluable.flatMap((group) => group.multi.map((entry) => entry.runId)),
   );
   const executionEntries = entries.filter((entry) =>
     relevantRunIds.has(entry.runId) &&
@@ -87,7 +91,10 @@ export function evaluateCalibrationReadiness(
       .filter((entry) => entry.scope === "coordination")
       .map((entry) => entry.runId),
   );
-  const coordinationCoverage = ratio(runsWithCoordination.size, relevantRunIds.size);
+  const coordinationCoverage = ratio(
+    [...runsWithCoordination].filter((runId) => relevantMultiRunIds.has(runId)).length,
+    relevantMultiRunIds.size,
+  );
 
   const blockers: string[] = [];
   if (evaluable.length < policy.minimumPairedComparisons) {
@@ -157,4 +164,8 @@ function ratio(numerator: number, denominator: number): number {
 
 function formatPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
+}
+
+function isOutcomeVerified(summary: LedgerEntry): boolean {
+  return summary.outcomeVerified ?? summary.qualityGatePassed ?? false;
 }

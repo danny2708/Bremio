@@ -1,10 +1,18 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { RunReport, RunReportTask } from "@bremio/orchestrator";
+import type {
+  BremioRunReport,
+  RunReport,
+  RunReportTask,
+} from "@bremio/orchestrator";
 
 export interface StoredReport {
   runId: string;
   path: string;
+  report: BremioRunReport;
+}
+
+export interface StoredTeamReport extends StoredReport {
   report: RunReport;
 }
 
@@ -23,7 +31,7 @@ export async function listReports(repoPath: string): Promise<StoredReport[]> {
     const reportPath = path.join(runsDir, runId, "report.json");
     try {
       const raw = await fs.readFile(reportPath, "utf8");
-      reports.push({ runId, path: reportPath, report: JSON.parse(raw) as RunReport });
+      reports.push({ runId, path: reportPath, report: parseReport(raw) });
     } catch {
       continue; // missing/corrupt report — skip
     }
@@ -39,14 +47,14 @@ export async function loadReportByRunId(
   const reportPath = path.join(repoPath, ".bremio", "runs", runId, "report.json");
   try {
     const raw = await fs.readFile(reportPath, "utf8");
-    return { runId, path: reportPath, report: JSON.parse(raw) as RunReport };
+    return { runId, path: reportPath, report: parseReport(raw) };
   } catch {
     return undefined;
   }
 }
 
 export interface TaskMatch {
-  stored: StoredReport;
+  stored: StoredTeamReport;
   entry: RunReportTask;
 }
 
@@ -57,8 +65,25 @@ export function findTaskAcrossReports(
 ): TaskMatch[] {
   const matches: TaskMatch[] = [];
   for (const stored of reports) {
+    if (stored.report.mode !== "team") continue;
     const entry = stored.report.tasks.find((t) => t.task.id === taskId);
-    if (entry) matches.push({ stored, entry });
+    if (entry) {
+      matches.push({
+        stored: { ...stored, report: stored.report },
+        entry,
+      });
+    }
   }
   return matches;
+}
+
+/** Legacy reports predate the mode discriminator and are all Team reports. */
+function parseReport(raw: string): BremioRunReport {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  if (parsed.mode === "single") return parsed as unknown as BremioRunReport;
+  if (parsed.mode === "team") return parsed as unknown as RunReport;
+  if (!("mode" in parsed)) {
+    return { ...parsed, mode: "team" } as unknown as RunReport;
+  }
+  throw new Error(`unsupported Bremio report mode: ${String(parsed.mode)}`);
 }

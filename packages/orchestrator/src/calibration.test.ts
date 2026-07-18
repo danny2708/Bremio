@@ -9,7 +9,7 @@ function summary(
   runId: string,
   comparisonId: string,
   flowMode: "single-agent" | "multi-agent",
-  qualityGatePassed = true,
+  outcomeVerified = true,
 ): LedgerEntry {
   return {
     ts: "2026-07-18T00:00:00.000Z",
@@ -19,11 +19,12 @@ function summary(
     provider: "bremio",
     role: "orchestrator",
     kind: "run-summary",
-    status: qualityGatePassed ? "completed" : "failed",
+    status: outcomeVerified ? "completed" : "failed",
     filesChanged: 0,
     flowMode,
     comparisonId,
-    qualityGatePassed,
+    outcomeVerified,
+    ...(flowMode === "multi-agent" ? { qualityGatePassed: outcomeVerified } : {}),
   };
 }
 
@@ -49,7 +50,6 @@ function pair(id: string, multiPassed = true): LedgerEntry[] {
   return [
     summary(singleRun, id, "single-agent"),
     execution(singleRun),
-    execution(singleRun, "coordination"),
     summary(multiRun, id, "multi-agent", multiPassed),
     execution(multiRun),
     execution(multiRun, "coordination"),
@@ -91,7 +91,7 @@ describe("evaluateCalibrationReadiness", () => {
   it("does not count a failed single-agent baseline as evaluable", () => {
     const entries = pair("case");
     const single = entries.find((entry) => entry.flowMode === "single-agent");
-    if (single) single.qualityGatePassed = false;
+    if (single) single.outcomeVerified = false;
 
     const result = evaluateCalibrationReadiness(entries, { minimumPairedComparisons: 1 });
     expect(result.pairedComparisons).toBe(1);
@@ -115,8 +115,8 @@ describe("evaluateCalibrationReadiness", () => {
     if (task) task.usage = undefined;
 
     const result = evaluateCalibrationReadiness(entries, { minimumPairedComparisons: 1 });
-    expect(result.reportedCostCoverage).toBe(0.75);
-    expect(result.blockers).toContain("provider-reported cost coverage 75%/80%");
+    expect(result.reportedCostCoverage).toBeCloseTo(2 / 3);
+    expect(result.blockers).toContain("provider-reported cost coverage 67%/80%");
     expect(result.recommendation).toBe("single-agent");
   });
 });

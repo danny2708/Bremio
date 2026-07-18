@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { AgentEventSchema, PlanSchema, TaskResultSchema } from "./index";
+import {
+  AgentEventSchema,
+  ExecutionModeSchema,
+  PlanSchema,
+  TaskResultSchema,
+} from "./index";
+
+describe("ExecutionModeSchema", () => {
+  it("allows only explicit manual modes", () => {
+    expect(ExecutionModeSchema.options).toEqual(["single", "team"]);
+    expect(() => ExecutionModeSchema.parse("auto")).toThrow();
+  });
+});
 
 describe("PlanSchema", () => {
   it("parses a minimal plan and applies task defaults", () => {

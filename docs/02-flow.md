@@ -1,9 +1,32 @@
 # 02 — End-to-End Flow
 
-## Flow of a single run (a "Run")
+## Mode selection
+
+The user chooses `--mode single` or `--mode team`. Bremio does not silently
+reinterpret Single as a one-task Team plan. `--lead` without `--mode` is kept
+only as a backward-compatible spelling of Team; Auto is deferred.
+
+## Single mode
 
 ```text
-1. User enters one prompt + picks a lead (or Auto).
+1. User enters one prompt + selects one agent.
+2. Bremio records the current workspace state and warns if it is dirty.
+3. Bremio calls that adapter exactly once with the original prompt, current
+   repo path, workspace-write permission, and optional model/reasoning.
+4. The adapter reads, edits, runs commands, and reports normally.
+5. Bremio records events, provider identity/usage when reported, changed/dirty
+   files, recognizable verification command evidence, and one report.
+```
+
+There is no `PlanSchema`, lead, router, scheduler, independent reviewer,
+worktree, branch, aggregation model call, or `bremio merge` step in Single.
+The selected adapter can still plan internally. Pre-existing dirty files are
+reported separately because Bremio cannot attribute them to the run.
+
+## Team mode
+
+```text
+1. User enters one prompt + picks a lead.
 2. Session Manager creates a Run, picks the repo + base branch.
 3. Lead Adapter receives the prompt → returns Plan JSON (PlanSchema).
 4. Orchestrator VALIDATES the plan:
@@ -84,13 +107,13 @@ All cloud agents low      → local (Jan) reads code / builds a test skeleton
 
 Aggregated into: task list + agent that ran it + status, files changed,
 test pass/fail, review findings (fixed/blocking), commit hash per worktree,
-estimated quota spent.
+and provider-reported usage when available. Bremio does not estimate per-task
+subscription quota consumption.
 
-## The single-agent branch (decided at steps 4–5)
+## Future Auto and escalation
 
-Before decomposing, the orchestrator asks: is this task **simple enough**
-for one agent to complete end-to-end? If so → **zero-delegation**: the lead
-does it itself, or hands it entirely to one agent (no multi-task plan, no
-extra worktrees). This is the default for small tasks and the baseline
-against which every multi-agent flow is compared (see `05` §Efficiency).
-Multi-agent is only chosen when it beats the baseline **and** `net_gain > 0`.
+Auto may later compare a calibrated Single baseline with Team and select Team
+only when it preserves outcome and produces `net_gain > 0`. Manual Single→Team
+escalation must require user approval because Team changes the execution shape
+and introduces additional provider calls/worktrees. Neither behavior is part
+of the current manual-mode milestone.

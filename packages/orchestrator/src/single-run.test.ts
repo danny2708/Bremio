@@ -1,0 +1,270 @@
+import { execFileSync } from "node:child_process";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type {
+  AgentAdapter,
+  AgentCapabilities,
+  AgentHealth,
+  AgentRunRequest,
+  ModelDescriptor,
+} from "@bremio/adapter-sdk";
+import type { AgentEvent } from "@bremio/protocol";
+import { ledgerPathFor, readLedger } from "./ledger";
+import { createRegistry } from "./registry";
+import { runSingleAgent } from "./single-run";
+
+const FULL_CAPABILITIES: AgentCapabilities = {
+  planning: true,
+  structuredOutput: true,
+  repositoryRead: true,
+  repositoryWrite: true,
+  shell: true,
+  testing: true,
+  browser: false,
+  vision: false,
+  resumableSessions: true,
+};
+
+class SingleMockAdapter implements AgentAdapter {
+  readonly id = "codex";
+  readonly provider = "openai";
+  readonly requests: AgentRunRequest[] = [];
+  readonly cancelledRuns: string[] = [];
+
+  constructor(private readonly emitShellEvidence = true) {}
+
+  async getCapabilities(): Promise<AgentCapabilities> {
+    return FULL_CAPABILITIES;
+  }
+
+  async listModels(): Promise<ModelDescriptor[]> {
+    return [];
+  }
+
+  async healthCheck(): Promise<AgentHealth> {
+    return { status: "ok" };
+  }
+
+  async *startRun(request: AgentRunRequest): AsyncIterable<AgentEvent> {
+    this.requests.push(request);
+    const ts = Date.now();
+    yield { type: "started", runId: request.runId, ts };
+    await fs.writeFile(path.join(request.cwd, "DIRECT.txt"), "single mode\n", "utf8");
+    if (this.emitShellEvidence) {
+      yield {
+        type: "tool_use",
+        runId: request.runId,
+        ts,
+        name: "shell",
+        input: { command: "pnpm test" },
+      };
+      yield {
+        type: "tool_result",
+        runId: request.runId,
+        ts,
+        name: "shell",
+        ok: true,
+        exitCode: 0,
+      };
+    }
+    yield {
+      type: "usage",
+      runId: request.runId,
+      ts,
+      model: "gpt-actual",
+      reasoningLevel: "high",
+      inputTokens: 10,
+      outputTokens: 5,
+    };
+    yield {
+      type: "completed",
+      runId: request.runId,
+      ts,
+      outcome: {
+        status: "completed",
+        finalText: "Implemented and verified directly.",
+        sessionId: "session-1",
+      },
+    };
+  }
+
+  resumeRun(): AsyncIterable<AgentEvent> {
+    throw new Error("not implemented");
+  }
+
+  async cancelRun(runId: string): Promise<void> {
+    this.cancelledRuns.push(runId);
+  }
+}
+
+class SlowSingleMockAdapter extends SingleMockAdapter {
+  override async *startRun(request: AgentRunRequest): AsyncIterable<AgentEvent> {
+    this.requests.push(request);
+    yield { type: "started", runId: request.runId, ts: Date.now() };
+    await new Promise<void>((resolve) => {
+      if (request.signal?.aborted) return resolve();
+      request.signal?.addEventListener("abort", () => resolve(), { once: true });
+    });
+    yield {
+      type: "completed",
+      runId: request.runId,
+      ts: Date.now(),
+      outcome: { status: "cancelled" },
+    };
+  }
+}
+
+let repoPath: string;
+
+function git(args: string[]): string {
+  return execFileSync("git", args, { cwd: repoPath, stdio: "pipe" }).toString().trim();
+}
+
+beforeEach(async () => {
+  repoPath = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-single-"));
+  git(["init", "-q", "-b", "main"]);
+  git(["config", "user.email", "test@bremio.local"]);
+  git(["config", "user.name", "Bremio Test"]);
+  git(["config", "core.autocrlf", "false"]);
+  await fs.writeFile(path.join(repoPath, "README.md"), "# test\n", "utf8");
+  git(["add", "-A"]);
+  git(["commit", "-q", "-m", "init"]);
+});
+
+afterEach(async () => {
+  await fs.rm(repoPath, { recursive: true, force: true }).catch(() => {});
+});
+
+describe("runSingleAgent", () => {
+  it("rejects a non-git workspace before invoking the adapter", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-not-git-"));
+    const adapter = new SingleMockAdapter();
+    try {
+      await expect(runSingleAgent({
+        primaryAgentId: "codex",
+        repoPath: workspace,
+        prompt: "edit directly",
+        registry: createRegistry([adapter]),
+      })).rejects.toThrow("workspace is not a git repository");
+      expect(adapter.requests).toHaveLength(0);
+    } finally {
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("passes the original request directly to exactly one adapter run", async () => {
+    const adapter = new SingleMockAdapter();
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "make the smallest valid change",
+      registry: createRegistry([adapter]),
+      model: "gpt-requested",
+      reasoningLevel: "medium",
+      comparisonId: "direct-case",
+    });
+
+    expect(adapter.requests).toHaveLength(1);
+    expect(adapter.requests[0]).toMatchObject({
+      role: "implementer",
+      prompt: "make the smallest valid change",
+      cwd: repoPath,
+      permission: "workspace-write",
+      model: "gpt-requested",
+      reasoningLevel: "medium",
+      metadata: { executionMode: "single" },
+    });
+    expect(adapter.requests[0]?.prompt).not.toContain("PLAN RULES");
+
+    expect(report).toMatchObject({
+      mode: "single",
+      primaryAgentId: "codex",
+      repoPath,
+      result: {
+        status: "completed",
+        summary: "Implemented and verified directly.",
+        requestedModel: "gpt-requested",
+        actualModel: "gpt-actual",
+        requestedReasoningLevel: "medium",
+        actualReasoningLevel: "high",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        sessionId: "session-1",
+      },
+      verification: { status: "passed", reasons: [] },
+      workspace: { dirtyBefore: [] },
+    });
+    expect(report.result.filesChanged).toContain("DIRECT.txt");
+    expect(report.result.tests.at(-1)).toMatchObject({
+      command: "pnpm test",
+      exitCode: 0,
+    });
+    await expect(fs.access(path.join(repoPath, ".bremio", "worktrees"))).rejects.toThrow();
+    await expect(fs.access(path.join(report.runDir, "report.json"))).resolves.toBeUndefined();
+
+    const entries = (await readLedger(ledgerPathFor(repoPath))).filter(
+      (entry) => entry.runId === report.runId,
+    );
+    expect(entries).toHaveLength(2);
+    expect(entries.find((entry) => entry.scope === "task")).toMatchObject({
+      provider: "codex",
+      role: "implementer",
+      flowMode: "single-agent",
+      comparisonId: "direct-case",
+      actualModel: "gpt-actual",
+    });
+    expect(entries.find((entry) => entry.scope === "run")).toMatchObject({
+      provider: "bremio",
+      flowMode: "single-agent",
+      outcomeVerified: true,
+    });
+    expect(entries.some((entry) => entry.scope === "coordination")).toBe(false);
+  });
+
+  it("warns about pre-existing dirty files and does not fake verification", async () => {
+    await fs.writeFile(path.join(repoPath, "README.md"), "# dirty\n", "utf8");
+    await fs.writeFile(path.join(repoPath, "dirty name.txt"), "pre-existing\n", "utf8");
+    const adapter = new SingleMockAdapter(false);
+    let observedDirty: readonly string[] = [];
+
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "edit directly",
+      registry: createRegistry([adapter]),
+      hooks: { onWorkspaceReady: (files) => { observedDirty = files; } },
+    });
+
+    expect(observedDirty).toContain("README.md");
+    expect(observedDirty).toContain("dirty name.txt");
+    expect(report.workspace.dirtyBefore).toContain("README.md");
+    expect(report.result.status).toBe("completed");
+    expect(report.verification).toEqual({
+      status: "unverified",
+      reasons: ["agent completed without recognizable test, lint, build, or check evidence"],
+    });
+    const summary = (await readLedger(ledgerPathFor(repoPath))).find(
+      (entry) => entry.runId === report.runId && entry.scope === "run",
+    );
+    expect(summary?.outcomeVerified).toBe(false);
+    expect(summary?.qualityGatePassed).toBeUndefined();
+  });
+
+  it("propagates a hard timeout to the selected adapter", async () => {
+    const adapter = new SlowSingleMockAdapter();
+
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "run slowly",
+      registry: createRegistry([adapter]),
+      timeoutMs: 20,
+    });
+
+    expect(report.result.status).toBe("cancelled");
+    expect(report.result.error).toBe("single-agent run timed out after 20ms");
+    expect(report.verification.status).toBe("failed");
+    expect(adapter.cancelledRuns).toEqual([report.runId]);
+  });
+});

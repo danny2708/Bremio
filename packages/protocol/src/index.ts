@@ -22,6 +22,8 @@ export {
 
 export { PlanSchema, type Plan } from "./plan";
 
+export { ExecutionModeSchema, type ExecutionMode } from "./run";
+
 export {
   TaskResultSchema,
   TaskStatusSchema,

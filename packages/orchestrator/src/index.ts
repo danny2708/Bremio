@@ -4,6 +4,14 @@
  * specific provider; it talks only to the AgentAdapter contract.
  */
 export { runBremio, createRunId, type RunBremioOptions, type RunBremioHooks } from "./run";
+export {
+  runSingleAgent,
+  type RunSingleAgentOptions,
+  type SingleAgentResult,
+  type SingleRunHooks,
+  type SingleRunReport,
+  type SingleRunVerification,
+} from "./single-run";
 export { createRegistry, type AgentRegistry } from "./registry";
 
 export {
@@ -30,6 +38,7 @@ export { runPlan, type RunPlanOptions, type SchedulerHooks } from "./scheduler";
 
 export {
   buildReport,
+  type BremioRunReport,
   type RunReport,
   type RunReportTask,
   type BuildReportInput,

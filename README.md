@@ -5,15 +5,16 @@
 >
 > **Different minds. One team.**
 
-You prompt from **one place**; a **lead** (Claude by default, swappable)
-analyzes the request and proposes a plan; a **provider-agnostic orchestrator**
-assigns tasks to the right agents, isolates them via git worktrees, and
-aggregates the results back into one place. ROI goal: **get the most out of
-the models with the least quota.**
+You prompt from **one place** and explicitly choose an execution mode:
+**Single** passes the original request directly to one selected agent in the
+current workspace; **Team** asks a swappable lead to plan, then a
+provider-agnostic orchestrator assigns isolated worktree tasks and aggregates
+the results. ROI goal: **get the most out of the models with the least quota.**
 
 ## Status
 **Phase 1 (vertical slice) implemented**, plus the Phase-2 quality gate and
-early Phase-4 measurement/quota slices — Claude (Agent SDK) + Codex
+early Phase-4 measurement/quota slices — explicit Single/Team modes, Claude
+(Agent SDK) + Codex
 (`codex exec --json`) as swappable lead/worker, a validator, a sequential
 scheduler, dependency-aware git-worktree isolation, independent review,
 exit-code-backed test evidence, review-gated merge, and the CLI. Full design
@@ -34,11 +35,15 @@ corepack pnpm typecheck
 # check adapter health / lead-eligibility
 corepack pnpm bremio doctor
 
-# one prompt -> lead plans -> orchestrator hands a task to the OTHER agent,
+# Single: one adapter call in the current workspace; no plan/scheduler/worktree/merge
+corepack pnpm bremio run --mode single --agent codex --timeout 600 --repo /path/to/repo "fix the failing test"
+corepack pnpm bremio run --mode single --agent claude --repo /path/to/repo "add a health endpoint"
+
+# Team: lead plans -> orchestrator hands a task to the OTHER agent,
 # which edits code in its own git worktree; results aggregate into one report
-corepack pnpm bremio run --lead codex --timeout 600 --repo /path/to/repo "add a health endpoint"
-corepack pnpm bremio run --lead claude --repo /path/to/repo "fix the failing test"
-# optional explicit lead identity; provider defaults remain untouched when omitted
+corepack pnpm bremio run --mode team --lead codex --timeout 600 --repo /path/to/repo "add a health endpoint"
+corepack pnpm bremio run --mode team --lead claude --repo /path/to/repo "fix the failing test"
+# --lead without --mode remains a backward-compatible alias for Team
 corepack pnpm bremio run --lead codex --model gpt-5.6-terra --reasoning high --repo /path/to/repo "review this change"
 
 # after the run's test + independent-review gate passes, review the diff and merge
@@ -53,13 +58,15 @@ corepack pnpm bremio stats --repo /path/to/repo
 corepack pnpm bremio capacity --aging-after 15 --stale-after 30
 
 # explicitly enable the conservative Phase-4C safety router for a run
-corepack pnpm bremio run --capacity-routing --lead codex --repo /path/to/repo "fix the failing test"
+corepack pnpm bremio run --mode team --capacity-routing --lead codex --repo /path/to/repo "fix the failing test"
 
 # explicit real-provider smoke (consumes quota; defaults to both lead directions)
 corepack pnpm smoke:providers --lead both --timeout 600
 ```
 
-Each task runs in `<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
+In Single mode the selected agent uses the current workspace directly. Bremio
+warns if it is already dirty and does not create a worktree, branch, or merge
+step. Team tasks run in `<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
 `bremio/<taskId>-<agent>`; per-task logs and `report.json` land in
 `<repo>/.bremio/runs/<runId>/`. Press **Ctrl+C** to cancel an in-flight run.
 `--timeout <seconds>` applies a hard limit to each planning attempt and worker
@@ -71,7 +78,7 @@ retains failed fixtures for inspection. Pass `--keep` to retain successful
 fixtures too. It is intentionally excluded from `pnpm test` so normal QA never
 spends provider quota.
 
-`bremio run` never merges — worktrees are **left for review**. `bremio merge`
+Team runs never auto-merge — worktrees are **left for review**. `bremio merge`
 first requires a passed run quality gate, then shows the diff, asks for
 confirmation (or `--yes`), merges into the base branch (`--no-ff`), and cleans
 up the worktree + branch; conflicts abort cleanly. Test/review tasks inherit
@@ -84,8 +91,9 @@ usage plus requested/provider-confirmed model and reasoning identity when
 available, summarized by
 `bremio stats [--since <date>]`.
 Planning entries are counted as coordination rather than tasks, including on
-planning failure. Runs that reach aggregation add a run-summary with derived single/multi
-flow mode and objective quality-gate outcome. `--comparison <id>` can link
+planning failure. Every completed execution path adds a run-summary with its
+flow mode and mode-appropriate objective outcome: recognizable command evidence
+for Single, or the fail-closed quality gate for Team. `--comparison <id>` can link
 controlled runs of the same request. Stats recommends single-agent until there
 are enough matched comparisons plus provider-reported model, cost, and
 coordination coverage. Missing usage remains unknown; no price is estimated.
@@ -100,15 +108,16 @@ This remains opt-in until ledger calibration supports automatic optimization.
 
 ## Packages
 `protocol` (Zod contracts) · `adapter-sdk` (the `AgentAdapter` interface) ·
-`adapter-claude` · `adapter-codex` · `orchestrator` (lead-manager, validator,
-router, scheduler, aggregator) · `quota` (read-only AQT consumer) · `workspace`
+`adapter-claude` · `adapter-codex` · `orchestrator` (direct Single runner plus
+Team lead-manager, validator, router, scheduler, aggregator) · `quota`
+(read-only AQT consumer) · `workspace`
 (worktrees + logs) · `apps/cli`.
 
 ## Core principles
 - Orchestrator is provider-agnostic — Claude is only the *default lead*.
 - Lead **proposes** the plan; the orchestrator **executes** it (swapping the
   lead doesn't require rewriting the core).
-- Single-agent is a valid flow; multi-agent is chosen only when
+- Single and Team are explicit manual modes. Future Auto may choose Team only when
   `outcome ≥ single-agent baseline` and `net_gain > 0`.
 - Don't rebuild the quota reader — consume `AI-Quota-Tray`.
 - No UI-extension scraping; use official programmatic surfaces.

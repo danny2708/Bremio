@@ -224,6 +224,7 @@ describe("runBremio end-to-end (mock adapters)", () => {
     });
 
     // one prompt -> valid plan -> implementation + test + independent review
+    expect(report.mode).toBe("team");
     expect(report.tasks).toHaveLength(4);
 
     // ≥1 task handed to a DIFFERENT agent than the lead
@@ -243,7 +244,7 @@ describe("runBremio end-to-end (mock adapters)", () => {
     expect(impl?.result.branch).toBe("bremio/TASK-002-codex");
     expect(existsSync(impl?.result.worktreePath ?? "")).toBe(true);
 
-    // analysis stayed on the lead (single-agent path within the same run)
+    // analysis stayed on the Team lead; this is still a planned Team task
     const analysis = report.tasks.find((t) => t.task.id === "TASK-001");
     expect(analysis?.agentId).toBe("claude");
 
@@ -293,6 +294,7 @@ describe("runBremio end-to-end (mock adapters)", () => {
       flowMode: "multi-agent",
       comparisonId: "greeting-case",
       qualityGatePassed: true,
+      outcomeVerified: true,
     });
   });
 

@@ -46,7 +46,7 @@ export async function statsCommand(opts: StatsCommandOptions): Promise<number> {
   if (stats.runEntries > 0) {
     console.log(
       `  run outcomes:     ${stats.runEntries} ` +
-        `${c.dim(`(${stats.qualityPassedRuns} passed the quality gate)`)}`,
+        `${c.dim(`(${stats.verifiedRuns} objectively verified; ${stats.qualityPassedRuns} Team quality-gate passed)`)}`,
     );
   }
   console.log(
