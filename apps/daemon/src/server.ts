@@ -4,6 +4,7 @@ import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
 import { ReasoningLevelSchema } from "@bremio/protocol";
+import { MINIMUM_CLIENT_PROTOCOL, PROTOCOL_VERSION } from "./endpoint";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
   defaultAqtDatabasePath,
@@ -13,6 +14,7 @@ import {
 } from "@bremio/quota";
 import { MergeManager } from "@bremio/workspace";
 import { RunRegistry } from "./runs";
+import { isTerminal } from "./storage";
 import { mergeRun } from "./merge";
 import { listReports, loadReportByRunId } from "@bremio/orchestrator";
 
@@ -47,6 +49,12 @@ export interface DaemonServerOptions {
   registry: RunRegistry;
   /** Invoked by an authenticated shutdown request. */
   onShutdown?: () => void;
+  /**
+   * True once storage is open, migrations are done and the orchestrator can
+   * accept work. Separate from liveness: a process that is up but not yet
+   * usable must not be treated as ready.
+   */
+  isReady?: () => boolean;
 }
 
 export interface DaemonHandle {
@@ -111,6 +119,37 @@ async function handle(
     return sendJson(res, 200, { app: "bremio-daemon", version: options.version, pid: process.pid });
   }
 
+  if (method === "GET" && route === "/ready") {
+    // Distinct from /health: a client that starts the daemon must wait for
+    // this, not merely for the port to accept connections.
+    const ready = options.isReady?.() ?? true;
+    return sendJson(res, ready ? 200 : 503, {
+      ready,
+      acceptingRuns: registry.accepting,
+      ...(ready ? {} : { detail: "storage or orchestrator is still starting" }),
+    });
+  }
+
+  if (method === "GET" && route === "/meta") {
+    return sendJson(res, 200, {
+      daemonVersion: options.version,
+      protocolVersion: PROTOCOL_VERSION,
+      minimumClientProtocol: MINIMUM_CLIENT_PROTOCOL,
+      capabilities: {
+        sse: true,
+        sseResume: true,
+        persistentRuns: true,
+        persistentEvents: true,
+        cancel: true,
+        merge: true,
+        retry: true,
+        // No adapter exposes a safe mid-run resume, so this stays false rather
+        // than offering a button that would silently start over.
+        resume: false,
+      },
+    });
+  }
+
   if (method === "POST" && route === "/shutdown") {
     if (!options.onShutdown) return sendJson(res, 501, { error: "shutdown is not supported" });
     // Answer before exiting so `daemon stop` sees a result rather than a
@@ -161,6 +200,18 @@ async function handle(
     return streamEvents(req, res, registry, decodeURIComponent(runEvents[1] ?? ""), url);
   }
 
+  const runRetry = /^\/runs\/([^/]+)\/retry$/.exec(route);
+  if (method === "POST" && runRetry) {
+    const id = decodeURIComponent(runRetry[1] ?? "");
+    try {
+      return sendJson(res, 202, { run: registry.retry(id) });
+    } catch (err) {
+      // "still running" and "unknown run" are answers the UI must render, not
+      // server faults.
+      return sendJson(res, 409, { error: (err as Error).message });
+    }
+  }
+
   const runCancel = /^\/runs\/([^/]+)\/cancel$/.exec(route);
   if (method === "POST" && runCancel) {
     const cancelled = registry.cancel(decodeURIComponent(runCancel[1] ?? ""));
@@ -177,6 +228,7 @@ async function handle(
         run,
         events: registry.events(id, Number.isFinite(afterSeq) ? afterSeq : 0),
         artifacts: registry.artifacts(id),
+        recovery: registry.recoveryOptions(id),
       });
     }
     const repoPath = url.searchParams.get("repo");
@@ -258,6 +310,35 @@ async function readCapacity(refresh: boolean): Promise<unknown> {
  * server to client, and commands (start, cancel) are plain POSTs. SSE runs on
  * node:http with no extra dependency.
  */
+/** Events after which the run cannot produce more output. */
+function isTerminalKind(kind: string): boolean {
+  return kind === "finished" || kind === "failed" || kind === "interrupted";
+}
+
+/**
+ * Resolve where to resume from.
+ *
+ * `Last-Event-ID` is echoed back by the browser EventSource contract, so it is
+ * whatever this server last sent: `<runId>:<seq>`. An id belonging to a
+ * different run is ignored rather than trusted, since replaying from another
+ * run's position would silently skip or duplicate events.
+ */
+function parseLastEventId(
+  header: string | string[] | undefined,
+  fallback: string | null,
+  runId: string,
+): number {
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (raw) {
+    const separator = raw.lastIndexOf(":");
+    const id = separator === -1 ? raw : raw.slice(0, separator);
+    const seq = Number(separator === -1 ? raw : raw.slice(separator + 1));
+    if ((separator === -1 || id === runId) && Number.isFinite(seq) && seq >= 0) return seq;
+  }
+  const parsed = Number(fallback ?? 0);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
 function streamEvents(
   req: IncomingMessage,
   res: ServerResponse,
@@ -275,19 +356,35 @@ function streamEvents(
   });
 
   // Clients reconnect with the last id they saw, so a dropped stream resumes
-  // instead of losing whatever arrived while it was disconnected.
-  const afterSeq = Number(
-    req.headers["last-event-id"] ?? url.searchParams.get("afterSeq") ?? 0,
+  // instead of losing whatever arrived while it was disconnected. Ids are
+  // `<runId>:<seq>` so one cannot be mistaken for a position in another run.
+  const afterSeq = parseLastEventId(
+    req.headers["last-event-id"],
+    url.searchParams.get("afterSeq"),
+    runId,
   );
   const unsubscribe = registry.subscribe(
     runId,
     (event) => {
-      res.write(`id: ${event.seq}\n`);
+      // A named event type means a client never has to parse the message text
+      // to know what happened.
+      res.write(`id: ${runId}:${event.seq}\n`);
+      res.write(`event: ${event.kind}\n`);
       res.write(`data: ${JSON.stringify(event)}\n\n`);
-      if (event.kind === "finished" || event.kind === "failed") res.end();
+      if (isTerminalKind(event.kind)) res.end();
     },
-    Number.isFinite(afterSeq) ? afterSeq : 0,
+    afterSeq,
   );
+
+  // A client resuming past the last event of an already-finished run has
+  // nothing left to receive, and no terminal event will arrive to close the
+  // stream — so close it here rather than leaving the connection hanging.
+  const run = registry.get(runId);
+  if (run && isTerminal(run.status)) {
+    unsubscribe();
+    res.end();
+    return;
+  }
 
   const keepAlive = setInterval(() => res.write(": ping\n\n"), 15_000);
   const stop = () => {

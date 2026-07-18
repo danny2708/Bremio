@@ -115,6 +115,9 @@ export async function startDaemon(options: StartDaemonOptions): Promise<RunningD
       version: options.version,
       registry,
       onShutdown: () => void shutdown(),
+      // Storage is already open and reconciled by this point; readiness only
+      // goes false again once shutdown begins.
+      isReady: () => !stopping,
     });
   } catch (err) {
     store.close();
