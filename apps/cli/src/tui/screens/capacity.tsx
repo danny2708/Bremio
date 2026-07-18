@@ -107,25 +107,36 @@ export function CapacityScreen(): React.JSX.Element {
         const age = formatAge(Math.max(0, view.readAt - snapshot.lastContactAt));
         return (
           <Box key={snapshot.agentId} flexDirection="column" marginBottom={1}>
+            {/* Two rows, not one: a single flex row overflowed narrow
+                terminals and Ink truncated the status word itself, so
+                "unknown" rendered as "unknow". */}
             <Box>
               <Text color={theme.primary} bold>
                 {(AGENT_LABELS[snapshot.agentId] ?? snapshot.agentId).padEnd(14)}
               </Text>
               <StatusText status={snapshot.status} />
-              <Text color={theme.muted}>
-                {"  "}
-                contact {snapshot.contactFreshness} · {snapshot.confidence} confidence · last contact {age} ago
-              </Text>
             </Box>
+            <Text color={theme.muted}>
+              {"    "}contact {snapshot.contactFreshness} {age} ago ·{" "}
+              {snapshot.confidence} confidence in the numbers
+            </Text>
             {snapshot.windows.length === 0 ? (
               <Text color={theme.muted}>    no quota windows reported</Text>
             ) : (
               snapshot.windows.map((window) => (
                 <Box key={window.id}>
-                  <Text color={theme.muted}>{`    ${window.label.padEnd(22)}`}</Text>
+                  <Text color={theme.muted}>{`    ${window.label.slice(0, 22).padEnd(23)}`}</Text>
                   <Meter {...(window.remainingPercent !== undefined
                     ? { percent: window.remainingPercent }
                     : {})} />
+                  {/* Each window's own data age, which the provider line
+                      cannot convey: a source can be reachable while the
+                      numbers under it are days old. */}
+                  <Text color={window.freshness === "fresh" ? theme.muted : theme.warning}>
+                    {"  "}
+                    {formatAge(Math.max(0, view.readAt - window.capturedAt))} old
+                    {window.freshness === "fresh" ? "" : ` (${window.freshness})`}
+                  </Text>
                 </Box>
               ))
             )}
