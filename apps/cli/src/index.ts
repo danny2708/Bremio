@@ -27,6 +27,11 @@ import { quotaCommand } from "./quota";
 import { statsCommand } from "./stats";
 import { c, compactEvent, printPlan, printReport, statusGlyph } from "./ui";
 
+declare const __BREMIO_VERSION__: string | undefined;
+const VERSION = typeof __BREMIO_VERSION__ === "string"
+  ? __BREMIO_VERSION__
+  : process.env.npm_package_version ?? "dev";
+
 const USAGE = `${c.bold("bremio")} — provider-agnostic orchestrator for AI coding agents
 
 ${c.bold("Usage")}
@@ -37,6 +42,7 @@ ${c.bold("Usage")}
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
   bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
   bremio doctor
+  bremio --version
   bremio --help
 
 ${c.bold("run")}      run one agent directly or orchestrate an isolated team
@@ -98,6 +104,7 @@ function parseCli() {
       verbose: { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
       help: { type: "boolean", short: "h", default: false },
+      version: { type: "boolean", short: "v", default: false },
     },
   });
 }
@@ -108,6 +115,10 @@ async function main(): Promise<void> {
   const { values, positionals } = parseCli();
   const command = positionals[0];
 
+  if (values.version) {
+    console.log(VERSION);
+    return;
+  }
   if (values.help || !command) {
     console.log(USAGE);
     return;

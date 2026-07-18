@@ -39,13 +39,18 @@ results back into one place.
   plus read-only AQT SQLite normalization exposed through `bremio quota`, an
   opt-in capacity safety router, and fail-closed calibration readiness.
   Automatic quota optimization remains disabled pending paired evidence.
-- Final two-provider re-verification is currently blocked by the Claude session
-  limit (reset reported as 14:20 Asia/Saigon on 2026-07-18), not by a known
-  implementation failure. Until that run succeeds, Phase 1 and the new Phase-2
-  slice are not marked fully verified against both real providers.
+- Fresh real-provider fixtures passed Claude Single, Codex Single, Claude-led
+  Team, and Codex-led Team after the Claude session reset. Both Team directions
+  completed implementation, tests, and independent review with a 3/3 quality
+  gate. Antigravity's official SDK adapter is locally verified but its first
+  billed run remains credential-blocked and is not a v0.1 release gate.
+- The v0.1 release cut builds a local npm tarball and verifies it through a
+  clean temporary install. See the root `README.md` for build/install and the
+  quota-consuming provider-smoke commands.
 - Origin: brainstorm with an agent (2026-07). These docs have been **filtered
   and reworked**, not copied verbatim.
-- Open major decisions: see `99-risks-and-open-questions.md` §Open Questions.
+- Resolved v0.1 decisions and remaining risks: see
+  `99-risks-and-open-questions.md`.
 
 > ⚠️ The docs describe the *target design*. Don't build it all at once —
 > Phase 1 only needs to prove: any given lead can produce a valid plan, and

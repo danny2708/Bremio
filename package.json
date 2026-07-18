@@ -1,15 +1,26 @@
 {
   "name": "bremio",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Provider-agnostic orchestrator for AI coding agents. Different minds. One team.",
+  "bin": {
+    "bremio": "./dist/bremio.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "packageManager": "pnpm@10.13.1",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "bremio": "tsx apps/cli/src/index.ts",
+    "build": "node scripts/build.mjs",
+    "prepack": "node scripts/build.mjs",
+    "release:smoke": "node scripts/release-smoke.mjs",
+    "release:check": "corepack pnpm typecheck && corepack pnpm test && corepack pnpm build && corepack pnpm release:smoke",
     "smoke:providers": "tsx scripts/provider-smoke.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
@@ -17,8 +28,17 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "esbuild": "0.28.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.212",
+    "@anthropic-ai/sdk": "0.112.1",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "pino": "9.14.0",
+    "simple-git": "3.36.0",
+    "zod": "4.4.3"
   }
 }

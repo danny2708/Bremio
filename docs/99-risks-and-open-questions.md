@@ -42,22 +42,28 @@ machinery. Worth considering shipping that thin slice first, measuring, then
 expanding.
 
 ## Must VERIFY before coding (all post-cutoff, changing fast)
-- [ ] Claude Agent SDK TS: current startRun/stream/structured-output API.
-- [ ] Codex: `codex exec` vs `codex app-server --stdio` — which one gives
-      streaming + turn control.
-- [ ] Codex RPC `account/rateLimits/read` — current schema (cross-check
-      against AQT's code).
+- [x] Claude Agent SDK TS → current `query()` async stream, abort controller,
+      tool permissions, usage/result events, and `outputFormat: json_schema`
+      are integrated and passed real Single/Team fixtures.
+- [x] Codex execution surface → selected `codex exec --json` for the v0.1
+      one-shot adapter; real JSONL fixtures verified streaming events,
+      structured output, cancellation, and provider identity.
+- [x] Codex RPC `account/rateLimits/read` → retained behind AI-Quota-Tray;
+      Bremio consumes AQT's normalized schema-v1 multi-window cache rather than
+      duplicating the provider RPC.
 - [x] Antigravity programmatic surface → official `google-antigravity==0.1.7`
       inspected and integrated through a JSONL Python sidecar.
 - [x] Where/how AQT writes its quota cache → confirmed schema-v1 SQLite under
       AQT's LocalAppData directory; Bremio reads it read-only.
 
-## Open questions (not yet resolved)
+## Decisions resolved during v0.1
 - [x] **Q-quota-integration**: read AQT's schema-v1 SQLite cache directly and
       read-only for the first integration. Reject unknown schema versions and
       keep it out of routing until fresh-data calibration succeeds.
-- [ ] **Q-lang**: docs/code fully in English going forward, or keep
-      Vietnamese + English technical terms?
-- [ ] **Q-baseline**: what exactly measures a task's `outcome` (tests
-      passing? review findings? subjective?) — needs a definition before
-      multi-vs-single comparisons are meaningful.
+- [x] **Q-lang**: repository code and documentation stay in English;
+      collaborator conversation may use Vietnamese with English technical
+      terms.
+- [x] **Q-baseline**: Single outcome requires recognizable successful command
+      evidence; Team outcome is the fail-closed test plus independent-review
+      quality gate. Controlled comparisons link identical requests through
+      `comparisonId`; missing model/cost evidence blocks efficiency claims.

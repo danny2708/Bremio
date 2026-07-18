@@ -3,6 +3,22 @@
 Principle: **prove the cheap thing before building the expensive one.** No
 dashboard/quota/parallelism before the core loop runs.
 
+## v0.1 CLI release cut
+
+**Status (2026-07-18): shipped locally.** Feature scope is frozen at the
+explicit Single/Team CLI, three current adapters, the Team quality gate and
+manual merge lifecycle, plus measurement and opt-in capacity safety routing.
+The distributable npm tarball contains a bundled Node CLI and the Antigravity
+sidecar. `pnpm release:check` typechecks, runs the automated suite, builds,
+packs, installs into a clean temporary project, and exercises the installed
+version/help/doctor commands. Real-provider smoke remains explicit because it
+consumes quota.
+
+The next product milestone is evidence, not more surface area: configure SDK
+credentials and verify a real Antigravity worker run, collect matched
+Single/Team comparisons, and only then decide whether Auto routing has positive
+ROI. Parallel execution, dashboard, and editor integration stay out of v0.1.
+
 ## Execution modes — manual before automatic
 
 **Implementation status (2026-07-18):** explicit `Single` and `Team` modes are
@@ -25,8 +41,8 @@ Still deferred after the manual-mode evidence gate:
 
 Phase 1.5 now provides Antigravity as a Single agent and explicit Team
 implementation worker. The next execution milestone is real-provider
-Antigravity verification once SDK credentials are configured, then Phase 2/3
-hardening that is still open.
+Antigravity verification once SDK credentials are configured, followed by
+evidence-driven hardening rather than automatic expansion into later phases.
 
 ## Phase 1 — Vertical slice (the real MVP)
 Only **Claude (lead) + Codex (worker)**, **sequential**. Both return plan

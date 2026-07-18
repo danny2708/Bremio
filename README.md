@@ -12,7 +12,8 @@ provider-agnostic orchestrator assigns isolated worktree tasks and aggregates
 the results. ROI goal: **get the most out of the models with the least quota.**
 
 ## Status
-**Phase 1 (vertical slice) implemented**, plus the Phase-2 quality gate and
+**Bremio v0.1 CLI is release-ready as a local npm artifact.** Phase 1
+(vertical slice) is implemented, plus the Phase-2 quality gate and
 early Phase-4 measurement/quota slices — explicit Single/Team modes, Claude
 (Agent SDK) + Codex (`codex exec --json`) as swappable lead/workers, and an
 Antigravity SDK worker, a validator, a sequential
@@ -22,6 +23,29 @@ lives in [`docs/`](docs/); start at [`docs/README.md`](docs/README.md). Still ou
 of scope (see [`docs/06`](docs/06-roadmap.md)): Antigravity lead/test-gate
 roles, automatically enabled/calibrated quota optimization, parallelism,
 dashboard.
+
+The release gate typechecks, runs the full automated suite, builds the bundled
+CLI, packs it, installs that tarball into a clean temporary project, and checks
+`--version`, `--help`, and all three `doctor` entries. Real-provider smoke is a
+separate explicit gate because it consumes quota.
+
+## Build and install the v0.1 artifact
+
+From a source checkout:
+
+```powershell
+corepack pnpm install
+corepack pnpm release:check
+npm pack
+npm install --global .\bremio-0.1.0.tgz
+bremio --version
+bremio doctor
+```
+
+`npm pack` runs the build again. The tarball contains the CLI bundle, source
+map, and Antigravity Python sidecar plus its requirements file. This v0.1 cut
+is intentionally a local tarball release (`private: true`), not an npm registry
+publication.
 
 ## Quickstart
 Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
@@ -39,12 +63,14 @@ $env:BREMIO_ANTIGRAVITY_PYTHON = (Resolve-Path .bremio\antigravity-venv\Scripts\
 ```
 
 Keep credentials outside the repository. `bremio doctor` reports Antigravity
-as `degraded` until supported credentials are visible to the sidecar.
+as `unavailable` if its SDK environment is missing, or `degraded` until
+supported credentials are visible to the configured sidecar.
 
 ```sh
 corepack pnpm install
 corepack pnpm test          # unit + quality-gate + timeout E2E runs
 corepack pnpm typecheck
+corepack pnpm release:check # full local release gate + clean packed install
 
 # check adapter health / lead-eligibility
 corepack pnpm bremio doctor
@@ -76,8 +102,10 @@ corepack pnpm bremio capacity --aging-after 15 --stale-after 30
 # explicitly enable the conservative Phase-4C safety router for a run
 corepack pnpm bremio run --mode team --capacity-routing --lead codex --repo /path/to/repo "fix the failing test"
 
-# explicit real-provider smoke (consumes quota; defaults to both lead directions)
-corepack pnpm smoke:providers --lead both --timeout 600
+# explicit real-provider smoke (consumes quota; default = Team, both leads)
+corepack pnpm smoke:providers --mode team --lead both --timeout 600
+corepack pnpm smoke:providers --mode single --agent both --timeout 600
+corepack pnpm smoke:providers --mode team --lead claude --worker antigravity --timeout 600
 ```
 
 In Single mode the selected agent uses the current workspace directly. Bremio
@@ -88,11 +116,14 @@ step. Team tasks run in `<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
 `--timeout <seconds>` applies a hard limit to each planning attempt and worker
 task; timeout cancellation is propagated to the active provider process.
 
-`smoke:providers` creates a disposable git fixture per lead, requires real
-delegation plus a passed test/review gate, deletes fixtures on success, and
-retains failed fixtures for inspection. Pass `--keep` to retain successful
-fixtures too. It is intentionally excluded from `pnpm test` so normal QA never
-spends provider quota.
+`smoke:providers` first checks the selected adapters, then creates a disposable
+git fixture per run. Single mode requires a completed direct implementation
+with recognizable passing verification evidence. Team mode requires real
+delegation plus a passed test/review gate. Fixtures are deleted on success and
+retained on failure; pass `--keep` to retain successes too. Antigravity's
+preflight fails closed while its SDK credentials are missing. The command is
+intentionally excluded from both `pnpm test` and `release:check`, so normal QA
+never spends provider quota.
 
 Team runs never auto-merge — worktrees are **left for review**. `bremio merge`
 first requires a passed run quality gate, then shows the diff, asks for
