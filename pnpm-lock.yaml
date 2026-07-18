@@ -38,6 +38,9 @@ importers:
       '@bremio/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@bremio/quota':
+        specifier: workspace:*
+        version: link:../../packages/quota
       '@bremio/workspace':
         specifier: workspace:*
         version: link:../../packages/workspace
@@ -106,6 +109,12 @@ importers:
         version: 4.4.3
 
   packages/protocol:
+    dependencies:
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
+
+  packages/quota:
     dependencies:
       zod:
         specifier: ^4.0.0

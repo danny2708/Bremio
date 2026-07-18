@@ -12,6 +12,7 @@
     "@bremio/adapter-sdk": "workspace:*",
     "@bremio/orchestrator": "workspace:*",
     "@bremio/protocol": "workspace:*",
+    "@bremio/quota": "workspace:*",
     "@bremio/workspace": "workspace:*",
     "pino": "^9.5.0"
   }

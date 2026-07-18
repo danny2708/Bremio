@@ -12,6 +12,7 @@ import {
   type RunBremioHooks,
 } from "@bremio/orchestrator";
 import { mergeCommand } from "./merge";
+import { quotaCommand } from "./quota";
 import { statsCommand } from "./stats";
 import { c, compactEvent, printPlan, printReport, statusGlyph } from "./ui";
 
@@ -21,6 +22,7 @@ ${c.bold("Usage")}
   bremio run --lead <claude|codex> --repo <path> "<prompt>"
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
+  bremio quota [--db <path>] [--stale-after <minutes>]
   bremio doctor
   bremio --help
 
@@ -42,7 +44,11 @@ ${c.bold("merge")}    review a completed task's diff, then merge it into the bas
 
 ${c.bold("stats")}    summarize the usage ledger (.bremio/ledger.jsonl)
   --since <date>          Only count tasks on/after this date (e.g. 2026-07-01).
-  --repo <path>           Repo to look in (default: current directory).`;
+  --repo <path>           Repo to look in (default: current directory).
+
+${c.bold("quota")}    read normalized quota from AI-Quota-Tray's SQLite database
+  --db <path>             Override the default AI-Quota-Tray database path.
+  --stale-after <minutes> Treat older snapshots as unknown (default: 30).`;
 
 function parseCli() {
   return parseArgs({
@@ -57,6 +63,8 @@ function parseCli() {
       base: { type: "string" },
       strategy: { type: "string" },
       since: { type: "string" },
+      db: { type: "string" },
+      "stale-after": { type: "string" },
       json: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
@@ -85,6 +93,9 @@ async function main(): Promise<void> {
       return;
     case "stats":
       process.exitCode = await statsCommandFromCli(values);
+      return;
+    case "quota":
+      process.exitCode = quotaCommandFromCli(values);
       return;
     case "doctor":
       await doctor();
@@ -242,6 +253,20 @@ async function statsCommandFromCli(values: Values): Promise<number> {
     }
   }
   return statsCommand({ repoPath, ...(since ? { since } : {}) });
+}
+
+function quotaCommandFromCli(values: Values): number {
+  const staleMinutes = values["stale-after"] === undefined
+    ? undefined
+    : Number(values["stale-after"]);
+  if (staleMinutes !== undefined && (!Number.isFinite(staleMinutes) || staleMinutes <= 0)) {
+    console.error(c.red("error: --stale-after must be a positive number of minutes"));
+    return 2;
+  }
+  return quotaCommand({
+    ...(values.db ? { databasePath: path.resolve(values.db) } : {}),
+    ...(staleMinutes !== undefined ? { staleAfterSeconds: staleMinutes * 60 } : {}),
+  });
 }
 
 async function doctor(): Promise<void> {
