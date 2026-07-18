@@ -60,6 +60,9 @@ importers:
       '@bremio/adapter-sdk':
         specifier: workspace:*
         version: link:../../packages/adapter-sdk
+      '@bremio/daemon':
+        specifier: workspace:*
+        version: link:../daemon
       '@bremio/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
@@ -81,6 +84,42 @@ importers:
       react:
         specifier: ^19.2.7
         version: 19.2.7
+
+  apps/daemon:
+    dependencies:
+      '@bremio/adapter-antigravity':
+        specifier: workspace:*
+        version: link:../../packages/adapter-antigravity
+      '@bremio/adapter-claude':
+        specifier: workspace:*
+        version: link:../../packages/adapter-claude
+      '@bremio/adapter-codex':
+        specifier: workspace:*
+        version: link:../../packages/adapter-codex
+      '@bremio/adapter-sdk':
+        specifier: workspace:*
+        version: link:../../packages/adapter-sdk
+      '@bremio/orchestrator':
+        specifier: workspace:*
+        version: link:../../packages/orchestrator
+      '@bremio/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@bremio/quota':
+        specifier: workspace:*
+        version: link:../../packages/quota
+      '@bremio/workspace':
+        specifier: workspace:*
+        version: link:../../packages/workspace
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
+
+  apps/vscode-extension:
+    devDependencies:
+      '@types/vscode':
+        specifier: ^1.90.0
+        version: 1.125.0
 
   packages/adapter-antigravity:
     dependencies:
@@ -709,6 +748,9 @@ packages:
 
   '@types/react@19.2.17':
     resolution: {integrity: sha512-MXfmqaVPEVgkBT/aY0aGCkRWWtByiYQXo3xdQ8r5RzuFrPiRn8Gar2tQdXSUQ2GKV3bkXckek89V8wQBY2Q/Aw==}
+
+  '@types/vscode@1.125.0':
+    resolution: {integrity: sha512-0icm/ZQAaism87P0ekHqi4/Ju9du+Tm0RUW+y7vqRsxY2cY0FNRX1nAnaW7nT6npPt2tfHiheZ55Zm9UhqonFA==}
 
   '@vitest/expect@2.1.9':
     resolution: {integrity: sha512-UJCIkTBenHeKT1TTlKMJWy1laZewsRIzYighyYiJKZreqtdxSos/S1t+ktRMQWu2CKqaarrkeszJx1cgC5tGZw==}
@@ -1835,6 +1877,8 @@ snapshots:
   '@types/react@19.2.17':
     dependencies:
       csstype: 3.2.3
+
+  '@types/vscode@1.125.0': {}
 
   '@vitest/expect@2.1.9':
     dependencies:

@@ -52,8 +52,33 @@ confidence. Quota is intentionally separate from `AgentAdapter`.
 the current workspace and only reuses the logging primitive. Details below.
 
 **daemon** — the main process; holds state, spawns child processes (agent
-CLI/SDK), streams events over WebSocket, manages worktree lifecycle, kills
-on timeout.
+CLI/SDK), streams events, manages worktree lifecycle, kills on timeout.
+
+**Implemented 2026-07-18.** `apps/daemon` binds `127.0.0.1` on an ephemeral
+port and publishes the port plus a per-launch token to `~/.bremio/daemon.json`,
+the same trust model Bremio already uses for AI-Quota-Tray. Endpoints:
+`GET /health`, `/adapters`, `/capacity`, `/runs`, `/runs/:id`, `/diff`;
+`POST /runs`, `/runs/:id/cancel`, `/merge`. Run `bremio daemon` to start it.
+
+It holds live runs and their event history in memory, so a UI that attaches
+mid-run still gets the backlog and a reconnect resumes from its last sequence
+number instead of losing or duplicating events. The on-disk report stays the
+durable record.
+
+**Streaming is Server-Sent Events, not the WebSocket named above.** The only
+streaming direction is server to client; every command is a plain POST. SSE
+covers that on `node:http` with no added dependency. Revisit if a genuinely
+bidirectional feature arrives.
+
+Merge goes through the daemon with the CLI's invariants intact: the quality
+gate must have passed, the repo must be on the base branch, and tracked changes
+block it. A GUI button is not a reason to skip the checks that protect the
+working tree.
+
+**vscode-extension** — a client of the daemon, never an owner of the
+orchestrator. It depends on no `@bremio/*` package: the extension host is shared
+with the rest of the editor, so a hung provider must not be able to take VS Code
+down with it. It spawns `bremio daemon` when one is not already reachable.
 
 ## Workspace behavior by mode
 

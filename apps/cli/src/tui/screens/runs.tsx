@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
 import { Header, Spinner, StatusText } from "../components";
-import { listReports, type StoredReport } from "../../report-store";
+import { listReports, type StoredReport } from "@bremio/orchestrator";
 import { theme } from "../theme";
 
 function summarize(stored: StoredReport): { status: string; detail: string } {

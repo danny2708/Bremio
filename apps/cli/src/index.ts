@@ -22,6 +22,7 @@ import {
   toAqtCapacitySnapshots,
   type AgentCapacitySnapshot,
 } from "@bremio/quota";
+import { startDaemon } from "@bremio/daemon";
 import { mergeCommand } from "./merge";
 import { capacityCommand } from "./quota";
 import { statsCommand } from "./stats";
@@ -44,6 +45,7 @@ ${c.bold("Usage")}
   bremio stats [--since <date>] [--repo <path>]
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
   bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
+  bremio daemon                           run the local daemon (HTTP + SSE on loopback)
   bremio doctor
   bremio --version
   bremio --help
@@ -163,6 +165,9 @@ async function main(): Promise<void> {
     case "capacity":
     case "quota":
       process.exitCode = await quotaCommandFromCli(values);
+      return;
+    case "daemon":
+      await daemonCommand();
       return;
     case "doctor":
       await doctor();
@@ -522,6 +527,27 @@ function readRoutingCapacity(
     );
     return [];
   }
+}
+
+/**
+ * Run the daemon in the foreground. Both the CLI and the VS Code extension are
+ * clients of it, so a run started in one surface is visible from the other.
+ */
+async function daemonCommand(): Promise<void> {
+  const daemon = await startDaemon({ version: VERSION });
+  console.log(`${c.bold("Bremio daemon")} listening on ${c.cyan(`127.0.0.1:${daemon.port}`)}`);
+  console.log(c.dim(`  endpoint: ${daemon.endpointFile}`));
+  console.log(c.dim("  press Ctrl+C to stop"));
+
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    void daemon.close().then(() => process.exit(0));
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  await new Promise(() => {}); // hold the process open until a signal arrives
 }
 
 async function doctor(): Promise<void> {

@@ -4,7 +4,7 @@ import type {
   BremioRunReport,
   RunReport,
   RunReportTask,
-} from "@bremio/orchestrator";
+} from "./aggregator";
 
 export interface StoredReport {
   runId: string;
