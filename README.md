@@ -49,6 +49,9 @@ corepack pnpm bremio stats --repo /path/to/repo
 
 # inspect normalized AQT quota (read-only; stale/error data becomes unknown)
 corepack pnpm bremio quota
+
+# explicit real-provider smoke (consumes quota; defaults to both lead directions)
+corepack pnpm smoke:providers --lead both --timeout 600
 ```
 
 Each task runs in `<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
@@ -56,6 +59,12 @@ Each task runs in `<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
 `<repo>/.bremio/runs/<runId>/`. Press **Ctrl+C** to cancel an in-flight run.
 `--timeout <seconds>` applies a hard limit to each planning attempt and worker
 task; timeout cancellation is propagated to the active provider process.
+
+`smoke:providers` creates a disposable git fixture per lead, requires real
+delegation plus a passed test/review gate, deletes fixtures on success, and
+retains failed fixtures for inspection. Pass `--keep` to retain successful
+fixtures too. It is intentionally excluded from `pnpm test` so normal QA never
+spends provider quota.
 
 `bremio run` never merges — worktrees are **left for review**. `bremio merge`
 first requires a passed run quality gate, then shows the diff, asks for

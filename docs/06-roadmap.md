@@ -12,6 +12,9 @@ because it can't produce JSON — see 04.)
 and `bremio doctor` pass. A fresh two-provider real-run verification remains
 blocked by the Claude session limit reported at runtime; do not mark this phase
 fully closed until it is rerun after the reset.
+The explicit `pnpm smoke:providers --lead both --timeout 600` harness exercises
+both real lead directions in separate disposable repos; it consumes quota and
+is intentionally excluded from the normal test suite.
 
 **Done criteria:**
 ```
