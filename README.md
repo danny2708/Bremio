@@ -28,7 +28,7 @@ Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
 
 ```sh
 corepack pnpm install
-corepack pnpm test          # 63 tests (incl. quality-gate + timeout E2E runs)
+corepack pnpm test          # 66 tests (incl. quality-gate + timeout E2E runs)
 corepack pnpm typecheck
 
 # check adapter health / lead-eligibility
@@ -65,9 +65,11 @@ their dependency branches, so they inspect the implementation rather than HEAD.
 `--strategy cherry-pick` instead applies each task-owned `commitHash` in plan
 order, excluding inherited dependency history; conflicts also abort cleanly.
 Every task also appends a line to `.bremio/ledger.jsonl` (measurement only, no
-routing yet), including provider-reported token/cost usage when available and
-summarized by `bremio stats [--since <date>]`. Missing usage remains unknown;
-no price is estimated. `bremio quota`
+routing yet), including provider-reported task and lead-planning token/cost
+usage when available and summarized by `bremio stats [--since <date>]`.
+Planning entries are counted as coordination rather than tasks, including on
+planning failure. Missing usage remains unknown; no price is estimated.
+`bremio quota`
 reads AI-Quota-Tray's schema-v1 SQLite database in read-only mode. Unsupported
 schema versions are rejected; stale, disabled, or errored providers normalize
 to `unknown`. Quota is not yet used by the router.

@@ -34,7 +34,8 @@ results back into one place.
   refuses runs whose gate is missing or failed.
 - A small Phase-3/Phase-4 foundation also shipped early: confirmation-gated
   manual merge/cleanup, a measurement-only usage ledger and `bremio stats`
-  (including provider-reported worker token/cost data when available),
+  (including provider-reported task and lead-planning token/cost data when
+  available, with coordination separated from task outcomes),
   plus read-only AQT SQLite normalization exposed through `bremio quota`.
   Quota-aware routing remains disabled pending fresh-data calibration.
 - Final two-provider re-verification is currently blocked by the Claude session

@@ -95,11 +95,14 @@ both at once**.
 The current implementation appends one measurement-only JSONL entry per task
 to `.bremio/ledger.jsonl` with `ts`, `runId`, `taskId`, `provider`, `role`,
 `kind`, `status`, `durationMs`, and `filesChanged`. Provider-reported input/
-output tokens and cost are also preserved when present and summarized by
-`bremio stats`; missing dimensions remain unknown and Bremio never estimates a
-price. Model identity and lead planning/repair overhead are not recorded yet,
-so this data is not sufficient to calculate `net_gain` and nothing routes on
-it. The richer target shape below remains the Phase-4 calibration target.
+output tokens and cost are also preserved when present for both worker tasks
+and lead planning/repair. Planning entries use `scope:"coordination"`, remain
+separate from task completion metrics, and are recorded best-effort even when
+planning fails. `bremio stats` reports coverage; missing dimensions remain
+unknown and Bremio never estimates a price. Worker model/default identity and
+the single-agent outcome baseline remain incomplete, so this data is not yet
+sufficient to calculate `net_gain` and nothing routes on it. The richer target
+shape below remains the Phase-4 calibration target.
 
 ```json
 { "provider":"codex", "model":"gpt-5.6-terra", "effort":"medium",

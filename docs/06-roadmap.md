@@ -8,7 +8,7 @@ Only **Claude (lead) + Codex (worker)**, **sequential**. Both return plan
 JSON → enough to prove lead-swapping + delegation. (Antigravity isn't in yet
 because it can't produce JSON — see 04.)
 
-**Implementation status (2026-07-18):** shipped. Local typecheck, 63 tests,
+**Implementation status (2026-07-18):** shipped. Local typecheck, 66 tests,
 and `bremio doctor` pass. A fresh two-provider real-run verification remains
 blocked by the Claude session limit reported at runtime; do not mark this phase
 fully closed until it is rerun after the reset.
@@ -63,13 +63,14 @@ kill-switch → scoring router + calibration gate. Enforce the `net_gain > 0`
 invariant.
 
 **Early slices shipped:** a measurement-only ledger and `bremio stats` that
-preserve provider-reported worker token/cost usage without estimation, plus a
+preserve provider-reported task and lead-planning token/cost usage without
+estimation (including failed planning attempts), plus a
 read-only schema-v1 AI-Quota-Tray SQLite consumer and `bremio quota`. Stale,
 missing, errored, disabled, or unsupported quota fails closed rather than
 influencing routing. Quota-aware routing, kill-switch, and `net_gain`
-enforcement are not implemented yet; lead coordination usage and model identity
-still need measurement before efficiency claims. Router wiring waits for fresh
-AQT data and calibration.
+enforcement are not implemented yet; worker model identity and the outcome
+baseline remain incomplete before efficiency claims. Router wiring waits for
+fresh AQT data and calibration.
 
 ## Phase 5 — Parallel + VS Code extension
 Run tasks in parallel (PQueue/BullMQ), panel UI. UI is just a surface; the
