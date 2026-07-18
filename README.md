@@ -12,12 +12,13 @@ aggregates the results back into one place. ROI goal: **get the most out of
 the models with the least quota.**
 
 ## Status
-**Phase 1 (vertical slice) implemented** — Claude (Agent SDK) + Codex
+**Phase 1 (vertical slice) implemented**, plus a Phase-2/Phase-4 slice
+(`bremio merge` + usage ledger / `bremio stats`) — Claude (Agent SDK) + Codex
 (`codex exec --json`) as swappable lead/worker, a validator, a sequential
-scheduler, git-worktree isolation, and the `bremio run` CLI. Full design lives
-in [`docs/`](docs/); start at [`docs/README.md`](docs/README.md). Out of scope
-for Phase 1 (see [`docs/06`](docs/06-roadmap.md)): Antigravity, quota/routing,
-parallelism, auto-merge, quality gates, dashboard.
+scheduler, git-worktree isolation, review-gated merge, and the CLI. Full design
+lives in [`docs/`](docs/); start at [`docs/README.md`](docs/README.md). Still out
+of scope (see [`docs/06`](docs/06-roadmap.md)): Antigravity, quota-aware routing,
+parallelism, dashboard.
 
 ## Quickstart
 Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
@@ -26,7 +27,7 @@ Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
 
 ```sh
 corepack pnpm install
-corepack pnpm test          # 32 tests (incl. a mock-adapter end-to-end run)
+corepack pnpm test          # 44 tests (incl. a mock-adapter end-to-end run)
 corepack pnpm typecheck
 
 # check adapter health / lead-eligibility
@@ -36,12 +37,24 @@ corepack pnpm bremio doctor
 # which edits code in its own git worktree; results aggregate into one report
 corepack pnpm bremio run --lead codex --repo /path/to/repo "add a health endpoint"
 corepack pnpm bremio run --lead claude --repo /path/to/repo "fix the failing test"
+
+# review a completed task's diff, then merge it into the base branch
+corepack pnpm bremio merge TASK-002 --repo /path/to/repo          # prompts y/N
+corepack pnpm bremio merge --run <runId> --repo /path/to/repo --yes
+
+# summarize the usage ledger
+corepack pnpm bremio stats --repo /path/to/repo
 ```
 
 Each task runs in `.<repo>/.bremio/worktrees/<taskId>-<agent>/` on branch
 `bremio/<taskId>-<agent>`; per-task logs and `report.json` land in
-`<repo>/.bremio/runs/<runId>/`. Worktrees are **left for manual review — no
-auto-merge**. Press **Ctrl+C** to cancel an in-flight run.
+`<repo>/.bremio/runs/<runId>/`. Press **Ctrl+C** to cancel an in-flight run.
+
+`bremio run` never merges — worktrees are **left for review**. `bremio merge`
+shows the diff, asks for confirmation (or `--yes`), then merges into the base
+branch (`--no-ff`) and cleans up the worktree + branch; conflicts abort cleanly.
+Every task also appends a line to `.bremio/ledger.jsonl` (measurement only, no
+routing yet), summarized by `bremio stats [--since <date>]`.
 
 ## Packages
 `protocol` (Zod contracts) · `adapter-sdk` (the `AgentAdapter` interface) ·
