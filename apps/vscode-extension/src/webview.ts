@@ -394,15 +394,31 @@ window.addEventListener("message", (event) => {
     $("new-run").style.display = "none";
   }
   if (message.type === "runEvent") appendLog(message.event);
+  if (message.type === "streamReconnecting") {
+    appendLog({ kind: "status", message: "connection dropped — resuming from event " + message.seq });
+  }
   if (message.type === "runFinished") {
     $("live-state").textContent = message.state;
-    $("live-state").className = "badge " + (message.state === "completed" ? "ok" : message.state === "cancelled" ? "warn" : "bad");
+    $("live-state").className = "badge " + (message.state === "completed" ? "ok" : message.state === "cancelled" || message.state === "interrupted" ? "warn" : "bad");
     $("cancel").style.display = "none";
     $("new-run").style.display = "inline-block";
-    if (message.gate) $("gate").innerHTML = renderGate(message.gate, message.runId);
+    let panelHtmlOut = "";
+    if (message.state === "interrupted") {
+      panelHtmlOut += '<div class="banner warn">The daemon restarted while this run was in flight, so it was never judged. Retry starts a new run and keeps this history.</div>';
+    } else if (message.failureMessage) {
+      panelHtmlOut += '<div class="banner bad">' + escapeHtml(message.failureMessage) + "</div>";
+    }
+    if (message.gate) panelHtmlOut += renderGate(message.gate, message.runId);
+    if (message.recovery?.canRetry) {
+      panelHtmlOut += '<div class="row" style="margin-top:10px"><button class="ghost" data-action="retry" data-run="' + escapeHtml(message.runId) + '">Retry</button></div>';
+    }
+    $("gate").innerHTML = panelHtmlOut;
   }
   if (message.type === "error") {
-    $("gate").innerHTML = '<div class="banner bad">' + escapeHtml(message.message) + "</div>";
+    // Protocol problems are not transient, so they are stated as their own
+    // thing rather than looking like the daemon merely being offline.
+    const cls = message.kind === "protocol" ? "warn" : "bad";
+    $("gate").innerHTML = '<div class="banner ' + cls + '">' + escapeHtml(message.message) + "</div>";
   }
   if (message.type === "mergeResult") {
     const cls = message.ok ? "warn" : "bad";
@@ -421,13 +437,10 @@ function renderGate(gate, runId) {
     + '<span class="badge ok">ready</span></div>'
     + '<div class="secondary">Review the diff, then merge into the base branch.</div>'
     + '<div class="row" style="margin-top:10px">'
-    + '<button class="ghost" onclick="viewDiff(\\'' + escapeHtml(runId) + '\\')">View diff</button>'
-    + '<button class="primary" onclick="mergeRun(\\'' + escapeHtml(runId) + '\\')">Merge</button>'
+    + '<button class="ghost" data-action="diff" data-run="' + escapeHtml(runId) + '">View diff</button>'
+    + '<button class="primary" data-action="merge" data-run="' + escapeHtml(runId) + '">Merge</button>'
     + "</div></div>";
 }
-
-function viewDiff(runId) { vscode.postMessage({ type: "viewDiff", runId }); }
-function mergeRun(runId) { vscode.postMessage({ type: "merge", runId }); }
 
 function renderCapacity(capacity) {
   if (capacity.error) return '<div class="banner bad">' + escapeHtml(capacity.error) + "</div>";
@@ -456,24 +469,64 @@ function renderCapacity(capacity) {
     </div>\`).join("");
 }
 
-function renderRuns(runs) {
-  const all = [...(runs.live ?? []), ...(runs.stored ?? [])];
-  if (all.length === 0) return '<div class="empty">No runs yet.</div>';
-  return all.map((entry) => {
-    const report = entry.report ?? entry;
-    const id = entry.runId ?? entry.id ?? report.runId ?? "";
-    const state = entry.state ?? (report.qualityGate?.status === "passed" ? "passed" : report.mode ?? "");
+function renderRuns(payload) {
+  const runs = payload.runs ?? [];
+  const legacy = payload.legacyReports ?? [];
+  if (runs.length === 0 && legacy.length === 0) return '<div class="empty">No runs yet.</div>';
+
+  const badge = (status) =>
+    status === "completed" ? "ok"
+    : status === "running" || status === "queued" ? "warn"
+    : status === "interrupted" ? "warn"
+    : "bad";
+
+  const cards = runs.map((run) => {
+    const interrupted = run.status === "interrupted";
     return \`<div class="card">
       <div class="card-head">
-        <span class="card-title">\${escapeHtml(id)}</span>
-        <span class="badge \${state === "completed" || state === "passed" ? "ok" : state === "running" ? "warn" : "bad"}">\${escapeHtml(state)}</span>
+        <span class="card-title">\${escapeHtml(run.id)}</span>
+        <span class="badge \${badge(run.status)}">\${escapeHtml(run.status)}</span>
+        \${run.retryOfRunId ? '<span class="badge ok">retry</span>' : ""}
         <div class="spacer"></div>
-        <span class="muted">\${escapeHtml(report.mode ?? "")}</span>
+        <span class="agent" data-agent="\${escapeHtml(run.leadProvider ?? "")}">
+          <span class="muted">\${escapeHtml(run.mode)}</span></span>
       </div>
-      <div class="secondary">\${escapeHtml((report.prompt ?? entry.prompt ?? "").slice(0, 160))}</div>
+      <div class="secondary">\${escapeHtml((run.prompt ?? "").slice(0, 160))}</div>
+      \${interrupted ? '<div class="muted">The daemon restarted while this run was in flight. Its work was not judged.</div>' : ""}
+      \${run.failureMessage && !interrupted ? '<div class="muted">' + escapeHtml(run.failureMessage) + "</div>" : ""}
+      <div class="row" style="margin-top:8px">
+        <button class="ghost" data-action="open" data-run="\${escapeHtml(run.id)}">Open</button>
+        \${isTerminalStatus(run.status) ? '<button class="ghost" data-action="retry" data-run="' + escapeHtml(run.id) + '">Retry</button>' : ""}
+      </div>
     </div>\`;
   }).join("");
+
+  const legacyCards = legacy.length === 0 ? "" :
+    '<div class="muted" style="margin:12px 0 6px">Runs from before durable history</div>' +
+    legacy.map((entry) => \`<div class="card">
+      <div class="card-head"><span class="card-title">\${escapeHtml(entry.runId)}</span>
+      <span class="badge warn">legacy</span></div>
+      <div class="secondary">\${escapeHtml((entry.report?.prompt ?? "").slice(0, 160))}</div>
+    </div>\`).join("");
+
+  return cards + legacyCards;
 }
+
+function isTerminalStatus(status) {
+  return ["completed", "failed", "cancelled", "interrupted"].includes(status);
+}
+
+// One delegated listener instead of inline onclick handlers: building
+// JavaScript by concatenating strings into an attribute is how quoting bugs
+// get shipped, and data attributes make the id impossible to mis-escape.
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-action]");
+  if (!button) return;
+  const runId = button.dataset.run;
+  const actions = { open: "openRun", retry: "retry", diff: "viewDiff", merge: "merge" };
+  const type = actions[button.dataset.action];
+  if (type && runId) vscode.postMessage({ type, runId });
+});
 
 vscode.postMessage({ type: "ready" });
 </script>

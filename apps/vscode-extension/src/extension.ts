@@ -1,7 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
-import { BremioClient, DaemonUnavailableError, type RunEvent } from "./client";
+import {
+  BremioClient,
+  DaemonUnavailableError,
+  ProtocolMismatchError,
+  type RunEvent,
+} from "./client";
 import { panelHtml } from "./webview";
 
 let panel: vscode.WebviewPanel | undefined;
@@ -60,9 +65,21 @@ function post(message: Record<string, unknown>): void {
 async function ensureDaemon(explicit = false): Promise<boolean> {
   try {
     const endpoint = await client.connect();
-    post({ type: "daemon", live: true, detail: `daemon v${endpoint.version ?? "?"} · :${endpoint.port}` });
+    await client.checkProtocol();
+    post({
+      type: "daemon",
+      live: true,
+      detail: `daemon v${endpoint.daemonVersion ?? "?"} · protocol ${endpoint.protocolVersion ?? "?"} · :${endpoint.port}`,
+    });
     return true;
   } catch (err) {
+    if (err instanceof ProtocolMismatchError) {
+      // Not something a retry or a restart of the panel can fix, so say
+      // exactly what is wrong instead of appearing merely offline.
+      post({ type: "daemon", live: false, detail: "protocol mismatch" });
+      post({ type: "error", message: err.message, kind: "protocol" });
+      return false;
+    }
     if (!(err instanceof DaemonUnavailableError)) throw err;
   }
 
@@ -88,10 +105,17 @@ async function ensureDaemon(explicit = false): Promise<boolean> {
 
   try {
     const endpoint = await client.waitUntilReady();
-    post({ type: "daemon", live: true, detail: `daemon v${endpoint.version ?? "?"} · :${endpoint.port}` });
+    await client.checkProtocol();
+    post({
+      type: "daemon",
+      live: true,
+      detail: `daemon v${endpoint.daemonVersion ?? "?"} · protocol ${endpoint.protocolVersion ?? "?"} · :${endpoint.port}`,
+    });
     return true;
   } catch (err) {
+    const kind = err instanceof ProtocolMismatchError ? "protocol" : "daemon";
     post({ type: "daemon", live: false, detail: (err as Error).message });
+    post({ type: "error", message: (err as Error).message, kind });
     return false;
   }
 }
@@ -124,6 +148,12 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
       case "merge":
         await merge(String(message.runId ?? ""));
         return;
+      case "retry":
+        await retryRun(String(message.runId ?? ""));
+        return;
+      case "openRun":
+        await reattach(String(message.runId ?? ""));
+        return;
     }
   } catch (err) {
     post({ type: "error", message: (err as Error).message });
@@ -146,7 +176,7 @@ async function sendCapacity(): Promise<void> {
 
 async function sendRuns(): Promise<void> {
   const repoPath = currentRepo();
-  if (!repoPath) return post({ type: "runs", runs: { live: [], stored: [] } });
+  if (!repoPath) return post({ type: "runs", runs: { runs: [], legacyReports: [] } });
   post({ type: "runs", runs: await client.runs(repoPath) });
 }
 
@@ -172,31 +202,106 @@ async function startRun(message: Record<string, unknown>): Promise<void> {
   });
 
   post({ type: "runStarted", id: run.id });
+  await follow(run.id, repoPath);
+}
+
+/**
+ * Follow a run's stream to completion, resuming across drops.
+ *
+ * `lastSeq` is what makes a reconnect safe: without it a dropped stream would
+ * either replay the whole log into the panel or silently skip whatever arrived
+ * while it was disconnected.
+ */
+async function follow(runId: string, repoPath: string, resumeFrom = 0): Promise<void> {
   streamAbort?.abort();
-  streamAbort = new AbortController();
+  const abort = new AbortController();
+  streamAbort = abort;
 
-  let lastSeq = 0;
-  await client.streamEvents(
-    run.id,
-    (event: RunEvent) => {
-      lastSeq = event.seq;
-      post({ type: "runEvent", event });
-    },
-    streamAbort.signal,
-  );
-  void lastSeq;
+  let lastSeq = resumeFrom;
+  const deadline = Date.now() + 6 * 60 * 60 * 1000;
 
-  const detail = (await client.run(run.id, repoPath)) as {
-    run?: { state?: string; report?: { qualityGate?: unknown; runId?: string } };
-  };
-  const report = detail.run?.report;
+  while (!abort.signal.aborted && Date.now() < deadline) {
+    try {
+      await client.streamEvents(
+        runId,
+        (event: RunEvent) => {
+          if (event.seq <= lastSeq) return; // never render the same line twice
+          lastSeq = event.seq;
+          post({ type: "runEvent", event });
+        },
+        abort.signal,
+        lastSeq,
+      );
+      break; // the daemon closed the stream, which it only does when terminal
+    } catch (err) {
+      if (abort.signal.aborted) return;
+      output.appendLine(`stream dropped at seq ${lastSeq}: ${(err as Error).message}`);
+      post({ type: "streamReconnecting", seq: lastSeq });
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+  }
+
+  const detail = await client.run(runId, repoPath);
+  // The quality gate lives in the orchestrator's report, which rides along on
+  // the terminal event rather than on the run row.
+  const finished = [...(detail.events ?? [])].reverse().find((event) => event.kind === "finished");
+  const gate = (finished?.data as { qualityGate?: unknown } | undefined)?.qualityGate;
+
   post({
     type: "runFinished",
-    state: detail.run?.state ?? "completed",
-    runId: report?.runId ?? run.id,
-    gate: report?.qualityGate,
+    state: detail.run?.status ?? "completed",
+    runId,
+    recovery: detail.recovery,
+    failureMessage: detail.run?.failureMessage,
+    gate,
   });
   await sendRuns();
+}
+
+/**
+ * Retry a finished run. The daemon creates a new run linked to the original,
+ * so the history that explains the failure is preserved.
+ */
+async function retryRun(runId: string): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) throw new Error("no workspace folder is open");
+
+  const result = await client.retry(runId);
+  if (!result.run) throw new Error(result.error ?? "the daemon refused to retry this run");
+
+  post({ type: "runStarted", id: result.run.id });
+  await follow(result.run.id, repoPath);
+}
+
+/**
+ * Re-open a run the panel is not currently following — after a reload, or when
+ * picking one out of history. Replays from the store, so nothing is lost.
+ */
+async function reattach(runId: string): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) throw new Error("no workspace folder is open");
+
+  const detail = await client.run(runId, repoPath);
+  if (!detail.run) throw new Error(`run ${runId} is not in the daemon's history`);
+
+  post({ type: "runStarted", id: runId });
+  for (const event of detail.events ?? []) post({ type: "runEvent", event });
+
+  if (detail.run.status === "running" || detail.run.status === "queued") {
+    // Still live: pick the stream back up from where the replay ended.
+    const lastSeq = detail.events?.at(-1)?.seq ?? 0;
+    await follow(runId, repoPath, lastSeq);
+    return;
+  }
+  const finished = [...(detail.events ?? [])].reverse().find((e) => e.kind === "finished");
+  post({
+    type: "runFinished",
+    state: detail.run.status,
+    runId,
+    recovery: detail.recovery,
+    failureMessage: detail.run.failureMessage,
+    gate: (finished?.data as { qualityGate?: unknown } | undefined)?.qualityGate,
+  });
 }
 
 /** Show the run's diff in a real editor tab rather than a cramped webview pane. */

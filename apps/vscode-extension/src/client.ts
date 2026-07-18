@@ -10,11 +10,52 @@ import path from "node:path";
  * take VS Code down with it. Everything here is plain Node plus fetch.
  */
 
+/** The protocol this client speaks. Refuses a daemon that requires newer. */
+export const CLIENT_PROTOCOL_VERSION = 1;
+
 export interface DaemonEndpoint {
   port: number;
   token: string;
   pid: number;
-  version?: string;
+  startedAt?: string;
+  daemonVersion?: string;
+  protocolVersion?: number;
+}
+
+export interface DaemonMeta {
+  daemonVersion: string;
+  protocolVersion: number;
+  minimumClientProtocol: number;
+  capabilities: Record<string, boolean>;
+}
+
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export interface PersistedRun {
+  id: string;
+  mode: "single" | "team";
+  status: RunStatus;
+  repositoryPath: string;
+  prompt: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  leadProvider?: string;
+  failureCode?: string;
+  failureMessage?: string;
+  retryOfRunId?: string;
+}
+
+export interface RecoveryOptions {
+  canRetry: boolean;
+  canResume: boolean;
+  canOpenWorkspace: boolean;
 }
 
 export interface RunEvent {
@@ -58,6 +99,21 @@ export class DaemonUnavailableError extends Error {
   }
 }
 
+/**
+ * The daemon speaks a protocol this client cannot. Distinct from
+ * unavailability so the UI can say which one it is instead of "fetch failed".
+ */
+export class ProtocolMismatchError extends Error {
+  constructor(
+    readonly daemonProtocol: number,
+    readonly requiredClientProtocol: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ProtocolMismatchError";
+  }
+}
+
 export class BremioClient {
   #endpoint: DaemonEndpoint | undefined;
 
@@ -87,21 +143,56 @@ export class BremioClient {
     return endpoint;
   }
 
-  /** Poll until the daemon answers, for use right after spawning it. */
-  async waitUntilReady(totalMs = 15_000): Promise<DaemonEndpoint> {
+  /**
+   * Poll until the daemon is *usable*, for use right after spawning it.
+   *
+   * Readiness, not liveness: the port accepts connections before storage is
+   * open and migrations are done, so waiting on /health alone would hand back
+   * a daemon that then rejects the first request.
+   */
+  async waitUntilReady(totalMs = 20_000): Promise<DaemonEndpoint> {
     const deadline = Date.now() + totalMs;
     let lastError: unknown;
     while (Date.now() < deadline) {
       try {
-        return await this.connect(1_000);
+        const endpoint = await this.connect(1_000);
+        const ready = await this.#fetch(endpoint, "/ready", {
+          signal: AbortSignal.timeout(1_000),
+        });
+        if (ready.ok) return endpoint;
       } catch (err) {
+        // A protocol mismatch will not resolve itself by waiting.
+        if (err instanceof ProtocolMismatchError) throw err;
         lastError = err;
-        await new Promise((resolve) => setTimeout(resolve, 300));
       }
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
     throw lastError instanceof Error
       ? lastError
-      : new DaemonUnavailableError("timed out waiting for the daemon");
+      : new DaemonUnavailableError("timed out waiting for the daemon to become ready");
+  }
+
+  /**
+   * Confirm the daemon speaks a protocol this client understands, in both
+   * directions: too new for us, or too old for what we require.
+   */
+  async checkProtocol(): Promise<DaemonMeta> {
+    const meta = await this.#call<DaemonMeta>("/meta");
+    if (CLIENT_PROTOCOL_VERSION < meta.minimumClientProtocol) {
+      throw new ProtocolMismatchError(
+        meta.protocolVersion,
+        meta.minimumClientProtocol,
+        `The Bremio daemon requires client protocol ${meta.minimumClientProtocol}, but this extension speaks ${CLIENT_PROTOCOL_VERSION}. Update the extension.`,
+      );
+    }
+    if (meta.protocolVersion < CLIENT_PROTOCOL_VERSION) {
+      throw new ProtocolMismatchError(
+        meta.protocolVersion,
+        meta.minimumClientProtocol,
+        `This extension requires daemon protocol ${CLIENT_PROTOCOL_VERSION}, but the running daemon supports protocol ${meta.protocolVersion}. Update the Bremio CLI, then restart the daemon.`,
+      );
+    }
+    return meta;
   }
 
   #fetch(endpoint: DaemonEndpoint, route: string, init: RequestInit = {}): Promise<Response> {
@@ -132,12 +223,26 @@ export class BremioClient {
     return this.#call(`/capacity?refresh=${refresh ? "true" : "false"}`);
   }
 
-  runs(repoPath: string): Promise<{ live: unknown[]; stored: unknown[] }> {
+  /** Durable run history from the daemon, not from webview state. */
+  runs(repoPath: string): Promise<{ runs: PersistedRun[]; legacyReports: unknown[] }> {
     return this.#call(`/runs?repo=${encodeURIComponent(repoPath)}`);
   }
 
-  run(id: string, repoPath: string): Promise<Record<string, unknown>> {
+  run(
+    id: string,
+    repoPath: string,
+  ): Promise<{
+    run?: PersistedRun;
+    events?: RunEvent[];
+    recovery?: RecoveryOptions;
+    artifacts?: Array<{ kind: string; path: string; taskId?: string }>;
+    report?: unknown;
+  }> {
     return this.#call(`/runs/${encodeURIComponent(id)}?repo=${encodeURIComponent(repoPath)}`);
+  }
+
+  retry(id: string): Promise<{ run?: PersistedRun; error?: string }> {
+    return this.#call(`/runs/${encodeURIComponent(id)}/retry`, { method: "POST" });
   }
 
   startRun(request: StartRunRequest): Promise<{ run: { id: string } }> {
