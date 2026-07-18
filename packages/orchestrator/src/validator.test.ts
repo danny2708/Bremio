@@ -72,4 +72,20 @@ describe("validatePlan", () => {
     ]);
     expect(() => validatePlan(p, caps)).toThrow(/capability "vision"/);
   });
+
+  it("rejects write requirements on scheduler-enforced read-only task kinds", () => {
+    const p = plan([
+      {
+        id: "TEST",
+        title: "create and run tests",
+        kind: "test",
+        risk: "low",
+        requiredCapabilities: ["repository.read", "repository.write", "shell", "test"],
+      },
+    ]);
+
+    expect(() => validatePlan(p, caps)).toThrow(
+      /read-only test task and cannot require capability "repository.write"/,
+    );
+  });
 });

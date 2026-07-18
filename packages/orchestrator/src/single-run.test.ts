@@ -116,6 +116,26 @@ class SlowSingleMockAdapter extends SingleMockAdapter {
   }
 }
 
+class RetryingVerificationAdapter extends SingleMockAdapter {
+  override async *startRun(request: AgentRunRequest): AsyncIterable<AgentEvent> {
+    this.requests.push(request);
+    const ts = Date.now();
+    yield { type: "started", runId: request.runId, ts };
+    const first = '"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" -Command \'npm test\'';
+    yield { type: "tool_use", runId: request.runId, ts, name: "shell", input: { command: first } };
+    yield { type: "tool_result", runId: request.runId, ts, name: "shell", ok: false, exitCode: 1 };
+    const retry = '"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" -Command \'npm.cmd test\'';
+    yield { type: "tool_use", runId: request.runId, ts, name: "shell", input: { command: retry } };
+    yield { type: "tool_result", runId: request.runId, ts, name: "shell", ok: true, exitCode: 0 };
+    yield {
+      type: "completed",
+      runId: request.runId,
+      ts,
+      outcome: { status: "completed", finalText: "Recovered with npm.cmd test." },
+    };
+  }
+}
+
 let repoPath: string;
 
 function git(args: string[]): string {
@@ -266,5 +286,19 @@ describe("runSingleAgent", () => {
     expect(report.result.error).toBe("single-agent run timed out after 20ms");
     expect(report.verification.status).toBe("failed");
     expect(adapter.cancelledRuns).toEqual([report.runId]);
+  });
+
+  it("uses the final recognized verification retry as authoritative evidence", async () => {
+    const adapter = new RetryingVerificationAdapter();
+
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "verify with a Windows command wrapper",
+      registry: createRegistry([adapter]),
+    });
+
+    expect(report.result.tests.map((test) => test.exitCode)).toEqual([1, 0]);
+    expect(report.verification).toEqual({ status: "passed", reasons: [] });
   });
 });

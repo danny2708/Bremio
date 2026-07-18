@@ -92,6 +92,14 @@ export function validatePlan(
   // 4. Capability availability across all registered agents.
   const allCaps = [...capabilitiesByAgent.values()];
   for (const t of plan.tasks) {
+    if (
+      (t.kind === "analysis" || t.kind === "test" || t.kind === "review") &&
+      t.requiredCapabilities.includes("repository.write")
+    ) {
+      errors.push(
+        `${t.id} is a read-only ${t.kind} task and cannot require capability "repository.write"`,
+      );
+    }
     for (const token of t.requiredCapabilities) {
       if (!allCaps.some((cap) => capabilityHolds(token, cap))) {
         errors.push(`${t.id} requires capability "${token}" that no registered agent provides`);

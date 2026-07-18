@@ -20,6 +20,11 @@ export interface CodexAdapterOptions {
   bin?: string;
 }
 
+/** Keep internal run ids safe when embedded in Windows/Unix temp filenames. */
+export function sanitizeRunIdForFile(runId: string): string {
+  return runId.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 80) || "run";
+}
+
 const CAPABILITIES: AgentCapabilities = {
   planning: true,
   structuredOutput: true, // native via `--output-schema`
@@ -106,10 +111,11 @@ export class CodexAdapter implements AgentAdapter {
     yield { type: "started", runId: req.runId, ts: now() };
 
     const token = randomBytes(4).toString("hex");
-    const outFile = path.join(os.tmpdir(), `bremio-codex-${req.runId}-${token}.txt`);
+    const safeRunId = sanitizeRunIdForFile(req.runId);
+    const outFile = path.join(os.tmpdir(), `bremio-codex-${safeRunId}-${token}.txt`);
     let schemaFile: string | undefined;
     if (req.outputSchema) {
-      schemaFile = path.join(os.tmpdir(), `bremio-codex-${req.runId}-${token}.schema.json`);
+      schemaFile = path.join(os.tmpdir(), `bremio-codex-${safeRunId}-${token}.schema.json`);
       await fs.writeFile(schemaFile, JSON.stringify(req.outputSchema), "utf8");
     }
 

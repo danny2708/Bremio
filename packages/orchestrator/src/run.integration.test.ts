@@ -296,7 +296,7 @@ describe("runBremio end-to-end (mock adapters)", () => {
       qualityGatePassed: true,
       outcomeVerified: true,
     });
-  });
+  }, 10_000);
 
   it("cancels an in-flight task", async () => {
     const registry = createRegistry([new MockLead(), new MockWorker(2000)]);

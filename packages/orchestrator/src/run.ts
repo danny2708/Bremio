@@ -122,6 +122,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
       ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
       ...(opts.taskTimeoutMs ? { timeoutMs: opts.taskTimeoutMs } : {}),
       ...(opts.signal ? { signal: opts.signal } : {}),
+      validate: (candidate) => validatePlan(candidate, capabilitiesByAgent),
       onEvent: onLeadEvent,
     }));
   } catch (err) {

@@ -71,6 +71,58 @@ describe("parsePlan", () => {
 });
 
 describe("createPlan", () => {
+  it("repairs a schema-valid plan that fails semantic validation", async () => {
+    const prompts: string[] = [];
+    let attempts = 0;
+    const invalid = {
+      ...validPlanObject,
+      tasks: [{
+        id: "TASK-001",
+        title: "write from test gate",
+        kind: "test",
+        risk: "low",
+        requiredCapabilities: ["repository.write", "shell", "test"],
+      }],
+    };
+    const adapter = {
+      id: "codex",
+      provider: "openai",
+      async *startRun(req: AgentRunRequest): AsyncGenerator<AgentEvent> {
+        prompts.push(req.prompt);
+        attempts += 1;
+        const output = attempts === 1 ? invalid : validPlanObject;
+        yield { type: "started", runId: req.runId, ts: Date.now() };
+        yield {
+          type: "completed",
+          runId: req.runId,
+          ts: Date.now(),
+          outcome: { status: "completed", finalText: JSON.stringify(output) },
+        };
+      },
+    } as unknown as AgentAdapter;
+    const runDir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-lead-repair-"));
+
+    try {
+      const result = await createPlan(adapter, {
+        prompt: "add a greeting",
+        cwd: runDir,
+        runDir,
+        runId: "run-semantic-repair",
+        validate: (candidate) => {
+          if (candidate.tasks[0]?.requiredCapabilities.includes("repository.write")) {
+            throw new Error("test tasks are read-only");
+          }
+        },
+      });
+
+      expect(result.attempts).toBe(2);
+      expect(prompts[1]).toContain("test tasks are read-only");
+      expect(result.plan.tasks[0]?.kind).toBe("implementation");
+    } finally {
+      await fs.rm(runDir, { recursive: true, force: true });
+    }
+  });
+
   it("preserves a provider failure and does not waste a schema-repair retry", async () => {
     let attempts = 0;
     const providerError = "You've hit your session limit · resets 2:20pm (Asia/Saigon)";

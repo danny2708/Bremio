@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRunRequest } from "@bremio/adapter-sdk";
-import { buildCodexExecArgs } from "./codex-adapter";
+import { buildCodexExecArgs, sanitizeRunIdForFile } from "./codex-adapter";
 
 function request(overrides: Partial<AgentRunRequest> = {}): AgentRunRequest {
   return {
@@ -31,5 +31,11 @@ describe("buildCodexExecArgs", () => {
 
     expect(args).not.toContain("-m");
     expect(args).not.toContain("-c");
+  });
+});
+
+describe("sanitizeRunIdForFile", () => {
+  it("removes Windows-invalid separators from task run ids", () => {
+    expect(sanitizeRunIdForFile("TASK-003::codex")).toBe("TASK-003--codex");
   });
 });

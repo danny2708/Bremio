@@ -213,23 +213,31 @@ function verifySingleResult(result: SingleAgentResult): SingleRunVerification {
   if (result.status !== "completed") {
     return { status: "failed", reasons: [result.error ?? `agent run ${result.status}`] };
   }
-  const verificationEvidence = result.tests.filter((run) =>
-    /(?:^|\s|:)(?:test|tests|verify|check|lint|build|typecheck|pytest|vitest|jest|tsc|unittest)(?:\s|:|$)/i
-      .test(run.command));
-  if (verificationEvidence.length === 0) {
+  const finalEvidence = result.tests.filter((run) =>
+    isVerificationCommand(run.command)).at(-1);
+  if (!finalEvidence) {
     return {
       status: "unverified",
       reasons: ["agent completed without recognizable test, lint, build, or check evidence"],
     };
   }
-  const failedEvidence = verificationEvidence.find((run) => run.exitCode !== 0);
-  if (failedEvidence) {
+  if (finalEvidence.exitCode !== 0) {
     return {
       status: "failed",
-      reasons: [`verification command exited ${failedEvidence.exitCode}: ${failedEvidence.command}`],
+      reasons: [`verification command exited ${finalEvidence.exitCode}: ${finalEvidence.command}`],
     };
   }
   return { status: "passed", reasons: [] };
+}
+
+function isVerificationCommand(command: string): boolean {
+  return [
+    /\b(?:npm(?:\.cmd)?|pnpm(?:\.cmd)?|yarn(?:\.cmd)?|bun)\s+(?:run\s+)?(?:test|verify|check|lint|build|typecheck)(?=['"\s:]|$)/i,
+    /\bnode(?:\.exe)?\s+--test\b/i,
+    /\b(?:pytest|vitest|jest|tsc|unittest)\b/i,
+    /\b(?:cargo|go|dotnet)\s+test\b/i,
+    /\b(?:mvnw?|gradlew?)\b[^\r\n]*\b(?:test|check|build)\b/i,
+  ].some((pattern) => pattern.test(command));
 }
 
 async function recordSingleLedger(

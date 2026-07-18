@@ -6,30 +6,34 @@ dashboard/quota/parallelism before the core loop runs.
 ## Execution modes — manual before automatic
 
 **Implementation status (2026-07-18):** explicit `Single` and `Team` modes are
-shipped for Claude and Codex. Single is one direct adapter call in the current
-workspace with dirty-state warning, logs/report, cancellation, requested/actual
+shipped and real-provider verified for Claude and Codex. Single is one direct
+adapter call in the current workspace with dirty-state warning, logs/report,
+cancellation, requested/actual
 identity, usage, and recognizable verification-command evidence. It does not
 create a plan, scheduler tasks, worktrees, an independent review, or a merge
 target. Team is the existing plan/delegate/review flow. Legacy `--lead` without
-`--mode` still means Team.
+`--mode` still means Team. Real fixtures passed Claude Single, Codex Single,
+Claude-led Team, and Codex-led Team; the Team quality gates completed 3/3 in
+both lead directions.
 
-Deferred until both manual modes have real-run evidence:
+Still deferred after the manual-mode evidence gate:
 
 - `Auto` mode selection;
 - user-approved Single→Team escalation;
-- Antigravity Single execution (requires the real adapter first);
 - extracting Single into another package (keep it as an orchestrator module
   until a concrete package boundary is justified).
+
+The next execution milestone is Phase 1.5: establish and implement the real
+Antigravity adapter surface, then add Antigravity as Single and Team worker.
 
 ## Phase 1 — Vertical slice (the real MVP)
 Only **Claude (lead) + Codex (worker)**, **sequential**. Both return plan
 JSON → enough to prove lead-swapping + delegation. (Antigravity isn't in yet
 because it can't produce JSON — see 04.)
 
-**Implementation status (2026-07-18):** shipped. Local typecheck, test suite,
-and `bremio doctor` pass. A fresh two-provider real-run verification remains
-blocked by the Claude session limit reported at runtime; do not mark this phase
-fully closed until it is rerun after the reset.
+**Implementation status (2026-07-18):** closed. Local typecheck, test suite,
+and `bremio doctor` pass. After the Claude quota reset, fresh Team fixtures
+passed in both lead directions with real delegation and passed quality gates.
 The explicit `pnpm smoke:providers --lead both --timeout 600` harness exercises
 both real lead directions in separate disposable repos; it consumes quota and
 is intentionally excluded from the normal test suite.
@@ -62,8 +66,8 @@ manual approval before merge. Every lead still returns the same PlanSchema.
 worktrees inherit upstream branches; test tasks are read-only and expose shell
 exit-code evidence; reviews return structured findings and are assigned away
 from the implementation author; reports compute a fail-closed gate; and
-`bremio merge` refuses missing/failed gates. Fresh Claude+Codex verification is
-pending the Claude session reset.
+`bremio merge` refuses missing/failed gates. Fresh Claude+Codex Team fixtures
+passed the full implementation, test, and independent-review flow.
 
 ## Phase 3 — Full worktree lifecycle
 Diff/merge manager, cherry-pick, worktree cleanup, reliable kill-on-timeout.

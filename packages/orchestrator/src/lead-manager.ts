@@ -35,6 +35,8 @@ export interface CreatePlanOptions {
   maxTurns?: number;
   /** Hard timeout for each provider planning attempt. */
   timeoutMs?: number;
+  /** Optional semantic validator; failures enter the same one-repair loop. */
+  validate?: (plan: Plan) => void;
   signal?: AbortSignal;
   onEvent?: (event: AgentEvent) => void;
 }
@@ -60,7 +62,7 @@ export async function createPlan(
   try {
     const first = await runLead(lead, opts, buildPlanningPrompt(opts.prompt), `${opts.runId}-plan-1`, log);
     assertLeadRunCompleted(first, lead.id);
-    const parsed1 = parsePlan(first, lead.id);
+    const parsed1 = validateParsedPlan(parsePlan(first, lead.id), opts.validate);
     if (parsed1.ok) return { plan: parsed1.plan, logsPath: log.path, attempts: 1 };
 
     log.line(`# First plan invalid: ${parsed1.error}. Retrying once.`);
@@ -72,7 +74,7 @@ export async function createPlan(
       log,
     );
     assertLeadRunCompleted(second, lead.id);
-    const parsed2 = parsePlan(second, lead.id);
+    const parsed2 = validateParsedPlan(parsePlan(second, lead.id), opts.validate);
     if (parsed2.ok) return { plan: parsed2.plan, logsPath: log.path, attempts: 2 };
 
     throw new LeadPlanError(
@@ -153,6 +155,22 @@ async function runLead(
 }
 
 type ParseResult = { ok: true; plan: Plan } | { ok: false; error: string };
+
+function validateParsedPlan(
+  parsed: ParseResult,
+  validate: CreatePlanOptions["validate"],
+): ParseResult {
+  if (!parsed.ok || !validate) return parsed;
+  try {
+    validate(parsed.plan);
+    return parsed;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
 
 /** Parse a plan from a run's structured output or final text. */
 export function parsePlan(run: CollectedRun, leadId: string): ParseResult {
