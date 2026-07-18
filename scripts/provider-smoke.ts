@@ -28,7 +28,17 @@ async function main(): Promise<void> {
     return;
   }
   const options = parseOptions(args);
-  for (const leadId of options.leads) await smokeLead(leadId, options);
+  const failures: string[] = [];
+  for (const leadId of options.leads) {
+    try {
+      await smokeLead(leadId, options);
+    } catch (err) {
+      failures.push(`${leadId}: ${(err as Error).message}`);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`${failures.length}/${options.leads.length} provider smoke run(s) failed: ${failures.join(" | ")}`);
+  }
 }
 
 async function smokeLead(leadId: LeadId, options: Options): Promise<void> {
