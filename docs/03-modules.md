@@ -6,7 +6,7 @@ specific adapter.
 ```text
 bremio/
 ├── apps/
-│   ├── daemon/          # local HTTP + WebSocket, process spawning, worktrees
+│   ├── daemon/          # local HTTP + SSE, run state, process spawning
 │   ├── cli/             # `bremio run ...`
 │   └── vscode-extension/# UI panel (Phase 5, not the MVP)
 ├── packages/
@@ -57,15 +57,65 @@ CLI/SDK), streams events, manages worktree lifecycle, kills on timeout.
 **Implemented 2026-07-18.** `apps/daemon` binds `127.0.0.1` on an ephemeral
 port and publishes the port plus a per-launch token to `~/.bremio/daemon.json`,
 the same trust model Bremio already uses for AI-Quota-Tray. Endpoints:
-`GET /health`, `/adapters`, `/capacity`, `/runs`, `/runs/:id`, `/diff`;
-`POST /runs`, `/runs/:id/cancel`, `/merge`. Run `bremio daemon` to start it.
+`GET /health`, `/ready`, `/meta`, `/adapters`, `/capacity`, `/runs`,
+`/runs/:id`, `/diff`; `POST /runs`, `/runs/:id/cancel`, `/runs/:id/retry`,
+`/merge`, `/shutdown`.
 
-It holds live runs and their event history in memory, so a UI that attaches
-mid-run still gets the backlog and a reconnect resumes from its last sequence
-number instead of losing or duplicating events. The on-disk report stays the
-durable record.
+Lifecycle: `bremio daemon [start|status|stop|restart]`.
 
-**Streaming is Server-Sent Events, not the WebSocket named above.** The only
+### Single instance
+
+Two daemons publishing to the same discovery file would hand clients a port and
+token that disagree, so exactly one runs per user. The lock is an exclusive
+file create at `~/.bremio/daemon.lock`, which two simultaneous starts cannot
+both win.
+
+**A PID is not evidence of ownership.** The operating system reuses PIDs, so a
+lock left by a crashed daemon can point at an unrelated process that started
+later. Liveness is proven by an authenticated request to the advertised port —
+only a real daemon answers it. Anything else is stale and the lock is
+reclaimed, and **no process is ever signalled**: `daemon stop` asks through
+`/shutdown` rather than killing a PID it cannot prove is Bremio's.
+
+### Durable state
+
+Runs, events and artifact pointers live in SQLite at `~/.bremio/bremio.db`,
+never inside a target repository. Sequence numbers are allocated inside the
+same transaction as the row insert, with a `(run_id, seq)` primary key, and
+continue across a restart rather than resetting. Event payloads are redacted of
+anything credential-shaped and capped before they touch disk.
+
+The daemon holds only live plumbing in memory: cancellation handles and current
+subscribers. A UI attaching mid-run replays from the store, and a reconnect
+resumes from its last sequence number instead of losing or duplicating events.
+
+Terminal runs older than 30 days are pruned at startup, always keeping the 50
+newest. Active and interrupted runs are never pruned — interrupted still needs
+a decision from the user.
+
+### Recovery
+
+Startup marks anything left `queued`/`running` as `interrupted`, not `failed`:
+the daemon dying says nothing about whether the task would have succeeded.
+Retry creates a new run linked by `retryOfRunId` and never modifies the
+original, whose events are the record of what went wrong.
+
+`GET /runs/:id` reports `recovery: { canRetry, canResume, canOpenWorkspace }`.
+`canResume` is always false because no adapter can resume mid-run; offering it
+would silently start over.
+
+### Protocol
+
+`/meta` advertises `protocolVersion`, `minimumClientProtocol` and a capability
+set so a version mismatch is reported in words instead of a generic failure.
+`/ready` is separate from `/health`: the port accepts connections before
+storage is open, so clients wait on readiness.
+
+SSE ids are `<runId>:<seq>` with a named `event:` type. An id from another run
+is ignored rather than trusted. A stream over an already-terminal run closes
+instead of hanging.
+
+**Streaming is Server-Sent Events.** docs originally specified a WebSocket; the only
 streaming direction is server to client; every command is a plain POST. SSE
 covers that on `node:http` with no added dependency. Revisit if a genuinely
 bidirectional feature arrives.
@@ -133,3 +183,25 @@ Each task is granted `permissions` (`read-only` for analysis, test, and review;
 `workspace-write` for implementation) and its own `worktree` path. See
 per-provider enforcement in `04-adapters.md` (Antigravity enforces read-only
 through `agy --mode plan`).
+
+## Known limitations (2026-07-18)
+
+Stated plainly rather than left to be discovered:
+
+- **Cancellation does not guarantee an empty process tree.** Adapters call
+  `child.kill()`, which on Windows does not reach grandchildren — `codex` and
+  `agy` spawn their own children. `adapter-claude` runs through an SDK and has
+  no child process to kill at all. Orphan cleanup is therefore best-effort, and
+  a centralized process-management abstraction is still outstanding.
+- **A run in flight does not resume after a daemon crash.** It is marked
+  `interrupted` and can be retried, which starts fresh. No adapter exposes a
+  safe mid-run resume, so `capabilities.resume` is advertised as false.
+- **A process still alive after a hard crash is handled best-effort.** The lock
+  is reclaimed because ownership cannot be proven, but nothing is signalled.
+- **Retry policy is deliberately unintelligent.** Bounded attempts, no adaptive
+  backoff, no provider reputation. Those need evidence Bremio does not have,
+  and a wrong guess spends real quota.
+- **The extension panel is dark-only.** A light variant is a CSS block away but
+  is not implemented.
+- **Verified on Windows only.** POSIX paths through the lock, discovery
+  permissions and process handling have not been exercised.

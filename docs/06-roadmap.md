@@ -208,8 +208,17 @@ confirmation dialog. It depends on no `@bremio/*` package — the extension host
 shared with the editor, so the adapters stay out of it — and spawns the daemon
 when one is not already reachable.
 
-Still open in Phase 5: provider-side rate-limit backoff should concurrency be
-raised well above the default, and a light-theme variant of the panel palette.
+**Durable local orchestrator (2026-07-18).** The daemon now survives restarts:
+runs, events and artifacts persist to SQLite, a single-instance lock keeps one
+daemon per user, startup reconciles anything left mid-flight to `interrupted`,
+and the protocol carries a version handshake with readiness separate from
+liveness. The extension reconnects from its last sequence rather than replaying
+or skipping. Provider failures are classified into a small set of codes with a
+bounded, conservative retry policy.
+
+Still open in Phase 5: cancellation does not guarantee an empty process tree on
+Windows (see the limitations in `03-modules.md`), and the panel remains
+dark-only.
 
 ## Phase 6 — Additional providers
 OpenCode (HTTP), Jan (local worker = near-free capacity). Each one = one
