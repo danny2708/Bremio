@@ -55,3 +55,10 @@ export {
   type AgentEventType,
   type RunOutcome,
 } from "./event";
+
+export {
+  MINIMUM_CLIENT_PROTOCOL,
+  PROTOCOL_VERSION,
+  checkProtocolCompatibility,
+  type ProtocolCompatibility,
+} from "./version";

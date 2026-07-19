@@ -13,12 +13,9 @@ import { z } from "zod";
  * boundary that protects the repos the daemon can write to.
  */
 
-/**
- * Wire format version for the daemon HTTP + SSE surface. Bump when a change
- * would break an older client; clients compare against `minimumClientProtocol`.
- */
-export const PROTOCOL_VERSION = 1;
-export const MINIMUM_CLIENT_PROTOCOL = 1;
+// The protocol version is declared once, in @bremio/protocol, so the daemon
+// and the extension cannot drift apart on what it is.
+export { MINIMUM_CLIENT_PROTOCOL, PROTOCOL_VERSION } from "@bremio/protocol";
 
 const EndpointSchema = z.object({
   port: z.number().int().positive().max(65535),
