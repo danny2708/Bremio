@@ -25,7 +25,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tui:smoke": "node scripts/tui-smoke.mjs"
+    "tui:smoke": "node scripts/tui-smoke.mjs",
+    "e2e:fresh": "node ./scripts/fresh-install-e2e.mjs",
+    "posix:verify": "bash ./scripts/posix-verify.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
