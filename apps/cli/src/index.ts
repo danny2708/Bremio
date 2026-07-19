@@ -29,6 +29,7 @@ import {
   stopDaemon,
 } from "@bremio/daemon";
 import { mergeCommand } from "./merge";
+import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
 import { capacityCommand } from "./quota";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
@@ -52,7 +53,8 @@ ${c.bold("Usage")}
   bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
   bremio daemon [start|status|stop|restart]   manage the local daemon (HTTP + SSE, loopback)
   bremio update                           how to update the CLI, daemon and extension
-  bremio doctor
+  bremio doctor [--json]                  adapter health; --json for a support bundle
+  bremio diagnostics export [--out <f>]   write a redacted diagnostics bundle
   bremio --version
   bremio --help
 
@@ -115,6 +117,7 @@ function parseCli() {
       "capacity-routing": { type: "boolean", default: false },
       // parseArgs has no `--no-x` negation, so the opt-out is its own flag.
       "no-refresh": { type: "boolean", default: false },
+      out: { type: "string" },
       comparison: { type: "string" },
       json: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
@@ -179,7 +182,10 @@ async function main(): Promise<void> {
       updateCommand();
       return;
     case "doctor":
-      await doctor();
+      process.exitCode = await doctorCommand(values);
+      return;
+    case "diagnostics":
+      process.exitCode = await diagnosticsCommand(values, positionals[1]);
       return;
     default:
       console.error(c.red(`unknown command: ${command}`));
@@ -635,6 +641,34 @@ function updateCommand(): void {
   console.log(
     `Check what you are running with ${c.cyan("bremio doctor")} or ${c.cyan("bremio daemon status")}.`,
   );
+}
+
+/** `doctor` for humans, `doctor --json` for a bug report or a script. */
+async function doctorCommand(values: Values): Promise<number> {
+  if (values.json) {
+    const bundle = redactDeep(await collectDiagnostics({ version: VERSION }));
+    console.log(JSON.stringify(bundle, null, 2));
+    return 0;
+  }
+  await doctor();
+  return 0;
+}
+
+async function diagnosticsCommand(values: Values, subcommand?: string): Promise<number> {
+  if (subcommand && subcommand !== "export") {
+    console.error(c.red(`unknown diagnostics subcommand: ${subcommand}`));
+    console.error(c.dim("  expected: bremio diagnostics export [--out <file>]"));
+    return 2;
+  }
+  const target = await exportDiagnostics({
+    version: VERSION,
+    ...(values.out ? { outputPath: path.resolve(values.out) } : {}),
+  });
+  console.log(`${c.green("wrote")} ${target}`);
+  console.log(
+    c.dim("  Credentials are redacted, and prompts and repository contents are never included."),
+  );
+  return 0;
 }
 
 async function doctor(): Promise<void> {
