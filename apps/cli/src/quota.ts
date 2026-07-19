@@ -139,19 +139,62 @@ function printCapacity(
   }
   if (capacity.windows.length === 0) console.log(c.dim("    no quota windows available"));
   for (const window of capacity.windows) {
-    const remaining = window.remainingPercent === undefined
-      ? "unknown"
-      : `${window.remainingPercent.toFixed(1)}% remaining`;
-    const reset = window.resetsAt
-      ? ` | resets ${new Date(window.resetsAt * 1000).toISOString()}`
-      : "";
-    const windowAge = formatAge(Math.max(0, readAt - window.capturedAt));
-    console.log(
-      `    - ${window.label}: ${remaining}${reset}` +
-        ` | updated ${new Date(window.capturedAt * 1000).toISOString()}` +
-        ` (${windowAge} old, ${window.freshness}, ${window.confidence} confidence)`,
-    );
+    printWindow(window, readAt);
   }
+  printRefreshHint(capacity);
+}
+
+/**
+ * Print one window, demoting the number when it is not current.
+ *
+ * A stale percentage stated plainly reads as fact. Bremio was showing Claude at
+ * "83.0% remaining" from data six days old while the real figure was far lower,
+ * and nothing about the line said not to trust it. A fresh number leads; a
+ * stale one is dimmed and labelled as an observation from the past, so the age
+ * is impossible to miss rather than buried in a suffix.
+ */
+function printWindow(window: AgentCapacitySnapshot["windows"][number], readAt: number): void {
+  const ageSeconds = Math.max(0, readAt - window.capturedAt);
+  const age = formatAge(ageSeconds);
+  const reset = window.resetsAt
+    ? ` · resets ${new Date(window.resetsAt * 1000).toISOString()}`
+    : "";
+
+  if (window.remainingPercent === undefined) {
+    console.log(c.dim(`    - ${window.label}: unknown${reset}`));
+    return;
+  }
+
+  const value = `${window.remainingPercent.toFixed(1)}% remaining`;
+  if (window.freshness === "fresh") {
+    console.log(`    - ${window.label}: ${value}${c.dim(`${reset} · ${age} old`)}`);
+    return;
+  }
+
+  // Not current: the reading is history, and saying so is the whole point.
+  console.log(
+    c.dim(`    - ${window.label}: `) +
+      c.yellow(`last observed ${age} ago`) +
+      c.dim(` · ${value}${reset}`),
+  );
+}
+
+/**
+ * Tell the user how to make a stale source current instead of leaving them to
+ * guess. Claude's numbers only move when Claude Code runs in a terminal, which
+ * is not discoverable from the panel.
+ */
+function printRefreshHint(capacity: AgentCapacitySnapshot): void {
+  const allStale = capacity.windows.length > 0 &&
+    capacity.windows.every((window) => window.freshness !== "fresh");
+  if (!allStale) return;
+
+  const instruction = capacity.agentId === "claude"
+    ? "run Claude Code in a terminal once; its status-line bridge is what updates this"
+    : capacity.agentId === "antigravity"
+      ? "open Antigravity so its language server is running, then refresh"
+      : "start AI-Quota-Tray, or run `bremio capacity` to trigger a refresh";
+  console.log(c.dim(`      to refresh: ${instruction}`));
 }
 
 /**
