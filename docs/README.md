@@ -20,6 +20,7 @@ results back into one place.
 | 04 | [04-adapters.md](04-adapters.md) | Automation surface per provider (**verified**) + constraints |
 | 05 | [05-quota-and-routing.md](05-quota-and-routing.md) | Quota normalization (reuses AI-Quota-Tray) + routing scoring |
 | 06 | [06-roadmap.md](06-roadmap.md) | Phased plan (vertical slice first) |
+| 07 | [07-operations.md](07-operations.md) | **Install, update, uninstall, recovery** + known limitations |
 | 99 | [99-risks-and-open-questions.md](99-risks-and-open-questions.md) | **Read before coding.** ROI, load-bearing risks, items to verify |
 
 ## Status

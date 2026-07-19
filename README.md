@@ -46,6 +46,10 @@ bremio doctor
 source map. This v0.1 cut is intentionally a local tarball release
 (`private: true`), not an npm registry publication.
 
+For the VS Code extension, updating between versions, uninstalling cleanly, and
+what to do when the daemon will not start or a run is stuck `interrupted`, see
+[`docs/07-operations.md`](docs/07-operations.md).
+
 ## Quickstart
 Prerequisites: **Node 22+**, **pnpm** (via `corepack`), the **`codex`** CLI on
 `PATH` and logged in (`codex login`), and Claude auth for the Agent SDK
