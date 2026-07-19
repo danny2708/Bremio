@@ -1,4 +1,7 @@
+.vscode/**
 src/**
-build.mjs
+node_modules/**
+*.map
 tsconfig.json
-**/*.map
+build.mjs
+media/README.md

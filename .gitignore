@@ -34,3 +34,5 @@ Thumbs.db
 
 # Packed release tarballs
 *.tgz
+bremio.vsix
+bremio_icon.png

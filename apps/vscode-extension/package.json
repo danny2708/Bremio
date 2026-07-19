@@ -1,14 +1,16 @@
 {
   "name": "bremio-vscode",
   "displayName": "Bremio",
-  "description": "Orchestrate AI coding agents — different minds, one team.",
-  "version": "0.1.0",
+  "description": "Orchestrate AI coding agents \u2014 different minds, one team.",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "publisher": "bremio",
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "main": "./dist/extension.js",
   "activationEvents": [],
   "contributes": {
@@ -45,9 +47,12 @@
   },
   "scripts": {
     "build": "node ./build.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "package": "node ./build.mjs && vsce package --no-dependencies --out bremio.vsix"
   },
   "devDependencies": {
-    "@types/vscode": "^1.90.0"
-  }
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.0"
+  },
+  "icon": "media/icon.png"
 }

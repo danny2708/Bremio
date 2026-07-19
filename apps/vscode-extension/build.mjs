@@ -1,5 +1,23 @@
-/** Bundle the extension for the VS Code extension host (CommonJS, node). */
+/**
+ * Bundle the extension for the VS Code extension host (CommonJS, node).
+ *
+ * The protocol version and the extension version are inlined here rather than
+ * imported. The extension deliberately depends on no `@bremio/*` package — the
+ * extension host is shared with the editor — but the protocol version must
+ * still have exactly one declaration, so it is read from the protocol package
+ * at build time instead of being copied into the source.
+ */
+import { readFileSync } from "node:fs";
 import { build } from "esbuild";
+
+const protocolSource = readFileSync("../../packages/protocol/src/version.ts", "utf8");
+const protocolVersion = Number(
+  /export const PROTOCOL_VERSION = (\d+)/.exec(protocolSource)?.[1],
+);
+if (!Number.isInteger(protocolVersion)) {
+  throw new Error("could not read PROTOCOL_VERSION from @bremio/protocol");
+}
+const { version } = JSON.parse(readFileSync("./package.json", "utf8"));
 
 await build({
   entryPoints: ["src/extension.ts"],
@@ -10,6 +28,11 @@ await build({
   outfile: "dist/extension.js",
   // VS Code supplies this at runtime; bundling it would break activation.
   external: ["vscode"],
+  define: {
+    __BREMIO_PROTOCOL_VERSION__: String(protocolVersion),
+    __BREMIO_EXTENSION_VERSION__: JSON.stringify(version),
+  },
   sourcemap: true,
   logLevel: "info",
 });
+console.log(`  protocol ${protocolVersion} · extension ${version}`);
