@@ -51,6 +51,7 @@ ${c.bold("Usage")}
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
   bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
   bremio daemon [start|status|stop|restart]   manage the local daemon (HTTP + SSE, loopback)
+  bremio update                           how to update the CLI, daemon and extension
   bremio doctor
   bremio --version
   bremio --help
@@ -173,6 +174,9 @@ async function main(): Promise<void> {
       return;
     case "daemon":
       process.exitCode = await daemonCommandFromCli(positionals[1]);
+      return;
+    case "update":
+      updateCommand();
       return;
     case "doctor":
       await doctor();
@@ -609,6 +613,28 @@ async function stopDaemonCommand(): Promise<number> {
   const outcome = await stopDaemon();
   console.log(outcome.stopped ? c.green(outcome.detail) : c.dim(outcome.detail));
   return 0;
+}
+
+/**
+ * Explain how to update rather than doing it.
+ *
+ * Self-updating a globally installed CLI means rewriting the binary that is
+ * currently executing, and getting it wrong leaves the user with no working
+ * install at all. Printing the exact command is honest and cannot break
+ * anything; a real updater can come once there is a published registry
+ * artifact to update from.
+ */
+function updateCommand(): void {
+  console.log(`${c.bold("Bremio")} ${VERSION}\n`);
+  console.log("Bremio does not update itself. To update:\n");
+  console.log(`  ${c.cyan("npm i -g bremio")}                 update the CLI (and the bundled daemon)`);
+  console.log(`  ${c.cyan("bremio daemon restart")}           pick up the new daemon`);
+  console.log(`  ${c.dim("Extensions view → Bremio")}         update the VS Code extension\n`);
+  console.log(c.dim("This alpha ships as a local tarball, so install from the artifact you built:"));
+  console.log(c.dim(`  npm i -g ./bremio-${VERSION}.tgz\n`));
+  console.log(
+    `Check what you are running with ${c.cyan("bremio doctor")} or ${c.cyan("bremio daemon status")}.`,
+  );
 }
 
 async function doctor(): Promise<void> {
