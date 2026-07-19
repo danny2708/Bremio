@@ -9,58 +9,120 @@
  * Yellow stays on small elements. Large yellow areas read as a warning
  * dashboard and would drown out genuine quota alerts.
  *
- * The palette is fixed dark rather than inherited from the VS Code theme, which
- * is a deliberate brand choice. Everything routes through CSS variables, so a
- * light variant is one `@media (prefers-color-scheme: light)` block away.
+ * Surfaces, text and inputs come from the VS Code theme so the panel belongs to
+ * the editor rather than looking like a foreign window pasted into it. Brand
+ * colour is reserved for identity: logo, active tab, selection, primary action
+ * and the lead badge.
  */
 
-export function panelHtml(nonce: string, cspSource: string): string {
+export function panelHtml(nonce: string, cspSource: string, iconUri = ""): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource}; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bremio</title>
 <style>
+/*
+ * Surfaces come from VS Code, brand colour does not.
+ *
+ * A fixed dark palette made the panel look like a foreign window pasted into
+ * the editor, and broke outright under a light theme. Everything structural now
+ * uses VS Code's own theme variables, so the panel matches whatever the user
+ * chose. The Bremio palette is kept for identity only: the logo, the active
+ * tab, selection borders, the primary action, and the lead badge.
+ */
 :root {
   --bremio-primary: #2563eb;
   --bremio-primary-hover: #3b82f6;
-  --bremio-primary-active: #1d4ed8;
-  --bremio-primary-muted: #172554;
-
   --bremio-accent: #f4c542;
   --bremio-accent-hover: #ffd75e;
-  --bremio-accent-active: #d9a91e;
-  --bremio-accent-muted: #3a3216;
+  --bremio-accent-ink: #241d00;
 
-  --bremio-bg: #0b1220;
-  --bremio-surface: #111827;
-  --bremio-surface-elevated: #182235;
-  --bremio-border: #263348;
-
-  --bremio-text: #f8fafc;
-  --bremio-text-secondary: #b8c2d1;
-  --bremio-text-muted: #7f8a9c;
-
-  --bremio-success: #34a77b;
-  --bremio-danger: #e0575b;
-
+  /* Provider identity, desaturated so it never competes with the brand. */
   --agent-claude: #c9864a;
   --agent-codex: #34a77b;
   --agent-antigravity: #7c83f6;
   --agent-opencode: #a071d1;
   --agent-jan: #32b8c6;
+
+  /* Structure: the editor's own tokens, with fallbacks for older hosts. */
+  --surface: var(--vscode-editor-background, transparent);
+  --surface-raised: var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.08));
+  --border: var(--vscode-widget-border, var(--vscode-panel-border, rgba(127, 127, 127, 0.28)));
+  --text: var(--vscode-foreground, inherit);
+  --text-muted: var(--vscode-descriptionForeground, rgba(127, 127, 127, 0.9));
+  --hover: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.12));
+  --success: var(--vscode-testing-iconPassed, #3fb950);
+  --danger: var(--vscode-errorForeground, #f85149);
 }
 
 * { box-sizing: border-box; }
 
+/*
+ * The composer groups the prompt with its actions in one bordered block, so
+ * attaching context reads as part of writing the request rather than a
+ * separate setting elsewhere on the form.
+ */
+.composer {
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: 8px;
+  background: var(--vscode-input-background, transparent);
+  padding: 6px;
+}
+.composer:focus-within { border-color: var(--bremio-primary); }
+.composer textarea {
+  border: none; background: transparent; padding: 6px; min-height: 76px;
+}
+.composer textarea:focus { outline: none; }
+.composer-actions {
+  display: flex; align-items: center; gap: 6px; padding: 4px 4px 2px;
+  flex-wrap: wrap;
+}
+.composer-actions .spacer { min-width: 0; }
+.hint { margin: 8px 2px 0; font-size: 11px; }
+
+/*
+ * The panel usually lives in a side column, so a narrow layout is the normal
+ * case. Below this width the action buttons stack to full width instead of
+ * being squeezed into unreadable slivers.
+ */
+@media (max-width: 420px) {
+  .composer-actions { gap: 6px; }
+  .composer-actions .spacer { display: none; }
+  .composer-actions button { flex: 1 1 auto; justify-content: center; }
+  .composer-actions button.primary { flex-basis: 100%; }
+  header { flex-wrap: wrap; row-gap: 4px; }
+  .tagline { display: none; }
+  nav { overflow-x: auto; }
+  nav button { white-space: nowrap; }
+}
+
+button.icon { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; font-size: 11px; }
+button.icon .glyph { font-size: 13px; line-height: 1; }
+
+.attachments { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 4px; }
+.attachments:not(:empty) { padding: 4px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 2px 6px 2px 9px; font-size: 11px; color: var(--text);
+  background: var(--surface-raised); max-width: 260px;
+}
+.chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip button {
+  border: none; background: none; cursor: pointer; color: var(--text-muted);
+  font-size: 13px; line-height: 1; padding: 0 2px;
+}
+.chip button:hover { color: var(--danger); }
+
 body {
   margin: 0;
-  background: var(--bremio-bg);
-  color: var(--bremio-text);
+  background: var(--surface);
+  color: var(--text);
   font-family: var(--vscode-font-family, system-ui, sans-serif);
-  font-size: 13px;
+  font-size: var(--vscode-font-size, 13px);
   line-height: 1.5;
 }
 
@@ -69,47 +131,41 @@ header {
   align-items: center;
   gap: 10px;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--bremio-border);
-  background: var(--bremio-surface);
+  border-bottom: 1px solid var(--border);
+  background: transparent;
 }
 
-.logo {
-  width: 22px; height: 22px; border-radius: 6px;
-  background: var(--bremio-primary);
-  display: grid; place-items: center;
-  color: var(--bremio-accent);
-  font-weight: 700; font-size: 13px;
-  flex: none;
-}
-.wordmark { font-weight: 600; letter-spacing: .2px; }
-.tagline { color: var(--bremio-text-muted); font-size: 11px; }
+.logo { width: 24px; height: 24px; border-radius: 6px; flex: none; display: block; }
+.wordmark { font-weight: 600; letter-spacing: .2px; white-space: nowrap; }
+.tagline { color: var(--text-muted); font-size: 11px; }
 .spacer { flex: 1; }
 
 .status-dot {
   width: 8px; height: 8px; border-radius: 50%;
-  background: var(--bremio-text-muted);
+  background: var(--text-muted);
   flex: none;
 }
-.status-dot.live { background: var(--bremio-success); }
-.status-dot.down { background: var(--bremio-danger); }
+#daemon-detail { font-size: 11px; color: var(--text-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-dot.live { background: var(--success); }
+.status-dot.down { background: var(--danger); }
 
-nav { display: flex; gap: 2px; padding: 0 12px; background: var(--bremio-surface); border-bottom: 1px solid var(--bremio-border); }
+nav { display: flex; gap: 2px; padding: 0 12px; background: transparent; border-bottom: 1px solid var(--border); }
 nav button {
   background: none; border: none; border-bottom: 2px solid transparent;
-  color: var(--bremio-text-secondary); padding: 9px 12px; cursor: pointer;
+  color: var(--text-muted); padding: 9px 12px; cursor: pointer;
   font-size: 12px; font-family: inherit;
 }
-nav button:hover { color: var(--bremio-text); }
+nav button:hover { color: var(--text); background: var(--hover); border-radius: 4px 4px 0 0; }
 /* Blue marks where you are — system state, never an action. */
-nav button.active { color: var(--bremio-text); border-bottom-color: var(--bremio-primary); }
+nav button.active { color: var(--text); border-bottom-color: var(--bremio-primary); }
 
 main { padding: 16px; }
 section { display: none; }
 section.active { display: block; }
 
 .card {
-  background: var(--bremio-surface);
-  border: 1px solid var(--bremio-border);
+  background: transparent;
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px 14px;
   margin-bottom: 10px;
@@ -122,33 +178,36 @@ section.active { display: block; }
   padding: 2px 6px; border-radius: 4px; font-weight: 700;
 }
 /* Yellow = the lead role. One badge, never a whole surface. */
-.badge.lead { background: var(--bremio-accent); color: #241d00; }
-.badge.ok { background: var(--bremio-primary-muted); color: var(--bremio-primary-hover); }
-.badge.warn { background: var(--bremio-accent-muted); color: var(--bremio-accent-hover); }
-.badge.bad { background: #3a1c1e; color: var(--bremio-danger); }
+.badge.lead { background: var(--bremio-accent); color: var(--bremio-accent-ink); }
+.badge.ok { background: color-mix(in srgb, var(--bremio-primary) 18%, transparent); color: var(--bremio-primary-hover); }
+.badge.warn { background: color-mix(in srgb, var(--bremio-accent) 20%, transparent); color: var(--bremio-accent-hover); }
+.badge.bad { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
 
 .agent { display: inline-flex; align-items: center; gap: 6px; }
-.agent::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--bremio-text-muted); }
+.agent::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--text-muted); }
 .agent[data-agent="claude"]::before { background: var(--agent-claude); }
 .agent[data-agent="codex"]::before { background: var(--agent-codex); }
 .agent[data-agent="antigravity"]::before { background: var(--agent-antigravity); }
 
-.meter { height: 6px; border-radius: 3px; background: var(--bremio-surface-elevated); overflow: hidden; margin-top: 4px; }
+.meter { height: 6px; border-radius: 3px; background: var(--surface-raised); overflow: hidden; margin-top: 4px; }
 .meter > span { display: block; height: 100%; background: var(--bremio-primary); }
 .meter.warn > span { background: var(--bremio-accent); }
-.meter.bad > span { background: var(--bremio-danger); }
+.meter.bad > span { background: var(--danger); }
 
-.muted { color: var(--bremio-text-muted); }
-.secondary { color: var(--bremio-text-secondary); }
+.muted { color: var(--text-muted); }
+.secondary { color: var(--text); opacity: .85; }
 .row { display: flex; align-items: center; gap: 8px; }
 .between { justify-content: space-between; }
 .window { margin: 8px 0; }
 .window-label { display: flex; justify-content: space-between; font-size: 11px; }
 
-label { display: block; font-size: 11px; color: var(--bremio-text-secondary); margin: 10px 0 4px; }
+label { display: block; font-size: 11px; color: var(--text-muted); margin: 10px 0 4px; }
 input, select, textarea {
-  width: 100%; background: var(--bremio-bg); color: var(--bremio-text);
-  border: 1px solid var(--bremio-border); border-radius: 6px;
+  width: 100%;
+  background: var(--vscode-input-background, transparent);
+  color: var(--vscode-input-foreground, var(--text));
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: 6px;
   padding: 7px 9px; font-family: inherit; font-size: 12px;
 }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--bremio-primary); }
@@ -157,48 +216,50 @@ textarea { resize: vertical; min-height: 72px; }
 .seg { display: flex; gap: 6px; }
 .seg button {
   flex: 1; padding: 7px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12px;
-  background: var(--bremio-bg); color: var(--bremio-text-secondary);
-  border: 1px solid var(--bremio-border);
+  background: transparent; color: var(--text-muted);
+  border: 1px solid var(--border);
 }
+.seg button:hover { background: var(--hover); color: var(--text); }
 /* Selection is system state, so it is blue. */
-.seg button.on { border-color: var(--bremio-primary); color: var(--bremio-text); background: var(--bremio-primary-muted); }
+.seg button.on { border-color: var(--bremio-primary); color: var(--text); background: color-mix(in srgb, var(--bremio-primary) 15%, transparent); }
 
 button.primary {
   /* The one action on the screen — yellow, and small. */
-  background: var(--bremio-accent); color: #241d00; border: none;
+  background: var(--bremio-accent); color: var(--bremio-accent-ink); border: none;
   padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer;
   font-family: inherit; font-size: 12px;
 }
 button.primary:hover { background: var(--bremio-accent-hover); }
-button.primary:active { background: var(--bremio-accent-active); }
-button.primary:disabled { background: var(--bremio-surface-elevated); color: var(--bremio-text-muted); cursor: not-allowed; }
+button.primary:active { background: var(--bremio-accent); }
+button.primary:disabled { background: var(--surface-raised); color: var(--text-muted); cursor: not-allowed; }
 
 button.ghost {
-  background: none; border: 1px solid var(--bremio-border); color: var(--bremio-text-secondary);
+  background: none; border: 1px solid var(--border); color: var(--text-muted);
   padding: 6px 12px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12px;
 }
-button.ghost:hover { border-color: var(--bremio-primary); color: var(--bremio-text); }
+button.ghost:hover { border-color: var(--bremio-primary); color: var(--text); background: var(--hover); }
 
 pre.log {
-  background: var(--bremio-bg); border: 1px solid var(--bremio-border); border-radius: 6px;
+  background: var(--vscode-textCodeBlock-background, var(--surface-raised));
+  border: 1px solid var(--border); border-radius: 6px;
   padding: 10px; max-height: 320px; overflow: auto; font-size: 11px;
   font-family: var(--vscode-editor-font-family, monospace); white-space: pre-wrap; margin: 0;
 }
 .log-line { display: block; }
 .log-task { color: var(--bremio-primary-hover); }
 .log-lead { color: var(--bremio-accent); }
-.log-fail { color: var(--bremio-danger); }
-.log-done { color: var(--bremio-success); }
+.log-fail { color: var(--danger); }
+.log-done { color: var(--success); }
 
-.empty { color: var(--bremio-text-muted); padding: 24px; text-align: center; }
+.empty { color: var(--text-muted); padding: 24px; text-align: center; }
 .banner { border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; font-size: 12px; }
 .banner.warn { background: var(--bremio-accent-muted); color: var(--bremio-accent-hover); }
-.banner.bad { background: #3a1c1e; color: var(--bremio-danger); }
+.banner.bad { background: #3a1c1e; color: var(--danger); }
 </style>
 </head>
 <body>
 <header>
-  <div class="logo">B</div>
+  <img class="logo" src="${iconUri}" alt="">
   <div>
     <div class="wordmark">Bremio</div>
     <div class="tagline">Different minds. One team.</div>
@@ -237,15 +298,24 @@ pre.log {
       </div>
 
       <label>Repository</label>
-      <input id="repo" type="text" placeholder="/path/to/repo">
+      <input id="repo" type="text" placeholder="the folder open in VS Code">
 
       <label>Prompt</label>
-      <textarea id="prompt" placeholder="add a health endpoint"></textarea>
-
-      <div class="row between" style="margin-top:12px">
-        <span class="muted" id="run-hint"></span>
-        <button class="primary" id="start">Run</button>
+      <div class="composer">
+        <textarea id="prompt" placeholder="add a health endpoint"></textarea>
+        <div id="attachments" class="attachments"></div>
+        <div class="composer-actions">
+          <button class="ghost icon" id="attach-files" title="Attach files from the workspace">
+            <span class="glyph">+</span> Add context
+          </button>
+          <button class="ghost icon" id="attach-open" title="Attach the file open in the editor">
+            Current file
+          </button>
+          <div class="spacer"></div>
+          <button class="primary" id="start">Run</button>
+        </div>
       </div>
+      <p class="muted hint" id="run-hint"></p>
     </div>
 
     <div id="run-live" style="display:none">
@@ -318,6 +388,9 @@ function renderAgentOptions() {
     : "One agent works directly in the repository.";
 }
 
+$("attach-files").addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
+$("attach-open").addEventListener("click", () => vscode.postMessage({ type: "attachActiveFile" }));
+
 $("start").addEventListener("click", () => {
   vscode.postMessage({
     type: "startRun",
@@ -327,6 +400,7 @@ $("start").addEventListener("click", () => {
     maxConcurrency: mode === "team" ? Number($("concurrency").value) : undefined,
     repoPath: $("repo").value.trim(),
     prompt: $("prompt").value.trim(),
+    attachments: attachments.map((file) => file.path),
   });
 });
 
@@ -393,6 +467,10 @@ window.addEventListener("message", (event) => {
     $("cancel").style.display = "inline-block";
     $("new-run").style.display = "none";
   }
+  if (message.type === "workspace" && message.repoPath && !$("repo").value) {
+    $("repo").value = message.repoPath;
+  }
+  if (message.type === "attachments") addAttachments(message.files);
   if (message.type === "runEvent") appendLog(message.event);
   if (message.type === "streamReconnecting") {
     appendLog({ kind: "status", message: "connection dropped — resuming from event " + message.seq });
@@ -519,7 +597,40 @@ function isTerminalStatus(status) {
 // One delegated listener instead of inline onclick handlers: building
 // JavaScript by concatenating strings into an attribute is how quoting bugs
 // get shipped, and data attributes make the id impossible to mis-escape.
+/*
+ * Attached files are sent as paths, not contents.
+ *
+ * Every adapter can already read files it is told about, so a path works for
+ * all of them — including images for providers that can open them. Inlining
+ * contents would blow up the prompt and would still not help a provider that
+ * cannot read the format.
+ */
+let attachments = [];
+
+function renderAttachments() {
+  const host = $("attachments");
+  host.innerHTML = attachments
+    .map((file, index) =>
+      '<span class="chip" title="' + escapeHtml(file.path) + '">' +
+      '<span class="name">' + escapeHtml(file.label) + "</span>" +
+      '<button data-drop="' + index + '" aria-label="Remove">x</button></span>')
+    .join("");
+}
+
+function addAttachments(files) {
+  for (const file of files ?? []) {
+    if (!attachments.some((existing) => existing.path === file.path)) attachments.push(file);
+  }
+  renderAttachments();
+}
+
 document.addEventListener("click", (event) => {
+  const drop = event.target.closest("[data-drop]");
+  if (drop) {
+    attachments.splice(Number(drop.dataset.drop), 1);
+    renderAttachments();
+    return;
+  }
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const runId = button.dataset.run;
