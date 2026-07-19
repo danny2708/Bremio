@@ -17,7 +17,7 @@ Bremio is three artifacts that must agree on one wire protocol:
 |---|---|---|
 | CLI | `bremio-<version>.tgz`, installed globally by npm | the npm global prefix |
 | Daemon | bundled **inside** the CLI, no separate install | started by `bremio daemon start` |
-| VS Code extension | `bremio-<version>.vsix` | the VS Code extensions directory |
+| VS Code extension | `bremio.vsix` | the VS Code extensions directory |
 
 The CLI and the daemon are always the same version, because they are the same
 artifact. The extension is installed separately, so it is the only one that can
@@ -65,7 +65,7 @@ The VS Code extension:
 ```powershell
 cd apps/vscode-extension
 corepack pnpm run package            # builds, then packs the VSIX
-code --install-extension .\bremio-0.1.0-alpha.1.vsix
+code --install-extension .\bremio.vsix
 ```
 
 Then reload the window. The extension starts the daemon itself on first use, so
@@ -99,7 +99,7 @@ The sequence is:
 ```powershell
 npm i -g .\bremio-<new-version>.tgz   # CLI and the bundled daemon together
 bremio daemon restart                 # the running daemon is still the old build
-code --install-extension .\bremio-<new-version>.vsix
+code --install-extension .\bremio.vsix
 ```
 
 **`bremio daemon restart` is not optional.** Installing a new CLI leaves the old
