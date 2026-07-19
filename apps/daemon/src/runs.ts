@@ -79,6 +79,13 @@ export class RunRegistry {
   readonly #listeners = new Map<string, Set<Listener>>();
   /** In-flight terminations, awaited before a run is called cancelled. */
   readonly #terminations = new Map<string, Promise<TerminationOutcome>>();
+  /**
+   * In-flight executions. Awaiting a termination is not enough on shutdown:
+   * the run records its terminal event *after* termination resolves, so
+   * closing storage at that point loses the write — or throws on a closed
+   * database, which is how this surfaced on Linux.
+   */
+  readonly #executions = new Map<string, Promise<void>>();
   /** Runs that already emitted a terminal event; nothing may follow one. */
   readonly #terminated = new Set<string>();
   #accepting = true;
@@ -229,9 +236,15 @@ export class RunRegistry {
   /**
    * Wait for every in-flight cancellation to settle, so shutdown does not exit
    * while child processes are still being torn down.
+   *
+   * Executions are awaited too, not just terminations: a run writes its
+   * terminal event after termination resolves, and closing storage in that gap
+   * either loses the record or throws on a closed database.
    */
   async awaitCancellations(): Promise<TerminationOutcome[]> {
-    return Promise.all([...this.#terminations.values()]);
+    const outcomes = await Promise.all([...this.#terminations.values()]);
+    await Promise.allSettled([...this.#executions.values()]);
+    return outcomes;
   }
 
   get activeCount(): number {
@@ -255,7 +268,8 @@ export class RunRegistry {
     const controller = new AbortController();
     this.#controllers.set(id, controller);
     this.store.updateRun(id, { status: "running", startedAt: new Date().toISOString() });
-    void this.#execute(id, input, controller);
+    // Never rejects: #execute records failure as a run outcome.
+    this.#executions.set(id, this.#execute(id, input, controller));
     return this.store.getRun(id) ?? run;
   }
 
@@ -268,7 +282,7 @@ export class RunRegistry {
     // did not stop cleanly would arrive after the stream closed, so a client
     // replaying from the store would see a different history than the one it
     // watched live.
-    if (this.#terminated.has(runId)) return;
+    if (this.#terminated.has(runId) || this.#storeIsGone()) return;
     const { kind, ...rest } = event;
     const stored = this.store.appendEvent(runId, kind, rest);
     this.#publish(runId, toWireEvent(stored));
@@ -280,7 +294,7 @@ export class RunRegistry {
     status: RunStatus,
     patch: { finalSummary?: string; failureCode?: string; failureMessage?: string } = {},
   ): void {
-    if (this.#terminated.has(runId)) return;
+    if (this.#terminated.has(runId) || this.#storeIsGone()) return;
     this.#terminated.add(runId);
     const { kind, ...rest } = event;
     const stored = this.store.appendEventWithStatus(runId, kind, rest, {
@@ -289,6 +303,11 @@ export class RunRegistry {
       ...patch,
     });
     this.#publish(runId, toWireEvent(stored));
+  }
+
+  /** Storage is gone: the daemon is exiting and there is nothing left to record. */
+  #storeIsGone(): boolean {
+    return this.store.closed;
   }
 
   #publish(runId: string, event: RunEvent): void {
@@ -420,6 +439,7 @@ export class RunRegistry {
     } finally {
       this.#controllers.delete(runId);
       this.#terminations.delete(runId);
+      this.#executions.delete(runId);
       this.supervisor.release(runId);
     }
   }

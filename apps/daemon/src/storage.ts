@@ -124,6 +124,14 @@ export class RunStore {
     return new RunStore(db);
   }
 
+  /**
+   * True once closed. A background task racing a shutdown can check this
+   * rather than discovering it through an unhandled rejection.
+   */
+  get closed(): boolean {
+    return this.#closed;
+  }
+
   /** Idempotent: shutdown paths can plausibly reach this more than once. */
   close(): void {
     if (this.#closed) return;
