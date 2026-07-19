@@ -7,6 +7,7 @@ import {
   BremioClient,
   CLIENT_PROTOCOL_VERSION,
   DaemonUnavailableError,
+  EXTENSION_VERSION,
   ProtocolMismatchError,
   readEndpoint,
 } from "./client";
@@ -93,7 +94,7 @@ describe("daemon client", () => {
     });
     const client = new BremioClient(await endpointFile(port));
 
-    await expect(client.checkProtocol()).rejects.toThrow(/Update the extension/);
+    await expect(client.checkProtocol()).rejects.toThrow(/Update the Bremio extension/);
   });
 
   it("treats a missing endpoint file as unavailable, not as an error to retry forever", async () => {
@@ -145,15 +146,107 @@ describe("webview", () => {
   it("keeps the brand tokens and confines yellow to actions", () => {
     expect(html).toContain("--bremio-primary: #2563eb");
     expect(html).toContain("--bremio-accent: #f4c542");
-    // Navigation and selection are blue; the accent is reserved for the lead
-    // badge and the single primary action.
-    expect(html).toContain("nav button.active { color: var(--bremio-text); border-bottom-color: var(--bremio-primary); }");
+    // Blue marks where you are; yellow is reserved for the lead badge and the
+    // single primary action.
+    expect(html).toContain("nav button.active");
+    expect(html).toContain("border-bottom-color: var(--bremio-primary)");
     expect(html).toContain(".badge.lead { background: var(--bremio-accent)");
+    expect(html).toContain("background: var(--bremio-accent); color: var(--bremio-accent-ink)");
+  });
+
+  it("takes surfaces and text from the VS Code theme", () => {
+    // A fixed palette made the panel a foreign window inside the editor and
+    // broke under light themes, so structure must come from the host.
+    expect(html).toContain("var(--vscode-editor-background");
+    expect(html).toContain("var(--vscode-foreground");
+    expect(html).toContain("var(--vscode-input-background");
+    expect(html).toContain("var(--vscode-font-size");
+  });
+
+  it("hardcodes no fixed surface colours", () => {
+    // The old dark navy tokens must not creep back: they are unreadable on a
+    // light theme and were the reason the panel looked pasted in.
+    for (const retired of ["#0b1220", "#111827", "#182235", "#263348", "#f8fafc"]) {
+      expect(html.toLowerCase()).not.toContain(retired);
+    }
+  });
+
+  it("offers a way to attach context to a prompt", () => {
+    // Attachments travel as paths; every adapter can already read files it is
+    // told about, so this works without inlining contents.
+    expect(html).toContain('id="attach-files"');
+    expect(html).toContain('id="attach-open"');
+    expect(html).toContain('id="attachments"');
   });
 
   it("renders every tab the panel offers", () => {
     for (const tab of ["run", "runs", "capacity", "doctor"]) {
       expect(html).toContain(`data-tab="${tab}"`);
     }
+  });
+});
+
+describe("version coupling", () => {
+  it("speaks the protocol version declared in @bremio/protocol", async () => {
+    // The extension ships no @bremio dependency by design, so the constant is
+    // inlined at build time. This asserts the two have not drifted apart —
+    // exactly the failure that duplicating the literal would hide.
+    const declared = await fs.readFile(
+      path.join(__dirname, "../../../packages/protocol/src/version.ts"),
+      "utf8",
+    );
+    const canonical = Number(/export const PROTOCOL_VERSION = (\d+)/.exec(declared)?.[1]);
+
+    expect(Number.isInteger(canonical)).toBe(true);
+    expect(CLIENT_PROTOCOL_VERSION).toBe(canonical);
+  });
+
+  it("matches the version in its own manifest", async () => {
+    const manifest = JSON.parse(
+      await fs.readFile(path.join(__dirname, "../package.json"), "utf8"),
+    ) as { version: string };
+
+    // EXTENSION_VERSION falls back to "dev" when run from source; only a built
+    // bundle carries the real one, so accept either rather than asserting a
+    // build artifact exists.
+    expect([manifest.version, "dev"]).toContain(EXTENSION_VERSION);
+  });
+});
+
+describe("setup remedies", () => {
+  it("tells an outdated daemon to update the CLI, not the extension", async () => {
+    const port = await fakeDaemon({
+      daemonVersion: "0.0.9",
+      protocolVersion: 0,
+      minimumClientProtocol: 0,
+      capabilities: {},
+    });
+    const client = new BremioClient(await endpointFile(port));
+
+    await expect(client.checkProtocol()).rejects.toMatchObject({ remedy: "update-cli" });
+  });
+
+  it("tells an outdated extension to update itself, not the CLI", async () => {
+    const port = await fakeDaemon({
+      daemonVersion: "9.9.9",
+      protocolVersion: 99,
+      minimumClientProtocol: 99,
+      capabilities: {},
+    });
+    const client = new BremioClient(await endpointFile(port));
+
+    await expect(client.checkProtocol()).rejects.toMatchObject({ remedy: "update-extension" });
+  });
+
+  it("carries both versions in the message so the user can see the gap", async () => {
+    const port = await fakeDaemon({
+      daemonVersion: "0.0.9",
+      protocolVersion: 0,
+      minimumClientProtocol: 0,
+      capabilities: {},
+    });
+    const client = new BremioClient(await endpointFile(port));
+
+    await expect(client.checkProtocol()).rejects.toThrow(/v0\.0\.9/);
   });
 });

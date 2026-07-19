@@ -10,8 +10,19 @@ import path from "node:path";
  * take VS Code down with it. Everything here is plain Node plus fetch.
  */
 
-/** The protocol this client speaks. Refuses a daemon that requires newer. */
-export const CLIENT_PROTOCOL_VERSION = 1;
+declare const __BREMIO_PROTOCOL_VERSION__: number | undefined;
+declare const __BREMIO_EXTENSION_VERSION__: string | undefined;
+
+/**
+ * The protocol this client speaks, inlined at build time from
+ * `@bremio/protocol` so there is one declaration rather than a copy free to
+ * drift. The fallback only applies when running from source in tests.
+ */
+export const CLIENT_PROTOCOL_VERSION =
+  typeof __BREMIO_PROTOCOL_VERSION__ === "number" ? __BREMIO_PROTOCOL_VERSION__ : 1;
+
+export const EXTENSION_VERSION =
+  typeof __BREMIO_EXTENSION_VERSION__ === "string" ? __BREMIO_EXTENSION_VERSION__ : "dev";
 
 export interface DaemonEndpoint {
   port: number;
@@ -99,17 +110,47 @@ export class DaemonUnavailableError extends Error {
   }
 }
 
+/** What the user should actually do about a failure. */
+export type RemedyKind =
+  /** No `bremio` executable was found on PATH. */
+  | "install-cli"
+  /** The daemon is older than this extension needs. */
+  | "update-cli"
+  /** This extension is older than the daemon requires. */
+  | "update-extension"
+  /** A daemon exists but is not answering. */
+  | "restart-daemon";
+
+/**
+ * A failure the user can act on.
+ *
+ * Every case names one concrete next step. "Something went wrong" leaves
+ * someone with a broken panel and no idea whether to reinstall the CLI, update
+ * the extension, or restart a daemon.
+ */
+export class BremioSetupError extends Error {
+  constructor(
+    readonly remedy: RemedyKind,
+    message: string,
+    readonly detail?: string,
+  ) {
+    super(message);
+    this.name = "BremioSetupError";
+  }
+}
+
 /**
  * The daemon speaks a protocol this client cannot. Distinct from
  * unavailability so the UI can say which one it is instead of "fetch failed".
  */
-export class ProtocolMismatchError extends Error {
+export class ProtocolMismatchError extends BremioSetupError {
   constructor(
     readonly daemonProtocol: number,
     readonly requiredClientProtocol: number,
+    remedy: RemedyKind,
     message: string,
   ) {
-    super(message);
+    super(remedy, message);
     this.name = "ProtocolMismatchError";
   }
 }
@@ -178,18 +219,21 @@ export class BremioClient {
    */
   async checkProtocol(): Promise<DaemonMeta> {
     const meta = await this.#call<DaemonMeta>("/meta");
+
     if (CLIENT_PROTOCOL_VERSION < meta.minimumClientProtocol) {
       throw new ProtocolMismatchError(
         meta.protocolVersion,
         meta.minimumClientProtocol,
-        `The Bremio daemon requires client protocol ${meta.minimumClientProtocol}, but this extension speaks ${CLIENT_PROTOCOL_VERSION}. Update the extension.`,
+        "update-extension",
+        `The Bremio daemon (v${meta.daemonVersion}) requires client protocol ${meta.minimumClientProtocol}, but this extension speaks ${CLIENT_PROTOCOL_VERSION}. Update the Bremio extension.`,
       );
     }
     if (meta.protocolVersion < CLIENT_PROTOCOL_VERSION) {
       throw new ProtocolMismatchError(
         meta.protocolVersion,
         meta.minimumClientProtocol,
-        `This extension requires daemon protocol ${CLIENT_PROTOCOL_VERSION}, but the running daemon supports protocol ${meta.protocolVersion}. Update the Bremio CLI, then restart the daemon.`,
+        "update-cli",
+        `This extension (v${EXTENSION_VERSION}) requires daemon protocol ${CLIENT_PROTOCOL_VERSION}, but the running daemon (v${meta.daemonVersion}) supports ${meta.protocolVersion}. Update the Bremio CLI with "npm i -g bremio", then run "bremio daemon restart".`,
       );
     }
     return meta;

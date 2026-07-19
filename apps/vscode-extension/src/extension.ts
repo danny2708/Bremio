@@ -1,12 +1,17 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import path from "node:path";
 import * as vscode from "vscode";
 import {
   BremioClient,
+  BremioSetupError,
   DaemonUnavailableError,
+  EXTENSION_VERSION,
   ProtocolMismatchError,
+  type RemedyKind,
   type RunEvent,
 } from "./client";
+import { CliNotFoundError, launchCli } from "./cli-launcher";
 import { panelHtml } from "./webview";
 
 let panel: vscode.WebviewPanel | undefined;
@@ -34,12 +39,20 @@ function openPanel(context: vscode.ExtensionContext): void {
     panel.reveal();
     return;
   }
+  const mediaRoot = vscode.Uri.joinPath(context.extensionUri, "media");
   panel = vscode.window.createWebviewPanel("bremio", "Bremio", vscode.ViewColumn.Beside, {
     enableScripts: true,
     retainContextWhenHidden: true,
+    // Scope asset access to the media folder rather than the whole extension.
+    localResourceRoots: [mediaRoot],
   });
+  panel.iconPath = vscode.Uri.joinPath(mediaRoot, "icon.png");
   const nonce = randomBytes(16).toString("base64");
-  panel.webview.html = panelHtml(nonce, panel.webview.cspSource);
+  panel.webview.html = panelHtml(
+    nonce,
+    panel.webview.cspSource,
+    panel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "icon.png")).toString(),
+  );
   panel.onDidDispose(() => {
     streamAbort?.abort();
     panel = undefined;
@@ -74,10 +87,9 @@ async function ensureDaemon(explicit = false): Promise<boolean> {
     return true;
   } catch (err) {
     if (err instanceof ProtocolMismatchError) {
-      // Not something a retry or a restart of the panel can fix, so say
-      // exactly what is wrong instead of appearing merely offline.
-      post({ type: "daemon", live: false, detail: "protocol mismatch" });
-      post({ type: "error", message: err.message, kind: "protocol" });
+      // Not something a retry or a panel reload can fix, so name the side that
+      // is behind and what to run.
+      reportSetupError(err);
       return false;
     }
     if (!(err instanceof DaemonUnavailableError)) throw err;
@@ -90,17 +102,35 @@ async function ensureDaemon(explicit = false): Promise<boolean> {
   }
 
   const cli = vscode.workspace.getConfiguration("bremio").get<string>("cliPath", "bremio");
-  output.appendLine(`starting daemon: ${cli} daemon`);
-  daemonProcess = spawn(cli, ["daemon"], { stdio: ["ignore", "pipe", "pipe"], shell: false });
+  let spawnFailure: BremioSetupError | undefined;
+
+  try {
+    const { child, resolved } = launchCli(cli, ["daemon"]);
+    output.appendLine(`starting daemon: ${resolved} daemon`);
+    daemonProcess = child;
+  } catch (err) {
+    // Genuinely absent, as opposed to present but unlaunchable — the case that
+    // used to be reported as "not installed" on every Windows machine.
+    if (!(err instanceof CliNotFoundError)) throw err;
+    spawnFailure = new BremioSetupError(
+      "install-cli",
+      `The Bremio CLI was not found (tried "${cli}").`,
+      'Install it with "npm i -g bremio", or set "bremio.cliPath" to its full path.',
+    );
+    output.appendLine(spawnFailure.message);
+    reportSetupError(spawnFailure);
+    return false;
+  }
+
   daemonProcess.stdout?.on("data", (chunk: Buffer) => output.append(chunk.toString()));
   daemonProcess.stderr?.on("data", (chunk: Buffer) => output.append(chunk.toString()));
   daemonProcess.on("error", (error) => {
-    output.appendLine(`daemon failed to start: ${error.message}`);
-    post({
-      type: "daemon",
-      live: false,
-      detail: `cannot start daemon (check bremio.cliPath)`,
-    });
+    spawnFailure = new BremioSetupError(
+      "restart-daemon",
+      `The Bremio daemon failed to start: ${error.message}`,
+    );
+    output.appendLine(spawnFailure.message);
+    reportSetupError(spawnFailure);
   });
 
   try {
@@ -113,10 +143,51 @@ async function ensureDaemon(explicit = false): Promise<boolean> {
     });
     return true;
   } catch (err) {
-    const kind = err instanceof ProtocolMismatchError ? "protocol" : "daemon";
-    post({ type: "daemon", live: false, detail: (err as Error).message });
-    post({ type: "error", message: (err as Error).message, kind });
+    // A spawn failure is more specific than "it never became ready", so it
+    // wins: the user needs to hear "the CLI is not installed", not a timeout.
+    if (spawnFailure) return false;
+    reportSetupError(
+      err instanceof BremioSetupError
+        ? err
+        : new BremioSetupError(
+            "restart-daemon",
+            `The Bremio daemon did not become ready: ${(err as Error).message}`,
+          ),
+    );
     return false;
+  }
+}
+
+/** Remedies the panel can act on, in the user's words rather than an error code. */
+const REMEDY_ACTIONS: Record<RemedyKind, string> = {
+  "install-cli": 'Run "npm i -g bremio" in a terminal, then reopen this panel.',
+  "update-cli": 'Run "npm i -g bremio" to update the CLI, then "bremio daemon restart".',
+  "update-extension": "Update the Bremio extension from the Extensions view, then reload the window.",
+  "restart-daemon": 'Run "bremio daemon restart" in a terminal, then reopen this panel.',
+};
+
+function reportSetupError(error: BremioSetupError): void {
+  post({ type: "daemon", live: false, detail: shortLabel(error.remedy) });
+  post({
+    type: "error",
+    kind: "setup",
+    remedy: error.remedy,
+    message: error.message,
+    detail: [error.detail, REMEDY_ACTIONS[error.remedy]].filter(Boolean).join(" "),
+    versions: { extension: EXTENSION_VERSION },
+  });
+}
+
+function shortLabel(remedy: RemedyKind): string {
+  switch (remedy) {
+    case "install-cli":
+      return "Bremio CLI not installed";
+    case "update-cli":
+      return "daemon is out of date";
+    case "update-extension":
+      return "extension is out of date";
+    case "restart-daemon":
+      return "daemon not responding";
   }
 }
 
@@ -129,6 +200,10 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
   try {
     switch (message.type) {
       case "ready":
+        // Tell the panel which folder is open so the repository field starts
+        // filled in. It already defaults to this on submit; showing it means
+        // the user can see what will be used instead of guessing.
+        post({ type: "workspace", repoPath: currentRepo() ?? "" });
         if (await ensureDaemon()) await refreshAll();
         return;
       case "tab":
@@ -153,6 +228,12 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
         return;
       case "openRun":
         await reattach(String(message.runId ?? ""));
+        return;
+      case "pickFiles":
+        await pickAttachments();
+        return;
+      case "attachActiveFile":
+        attachActiveFile();
         return;
     }
   } catch (err) {
@@ -184,11 +265,57 @@ function currentRepo(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
+/**
+ * Let the user attach workspace files as context for the prompt.
+ *
+ * VS Code's own picker is used rather than a webview file input: it respects
+ * the workspace root, handles remote and virtual filesystems, and never copies
+ * file contents through the webview.
+ */
+async function pickAttachments(): Promise<void> {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectMany: true,
+    openLabel: "Attach as context",
+    ...(currentRepo() ? { defaultUri: vscode.Uri.file(currentRepo() as string) } : {}),
+  });
+  if (picked?.length) post({ type: "attachments", files: picked.map(describeFile) });
+}
+
+/** Attach whatever is open in the editor — the most common case, one click. */
+function attachActiveFile(): void {
+  const active = vscode.window.activeTextEditor?.document.uri;
+  if (!active) {
+    post({ type: "error", message: "No file is open in the editor to attach." });
+    return;
+  }
+  post({ type: "attachments", files: [describeFile(active)] });
+}
+
+function describeFile(uri: vscode.Uri): { path: string; label: string } {
+  const repoPath = currentRepo();
+  const full = uri.fsPath;
+  // Show the workspace-relative name; send the absolute path, since the agent
+  // resolves it from its own working directory.
+  return { path: full, label: repoPath ? path.relative(repoPath, full) || full : full };
+}
+
 async function startRun(message: Record<string, unknown>): Promise<void> {
   const repoPath = String(message.repoPath ?? "").trim() || currentRepo();
-  const prompt = String(message.prompt ?? "").trim();
+  const typed = String(message.prompt ?? "").trim();
   if (!repoPath) throw new Error("open a folder or type a repository path first");
-  if (!prompt) throw new Error("a prompt is required");
+  if (!typed) throw new Error("a prompt is required");
+
+  // Attachments are appended as paths for the agent to read itself. Adapters
+  // already have file access, so this works for every provider — and for
+  // images with providers that can open them — without inlining contents.
+  const attached = Array.isArray(message.attachments)
+    ? (message.attachments as string[]).filter((entry) => typeof entry === "string")
+    : [];
+  const prompt = attached.length
+    ? [typed, "", "Context files (read these first):", ...attached.map((file) => `- ${file}`)].join(
+        "\n",
+      )
+    : typed;
 
   const { run } = await client.startRun({
     mode: message.mode === "team" ? "team" : "single",
