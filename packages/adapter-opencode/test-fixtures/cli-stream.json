@@ -1,0 +1,122 @@
+[
+  {
+    "type": "step_start",
+    "timestamp": 1784649706837,
+    "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+    "part": {
+      "id": "prt_f85696d52001AcAOhx5Q7cOsTU",
+      "messageID": "msg_f856960ab001fEvxgYaq5HF1Xm",
+      "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+      "snapshot": "0b65d1ec598e92caed03af09385a009b583b6083",
+      "type": "step-start"
+    }
+  },
+  {
+    "type": "tool_use",
+    "timestamp": 1784649708495,
+    "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+    "part": {
+      "type": "tool",
+      "tool": "write",
+      "callID": "call_00_sLFIMS6ZKMoarMRRzG5i1823",
+      "state": {
+        "status": "completed",
+        "input": {
+          "filePath": "C:\\Users\\Acer\\AppData\\Local\\Temp\\bremio-fixture-capture-651047793\\PROOF.txt",
+          "content": "hello"
+        },
+        "output": "Wrote file successfully.",
+        "metadata": {
+          "diagnostics": {},
+          "filepath": "C:\\Users\\Acer\\AppData\\Local\\Temp\\bremio-fixture-capture-651047793\\PROOF.txt",
+          "exists": false,
+          "truncated": false
+        },
+        "title": "PROOF.txt",
+        "time": {
+          "start": 1784649708464,
+          "end": 1784649708488
+        }
+      },
+      "id": "prt_f85697196001jvmDIKK6Is4kzu",
+      "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+      "messageID": "msg_f856960ab001fEvxgYaq5HF1Xm"
+    }
+  },
+  {
+    "type": "step_finish",
+    "timestamp": 1784649708887,
+    "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+    "part": {
+      "id": "prt_f856975500012ComTDFECnilrh",
+      "reason": "tool-calls",
+      "snapshot": "374bf3c0be576d78783e2d27fd5767932937c274",
+      "messageID": "msg_f856960ab001fEvxgYaq5HF1Xm",
+      "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+      "type": "step-finish",
+      "tokens": {
+        "total": 8089,
+        "input": 7985,
+        "output": 88,
+        "reasoning": 16,
+        "cache": {
+          "write": 0,
+          "read": 0
+        }
+      },
+      "cost": 0
+    }
+  },
+  {
+    "type": "step_start",
+    "timestamp": 1784649710462,
+    "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+    "part": {
+      "id": "prt_f85697b7b001W61clXjDELqTHI",
+      "messageID": "msg_f85697649001ezWJqjbRAR6G24",
+      "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+      "snapshot": "374bf3c0be576d78783e2d27fd5767932937c274",
+      "type": "step-start"
+    }
+  },
+  {
+    "type": "text",
+    "timestamp": 1784649711262,
+    "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+    "part": {
+      "id": "prt_f85697e680018KdyBDx9pj1Pvs",
+      "messageID": "msg_f85697649001ezWJqjbRAR6G24",
+      "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+      "type": "text",
+      "text": "Done.",
+      "time": {
+        "start": 1784649711208,
+        "end": 1784649711259
+      }
+    }
+  },
+  {
+    "type": "step_finish",
+    "timestamp": 1784649711460,
+    "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+    "part": {
+      "id": "prt_f85697f57001VW6gwuc1u3C54Z",
+      "reason": "stop",
+      "snapshot": "374bf3c0be576d78783e2d27fd5767932937c274",
+      "messageID": "msg_f85697649001ezWJqjbRAR6G24",
+      "sessionID": "ses_07a96a1b6ffe4IMcBLPSC4woXV",
+      "type": "step-finish",
+      "tokens": {
+        "total": 8116,
+        "input": 41,
+        "output": 3,
+        "reasoning": 8,
+        "cache": {
+          "write": 0,
+          "read": 8064
+        }
+      },
+      "cost": 0
+    }
+  }
+]

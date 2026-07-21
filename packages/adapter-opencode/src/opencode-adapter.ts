@@ -16,6 +16,11 @@ import type { AgentEvent } from "@bremio/protocol";
 import { mapOpenCodeLine } from "./events";
 import { resolveOpenCodeBinary, spawnOpenCode } from "./binary";
 
+export function parseServerResponse(result: { parts?: Array<{ type: string; text?: string }> }): string {
+  const textPart = result.parts?.find((p) => p.type === "text");
+  return textPart?.text ?? "";
+}
+
 export interface OpenCodeAdapterOptions {
   explicitBin?: string;
   extraArgs?: string[];
@@ -259,9 +264,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       await this.servers.get(req.runId)?.cleanup();
       this.servers.delete(req.runId);
 
-      const parts = result.parts as Array<{ type: string; text?: string }> | undefined;
-      const textPart = parts?.find((p) => p.type === "text");
-      const finalText = textPart?.text ?? "";
+      const finalText = parseServerResponse(result);
 
       const wasCancelled = this.cancelled.delete(req.runId);
       yield {

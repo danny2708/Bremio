@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { AgentRunRequest } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
-import { OpenCodeAdapter } from "./opencode-adapter";
+import { mapOpenCodeLine } from "./events";
+import { OpenCodeAdapter, parseServerResponse } from "./opencode-adapter";
 
 const fakeOpenCode = fileURLToPath(new URL("../test-fixtures/fake-opencode.mjs", import.meta.url));
 
@@ -121,5 +123,68 @@ describe("OpenCodeAdapter", () => {
     const adapt = adapter();
     await collect(adapt.startRun(request({ cwd: process.cwd() })));
     await expect(adapt.cancelRun("run:test")).resolves.toBeUndefined();
+  });
+});
+
+const fixtureDir = fileURLToPath(new URL("../test-fixtures", import.meta.url));
+
+describe("mapOpenCodeLine with recorded CLI stream", () => {
+  const records: unknown[] = JSON.parse(readFileSync(`${fixtureDir}/cli-stream.json`, "utf8"));
+
+  it("parses the complete recorded stream without errors", () => {
+    const allEvents = records.flatMap((rec: unknown) => mapOpenCodeLine(JSON.stringify(rec), "run:fixture"));
+    expect(allEvents.length).toBeGreaterThan(0);
+
+    const messages = allEvents.filter((e) => e.type === "message");
+    expect(messages).toHaveLength(1);
+    if (messages[0]?.type === "message") expect(messages[0].text).toBe("Done.");
+
+    const usage = allEvents.filter((e) => e.type === "usage");
+    expect(usage.length).toBeGreaterThan(0);
+
+    const toolUses = allEvents.filter((e) => e.type === "tool_use");
+    expect(toolUses.length).toBeGreaterThan(0);
+
+    const toolResults = allEvents.filter((e) => e.type === "tool_result");
+    expect(toolResults.length).toBeGreaterThan(0);
+  });
+
+  it("emits a log for step-start from the recorded stream", () => {
+    const stepStartLines = records.filter((r: Record<string, unknown>) => r.type === "step_start");
+    for (const line of stepStartLines) {
+      const events = mapOpenCodeLine(JSON.stringify(line), "run:fixture");
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("log");
+    }
+  });
+
+  it("extracts tool_use + tool_result for write from the recorded stream", () => {
+    const toolUseRecords = records.filter((r: Record<string, unknown>) => r.type === "tool_use");
+    expect(toolUseRecords.length).toBeGreaterThan(0);
+    for (const rec of toolUseRecords) {
+      const events = mapOpenCodeLine(JSON.stringify(rec), "run:fixture");
+      const toolUseEvent = events.find((e) => e.type === "tool_use");
+      expect(toolUseEvent).toBeDefined();
+      if (toolUseEvent?.type === "tool_use") expect(toolUseEvent.name).toBe("edit");
+    }
+  });
+});
+
+describe("parseServerResponse with recorded ACP response", () => {
+  const response: { parts?: Array<{ type: string; text?: string }> } = JSON.parse(
+    readFileSync(`${fixtureDir}/server-response.json`, "utf8"),
+  );
+
+  it("extracts the text part from the ACP response", () => {
+    const text = parseServerResponse(response);
+    expect(JSON.parse(text)).toEqual({ answer: 42 });
+  });
+
+  it("returns empty string when there are no parts", () => {
+    expect(parseServerResponse({})).toBe("");
+  });
+
+  it("returns empty string when no part has type text", () => {
+    expect(parseServerResponse({ parts: [{ type: "step-start" }] })).toBe("");
   });
 });

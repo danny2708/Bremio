@@ -156,3 +156,44 @@ opencode's default provider. That Claude tasks in Team mode continue to work
 (promoted from future to verified), `06-roadmap.md` (Phase 6 status), and
 `09-opencode-adapter.md` (corrected response shape and structured output
 findings).
+
+## S1-R1 — Replace hand-written fake with recorded provider output
+
+**Done:** Replaced the hand-written `test-fixtures/fake-opencode.mjs` with two
+recorded fixture files captured from real `opencode 1.18.4`:
+
+1. **`test-fixtures/cli-stream.json`**: 6-event JSON array from `opencode run
+   --format json --auto "create a file called PROOF.txt containing hello"`.
+   Contains real `step_start` → `tool_use` (write) → `step_finish` (tool-calls)
+   → `step_start` → `text` ("Done.") → `step_finish` (stop) with genuine session
+   IDs, token counts, snapshot hashes, and timestamps.
+
+2. **`test-fixtures/server-response.json`**: Full ACP response from `POST
+   /session/:id/message` with `{ info, parts }` shape. The model's text is at
+   `parts[{type:"text"}].text` = `{"answer": 42}`. Contains real reasoning
+   traces, token billing, and metadata.
+
+**Three new test groups in `opencode-adapter.test.ts`** (16 total, +9):
+
+- `mapOpenCodeLine with recorded CLI stream` (3 tests): parses the full 6-event
+  stream, extracts exactly 1 message ("Done."), emits usage + tool_use +
+  tool_result for real data. Sub-tests verify `step_start` → log, `write` →
+  `tool_use` with name "edit".
+
+- `parseServerResponse with recorded ACP response` (3 tests): extracts text
+  from real ACP `parts` array; empty when no parts; empty when no text-typed
+  part. (The new exported `parseServerResponse()` is used by `startServerRun`.)
+
+- The fake fixture (`fake-opencode.mjs`) remains for spawn mechanics, exit
+  codes, and cancellation tests — it is no longer the sole correctness oracle
+  for parse logic.
+
+**Red/green verified:** Each new test was mutated (wrong text, wrong answer)
+to confirm red → restored to confirm green.
+
+**Typecheck:** clean. **Test:** 308/308 pass.
+
+**Deviations:** The existing `fake-opencode.mjs` was kept (not deleted) per
+S1-R1 spec — it still serves endpoint-mock and error-condition tests.
+`cli-stream.jsonl` (raw line-delimited JSONL) is also kept alongside the
+parsed `.json` array for potential JSONL-specific tests in the future.

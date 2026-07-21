@@ -1,0 +1,82 @@
+{
+  "info": {
+    "parentID": "msg_f856990da001Og0E2q05b6OtbL",
+    "role": "assistant",
+    "mode": "build",
+    "agent": "build",
+    "path": {
+      "cwd": "C:\\Users\\Acer\\AppData\\Local\\Temp\\bremio-fixture-capture-651047793",
+      "root": "C:\\Users\\Acer\\AppData\\Local\\Temp\\bremio-fixture-capture-651047793"
+    },
+    "cost": 0,
+    "tokens": {
+      "total": 8389,
+      "input": 8367,
+      "output": 7,
+      "reasoning": 15,
+      "cache": {
+        "write": 0,
+        "read": 0
+      }
+    },
+    "modelID": "deepseek-v4-flash-free",
+    "providerID": "opencode",
+    "time": {
+      "created": 1784649715967,
+      "completed": 1784649720443
+    },
+    "finish": "stop",
+    "id": "msg_f856990ff0010TPYupxlYijh45",
+    "sessionID": "ses_07a96712fffedeI2wGnmD5FUjk"
+  },
+  "parts": [
+    {
+      "snapshot": "374bf3c0be576d78783e2d27fd5767932937c274",
+      "type": "step-start",
+      "id": "prt_f85699cfa001HlRuXxw7SBqo27",
+      "sessionID": "ses_07a96712fffedeI2wGnmD5FUjk",
+      "messageID": "msg_f856990ff0010TPYupxlYijh45"
+    },
+    {
+      "type": "reasoning",
+      "text": "The user wants me to return a specific JSON object. This is straightforward.",
+      "time": {
+        "start": 1784649719748,
+        "end": 1784649719978
+      },
+      "id": "prt_f85699fc4001bcSbocVAvA3zGL",
+      "sessionID": "ses_07a96712fffedeI2wGnmD5FUjk",
+      "messageID": "msg_f856990ff0010TPYupxlYijh45"
+    },
+    {
+      "type": "text",
+      "text": "{\"answer\": 42}",
+      "time": {
+        "start": 1784649719982,
+        "end": 1784649720055
+      },
+      "id": "prt_f8569a0ae0019xucJD4pksP8Hq",
+      "sessionID": "ses_07a96712fffedeI2wGnmD5FUjk",
+      "messageID": "msg_f856990ff0010TPYupxlYijh45"
+    },
+    {
+      "reason": "stop",
+      "snapshot": "374bf3c0be576d78783e2d27fd5767932937c274",
+      "type": "step-finish",
+      "tokens": {
+        "total": 8389,
+        "input": 8367,
+        "output": 7,
+        "reasoning": 15,
+        "cache": {
+          "write": 0,
+          "read": 0
+        }
+      },
+      "cost": 0,
+      "id": "prt_f8569a1b7001vuP4uzFLq13Bnl",
+      "sessionID": "ses_07a96712fffedeI2wGnmD5FUjk",
+      "messageID": "msg_f856990ff0010TPYupxlYijh45"
+    }
+  ]
+}
