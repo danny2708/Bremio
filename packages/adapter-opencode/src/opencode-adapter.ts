@@ -21,6 +21,36 @@ export function parseServerResponse(result: { parts?: Array<{ type: string; text
   return textPart?.text ?? "";
 }
 
+// parseServerResponse accepts the narrower type; this helper bridges the
+// Record<string,unknown>[] returned by sendPrompt into the expected shape.
+export function parseACPResponse(raw: { parts?: Array<Record<string, unknown>> }): string {
+  return parseServerResponse(raw as { parts?: Array<{ type: string; text?: string }> });
+}
+
+export function validateStructuredOutput(
+  text: string,
+  schema?: Record<string, unknown>,
+): { valid: true; data: unknown } | { valid: false; error: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { valid: false, error: "output is not valid JSON" };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { valid: false, error: "output must be a JSON object, not an array or primitive" };
+  }
+  if (schema?.required && Array.isArray(schema.required)) {
+    const obj = parsed as Record<string, unknown>;
+    for (const field of schema.required) {
+      if (!(field in obj)) {
+        return { valid: false, error: `output is missing required field: ${field}` };
+      }
+    }
+  }
+  return { valid: true, data: parsed };
+}
+
 export interface OpenCodeAdapterOptions {
   explicitBin?: string;
   extraArgs?: string[];
@@ -37,7 +67,7 @@ const CAPABILITIES: AgentCapabilities = {
   shell: true,
   testing: true,
   browser: false,
-  vision: true,
+  vision: false,
   resumableSessions: false,
 };
 
@@ -248,23 +278,50 @@ export class OpenCodeAdapter implements AgentAdapter {
       req.signal?.addEventListener("abort", onAbort, { once: true });
       if (req.signal?.aborted) void this.cancelRun(req.runId);
 
-      const promptBody: Record<string, unknown> = {
-        parts: [{ type: "text", text: req.prompt }],
-      };
-      if (req.model) {
-        const [providerID, ...modelParts] = req.model.split("/");
-        promptBody.model = { providerID, modelID: modelParts.join("/") };
-      }
-      if (req.systemPrompt) {
-        promptBody.system = req.systemPrompt;
-      }
+      let result: Awaited<ReturnType<typeof sendPrompt>>;
 
-      const result = await sendPrompt(serverUrl, sessionId, promptBody);
+      const buildBody = (withFormat: boolean): Record<string, unknown> => {
+        const body: Record<string, unknown> = {
+          parts: [{ type: "text", text: req.prompt }],
+        };
+        if (req.model) {
+          const [providerID, ...modelParts] = req.model.split("/");
+          body.model = { providerID, modelID: modelParts.join("/") };
+        }
+        if (req.systemPrompt) {
+          body.system = req.systemPrompt;
+        }
+        if (withFormat && req.outputSchema) {
+          body.format = { type: "json_schema", schema: req.outputSchema };
+        }
+        return body;
+      };
+
+      try {
+        result = await sendPrompt(serverUrl, sessionId, buildBody(true));
+      } catch {
+        // Provider rejected native structured output — fall back to plain text
+        result = await sendPrompt(serverUrl, sessionId, buildBody(false));
+      }
 
       await this.servers.get(req.runId)?.cleanup();
       this.servers.delete(req.runId);
 
-      const finalText = parseServerResponse(result);
+      let finalText = parseACPResponse(result);
+
+      if (req.outputSchema && finalText) {
+        const validation = validateStructuredOutput(finalText, req.outputSchema);
+        if (!validation.valid) {
+          yield {
+            type: "completed",
+            runId: req.runId,
+            ts: now(),
+            outcome: { status: "failed", error: validation.error },
+          };
+          return;
+        }
+        finalText = JSON.stringify(validation.data);
+      }
 
       const wasCancelled = this.cancelled.delete(req.runId);
       yield {

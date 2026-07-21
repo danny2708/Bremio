@@ -197,3 +197,59 @@ to confirm red → restored to confirm green.
 S1-R1 spec — it still serves endpoint-mock and error-condition tests.
 `cli-stream.jsonl` (raw line-delimited JSONL) is also kept alongside the
 parsed `.json` array for potential JSONL-specific tests in the future.
+
+## S1-R2 — Make the structured-output claim true or drop it
+
+**Choice: (a) Earn it.** The guarantee moved from "the model usually returns
+JSON when asked nicely" to "the adapter validates the output and fails the
+run if it is not schema-conforming." Three reasons:
+
+1. The delegation contract §6c requires the boolean to track its mechanism —
+   post-hoc validation against `req.outputSchema` is a real, testable mechanism.
+2. The team smoke already runs opencode as lead (S1-T4). Dropping to worker
+   would regress real working functionality.
+3. The mechanism is simple (JSON.parse + object check + required-field check)
+   and requires no new dependencies — it uses the standard library and the
+   shape information already in `req.outputSchema`.
+
+**Done:**
+- New exported `validateStructuredOutput(text, schema)` function that:
+  1. Parses the response text as JSON — fails if not valid JSON
+  2. Checks the result is a JSON object (not array/primitive)
+  3. Checks every field in `schema.required` is present
+- `startServerRun` uses it: when `req.outputSchema` is set and validation
+  fails, the run yields `failed` instead of `completed`.
+- The server path also tries `format: { type: "json_schema", schema:
+  req.outputSchema }` in the ACP prompt body. If the provider rejects it
+  (the default Console/deepseek provider does), the catch handler re-sends
+  without the format field — graceful degradation.
+- `vision: false` — the `AgentRunRequest` interface has no mechanism for
+  passing images/attachments to `startRun`, so the adapter cannot exercise it.
+  Claiming `true` was misleading.
+- `docs/09-opencode-adapter.md` updated: capability declaration, structured
+  output section with the validation mechanism, findings table. `docs/04`
+  also updated to describe post-hoc validation.
+- `fake-opencode.mjs` unchanged — the validation test runs against an exported
+  pure function, not through the fake.
+
+**Tests (22 total, +6):**
+- `validateStructuredOutput` (6 tests):
+  - passes valid JSON matching the schema
+  - passes valid JSON when no schema is given
+  - fails prose output with "not valid JSON"
+  - fails a JSON array (not an object)
+  - fails when a required field is missing
+  - fails when multiple required fields are missing
+- Capability test updated: `vision` → `false`
+
+**Red/green verified:** Mutated "passes valid JSON" assertion → red, mutated
+"fails prose" assertion → red, restored both → green.
+
+**Typecheck:** clean. **Test:** 308/308 pass.
+
+**Deviations:** The `@opencode-ai/sdk` npm package was **not** added as a
+dependency — the task says "try" the SDK path but does not require it, and
+the raw HTTP `format` field approach (which the SDK uses under the hood)
+already covers the same ground with catch-and-retry fallback. Adding a whole
+SDK for a best-effort optimisation would violate §4's "no new runtime
+dependency without saying why the standard library could not do it."

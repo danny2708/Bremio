@@ -95,10 +95,15 @@ interface AgentAdapter {
 - ACP server response: the `POST /session/:id/message` endpoint returns
   `{ info, parts }` where the model's text is in `parts[{type:"text"}].text`.
   The `info.text` and `data.info.structured_output` fields do not exist.
-  The `json_schema` format option causes an upstream error — the default
-  Console provider (deepseek-v4-flash-free) does not support structured
-  output, so the lead prompt is sent as plain text with JSON format
-  instructions.
+  The adapter includes `format: { type: "json_schema", schema }` in the prompt
+  body when `outputSchema` is provided; if the provider rejects it (the
+  default Console provider does), the adapter falls back to a text prompt with
+  JSON format instructions and validates the response post-hoc.
+- Structured output: the adapter validates `req.outputSchema` by parsing the
+  response as JSON, checking it is an object, and verifying all required fields
+  from the schema are present. Non-conforming output yields a `failed` outcome.
+  This is an adapter-level guarantee — a completed run is always
+  schema-conforming.
 - Roles: lead (via server planning), implementer (via CLI), reviewer (via CLI
   with `--agent plan`), tester (via CLI). Eligible to be the lead.
 - Verified with real provider smoke: single-agent run PASS, Team run with

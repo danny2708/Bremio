@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentRunRequest } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
 import { mapOpenCodeLine } from "./events";
-import { OpenCodeAdapter, parseServerResponse } from "./opencode-adapter";
+import { OpenCodeAdapter, parseServerResponse, validateStructuredOutput } from "./opencode-adapter";
 
 const fakeOpenCode = fileURLToPath(new URL("../test-fixtures/fake-opencode.mjs", import.meta.url));
 
@@ -39,7 +39,7 @@ describe("OpenCodeAdapter", () => {
     expect(caps.shell).toBe(true);
     expect(caps.testing).toBe(true);
     expect(caps.browser).toBe(false);
-    expect(caps.vision).toBe(true);
+    expect(caps.vision).toBe(false);
     expect(caps.resumableSessions).toBe(false);
   });
 
@@ -150,16 +150,16 @@ describe("mapOpenCodeLine with recorded CLI stream", () => {
   });
 
   it("emits a log for step-start from the recorded stream", () => {
-    const stepStartLines = records.filter((r: Record<string, unknown>) => r.type === "step_start");
+    const stepStartLines = records.filter((r) => (r as Record<string, unknown>).type === "step_start");
     for (const line of stepStartLines) {
       const events = mapOpenCodeLine(JSON.stringify(line), "run:fixture");
       expect(events).toHaveLength(1);
-      expect(events[0].type).toBe("log");
+      if (events[0]) expect(events[0].type).toBe("log");
     }
   });
 
   it("extracts tool_use + tool_result for write from the recorded stream", () => {
-    const toolUseRecords = records.filter((r: Record<string, unknown>) => r.type === "tool_use");
+    const toolUseRecords = records.filter((r) => (r as Record<string, unknown>).type === "tool_use");
     expect(toolUseRecords.length).toBeGreaterThan(0);
     for (const rec of toolUseRecords) {
       const events = mapOpenCodeLine(JSON.stringify(rec), "run:fixture");
@@ -186,5 +186,55 @@ describe("parseServerResponse with recorded ACP response", () => {
 
   it("returns empty string when no part has type text", () => {
     expect(parseServerResponse({ parts: [{ type: "step-start" }] })).toBe("");
+  });
+});
+
+describe("validateStructuredOutput", () => {
+  const planSchema = {
+    type: "object",
+    required: ["summary", "leadAgentId", "tasks"],
+    properties: {
+      summary: { type: "string" },
+      leadAgentId: { type: "string" },
+      tasks: { type: "array" },
+    },
+  };
+
+  it("passes valid JSON matching the schema", () => {
+    const result = validateStructuredOutput(
+      JSON.stringify({ summary: "a", leadAgentId: "opencode", tasks: [] }),
+      planSchema,
+    );
+    expect(result.valid).toBe(true);
+    if (result.valid) expect((result.data as Record<string, unknown>).summary).toBe("a");
+  });
+
+  it("passes valid JSON when no schema is given", () => {
+    const result = validateStructuredOutput('{"ok": true}');
+    expect(result.valid).toBe(true);
+  });
+
+  it("fails prose output with not-valid-JSON", () => {
+    const result = validateStructuredOutput("Hello, I am a helpful assistant.", planSchema);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.error).toContain("not valid JSON");
+  });
+
+  it("fails a JSON array (not an object)", () => {
+    const result = validateStructuredOutput("[1, 2, 3]", planSchema);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.error).toContain("must be a JSON object");
+  });
+
+  it("fails when a required field is missing", () => {
+    const result = validateStructuredOutput(JSON.stringify({ summary: "a" }), planSchema);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.error).toContain("leadAgentId");
+  });
+
+  it("fails when multiple required fields are missing", () => {
+    const result = validateStructuredOutput("{}", planSchema);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.error).toContain("summary");
   });
 });
