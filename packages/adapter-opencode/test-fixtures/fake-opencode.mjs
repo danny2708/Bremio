@@ -50,6 +50,29 @@ if (prompt.includes("FAIL_PLEASE")) {
   process.exit(3);
 }
 
+// Echo the prompt back verbatim so a test can assert what actually crossed the
+// process boundary. Newlines are the interesting part: a prompt flattened to one
+// line still runs, so nothing else would catch it.
+if (prompt.includes("ECHO_PROMPT")) {
+  console.log(
+    JSON.stringify({
+      type: "text",
+      timestamp: Date.now(),
+      sessionID: "ses_fake00000000000000000000",
+      part: { id: "prt_echo", type: "text", text: prompt },
+    }),
+  );
+  console.log(
+    JSON.stringify({
+      type: "step_finish",
+      timestamp: Date.now(),
+      sessionID: "ses_fake00000000000000000000",
+      part: { id: "prt_echo_end", reason: "stop", tokens: { total: 0, input: 0, output: 0, reasoning: 0, cache: { write: 0, read: 0 } }, cost: 0 },
+    }),
+  );
+  process.exit(0);
+}
+
 const ts = Date.now();
 const sessionID = "ses_fake00000000000000000000";
 

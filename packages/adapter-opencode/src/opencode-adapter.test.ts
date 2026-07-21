@@ -86,6 +86,33 @@ describe("OpenCodeAdapter", () => {
     }
   });
 
+  it("passes a multi-line prompt through without flattening it", async () => {
+    const multiLine = "ECHO_PROMPT\nline two\n\n- bullet three";
+    const events = await collect(adapter().startRun(request({ prompt: multiLine })));
+    const terminal = events.find((e) => e.type === "completed");
+    if (terminal?.type !== "completed") throw new Error("no terminal event");
+    expect(terminal.outcome.finalText).toContain("line two");
+    expect(terminal.outcome.finalText).toContain("- bullet three");
+    // The assertion that matters: structure survived the process boundary.
+    expect(terminal.outcome.finalText?.split("\n").length).toBeGreaterThan(2);
+  });
+
+  it("keeps the system prompt separate from the task prompt", async () => {
+    const events = await collect(
+      adapter().startRun(request({ prompt: "ECHO_PROMPT task body", systemPrompt: "system rules here" })),
+    );
+    const terminal = events.find((e) => e.type === "completed");
+    if (terminal?.type !== "completed") throw new Error("no terminal event");
+    expect(terminal.outcome.finalText).toContain("system rules here");
+    expect(terminal.outcome.finalText).toContain("task body");
+  });
+
+  it("reports no models rather than offering agent names as model ids", async () => {
+    // `build` and `plan` are permission profiles; handing them to --model would
+    // fail. Empty means "use the provider's configured default".
+    await expect(adapter().listModels()).resolves.toEqual([]);
+  });
+
   it("cancelRun before startRun is a no-op", async () => {
     await expect(adapter().cancelRun("run:nonexistent")).resolves.toBeUndefined();
   });

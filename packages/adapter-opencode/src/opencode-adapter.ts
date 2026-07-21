@@ -45,7 +45,10 @@ export class OpenCodeAdapter implements AgentAdapter {
   private readonly defaultTimeoutMs: number;
   private readonly children = new Map<string, ReturnType<typeof spawnOpenCode>>();
   private readonly cancelled = new Set<string>();
-  private readonly servers = new Map<string, { serverUrl: string; cleanup: () => Promise<void> }>();
+  private readonly servers = new Map<
+    string,
+    { serverUrl: string; sessionId?: string; cleanup: () => Promise<void> }
+  >();
 
   constructor(options: OpenCodeAdapterOptions = {}) {
     this.explicitBin = options.explicitBin;
@@ -57,11 +60,17 @@ export class OpenCodeAdapter implements AgentAdapter {
     return CAPABILITIES;
   }
 
+  /**
+   * OpenCode is a multi-provider front end: `--model` takes `provider/model`,
+   * and which models exist depends entirely on the user's configured
+   * credentials. `build` and `plan` are *agents* (permission profiles), not
+   * models, so listing them here would hand the router an id that `--model`
+   * cannot accept. Reporting nothing is the honest answer until the configured
+   * model list is read from the provider — omitting `--model` then leaves the
+   * user's own default in place, which is what every other adapter does.
+   */
   async listModels(): Promise<ModelDescriptor[]> {
-    return [
-      { id: "opencode/build", displayName: "OpenCode Build (primary)", default: true },
-      { id: "opencode/plan", displayName: "OpenCode Plan (read-only)" },
-    ];
+    return [];
   }
 
   async healthCheck(): Promise<AgentHealth> {
@@ -119,9 +128,13 @@ export class OpenCodeAdapter implements AgentAdapter {
     const readOnly = req.permission === "read-only";
     if (readOnly) args.push("--agent", "plan");
 
-    const prompt = (req.systemPrompt
+    // Passed as a single argv entry with shell:false, so newlines survive and no
+    // quoting is involved. Collapsing them would flatten every structured task
+    // prompt — acceptance criteria, file lists, the review JSON template — into
+    // one unreadable line before the model ever sees it.
+    const prompt = req.systemPrompt
       ? `${req.systemPrompt}\n\n${req.prompt}`
-      : req.prompt).replace(/\r?\n/g, " ");
+      : req.prompt;
 
     args.push(prompt);
 
@@ -220,6 +233,11 @@ export class OpenCodeAdapter implements AgentAdapter {
 
       const session = await createSession(serverUrl, { title: `bremio-${req.runId}` });
       const sessionId = session.id;
+      // The abort endpoint is keyed by the server's session id, not the run id.
+      // Recording it here is what makes cancellation a graceful abort instead of
+      // a 404 that silently degrades into killing the whole server.
+      const server = this.servers.get(req.runId);
+      if (server) server.sessionId = sessionId;
 
       const onAbort = () => void this.cancelRun(req.runId);
       req.signal?.addEventListener("abort", onAbort, { once: true });
@@ -280,8 +298,16 @@ export class OpenCodeAdapter implements AgentAdapter {
     const server = this.servers.get(runId);
     if (server) {
       this.cancelled.add(runId);
+      if (!server.sessionId) {
+        // No session yet: there is nothing to abort, so stop the server itself.
+        await server.cleanup();
+        return;
+      }
       try {
-        const response = await fetch(`${server.serverUrl}/session/${encodeURIComponent(runId.replace(/^run:/, ""))}/abort`, { method: "POST" });
+        const response = await fetch(
+          `${server.serverUrl}/session/${encodeURIComponent(server.sessionId)}/abort`,
+          { method: "POST" },
+        );
         if (!response.ok) {
           await server.cleanup();
         }
