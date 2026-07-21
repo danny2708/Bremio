@@ -140,6 +140,29 @@ describe("daemon HTTP surface", () => {
     const response = await call(handle, "/runs/does-not-exist/cancel", { method: "POST" });
     expect(response.status).toBe(409);
   });
+
+  it("enumerates four adapters including opencode", async () => {
+    const handle = await daemon();
+    const response = await call(handle, "/adapters");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { adapters: Array<{ id: string; leadEligible: boolean }> };
+    expect(body.adapters).toHaveLength(4);
+    const ids = body.adapters.map((a) => a.id);
+    expect(ids).toContain("opencode");
+    expect(ids).toContain("claude");
+    expect(ids).toContain("codex");
+    expect(ids).toContain("antigravity");
+  }, 15_000);
+
+  it("reports opencode lead-eligibility from the capability contract", async () => {
+    const handle = await daemon();
+    const response = await call(handle, "/adapters");
+    const body = (await response.json()) as { adapters: Array<{ id: string; leadEligible: boolean }> };
+    const opencode = body.adapters.find((a) => a.id === "opencode");
+    expect(opencode).toBeDefined();
+    // OpenCode has planning=true and structuredOutput=true per S1-T1 findings.
+    expect(opencode!.leadEligible).toBe(true);
+  }, 15_000);
 });
 
 describe("run registry", () => {

@@ -57,6 +57,9 @@ importers:
       '@bremio/adapter-codex':
         specifier: workspace:*
         version: link:../../packages/adapter-codex
+      '@bremio/adapter-opencode':
+        specifier: workspace:*
+        version: link:../../packages/adapter-opencode
       '@bremio/adapter-sdk':
         specifier: workspace:*
         version: link:../../packages/adapter-sdk
@@ -96,6 +99,9 @@ importers:
       '@bremio/adapter-codex':
         specifier: workspace:*
         version: link:../../packages/adapter-codex
+      '@bremio/adapter-opencode':
+        specifier: workspace:*
+        version: link:../../packages/adapter-opencode
       '@bremio/adapter-sdk':
         specifier: workspace:*
         version: link:../../packages/adapter-sdk

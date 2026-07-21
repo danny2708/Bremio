@@ -5,9 +5,10 @@ import path from "node:path";
 import { AntigravityAdapter } from "../packages/adapter-antigravity/src/index";
 import { ClaudeAdapter } from "../packages/adapter-claude/src/index";
 import { CodexAdapter } from "../packages/adapter-codex/src/index";
+import { OpenCodeAdapter } from "../packages/adapter-opencode/src/index";
 import { createRegistry, runBremio, runSingleAgent } from "../packages/orchestrator/src/index";
 
-type LeadId = "claude" | "codex";
+type LeadId = "claude" | "codex" | "opencode";
 type AgentId = LeadId | "antigravity";
 type SmokeMode = "single" | "team" | "both";
 
@@ -34,8 +35,8 @@ current repository, run npm.cmd test, and fix any failure.`;
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.includes("--help")) {
-    console.log("Usage: pnpm smoke:providers [--mode single|team|both] [--lead claude|codex|both]");
-    console.log("       [--agent claude|codex|antigravity|both|all] [--worker <agent>]");
+    console.log("Usage: pnpm smoke:providers [--mode single|team|both] [--lead claude|codex|opencode|both]");
+    console.log("       [--agent claude|codex|antigravity|opencode|both|all] [--worker <agent>]");
     console.log("       [--timeout seconds] [--keep]");
     console.log("Runs real providers and consumes quota. Defaults: --mode team --lead both --timeout 600.");
     return;
@@ -147,6 +148,7 @@ function createProviderRegistry() {
     new ClaudeAdapter(),
     new CodexAdapter(),
     new AntigravityAdapter(),
+    new OpenCodeAdapter(),
   ]);
 }
 
@@ -156,7 +158,7 @@ async function assertHealthy(
 ): Promise<void> {
   if (!adapter) throw new Error(`adapter ${agentId} is not registered`);
   const health = await adapter.healthCheck();
-  if (health.status === "unavailable" || (agentId === "antigravity" && health.status !== "ok")) {
+  if (health.status === "unavailable" || (agentId === "antigravity" && health.status !== "ok") || (agentId === "opencode" && health.status !== "ok")) {
     throw new Error(`${agentId} preflight ${health.status}: ${health.detail ?? "no detail"}`);
   }
   console.log(`preflight ${agentId}: ${health.status}${health.detail ? ` — ${health.detail}` : ""}`);
@@ -195,7 +197,7 @@ function git(cwd: string, args: string[]): void {
 function parseOptions(args: string[]): Options {
   let mode: SmokeMode = "team";
   let leads: LeadId[] = ["claude", "codex"];
-  let agents: AgentId[] = ["claude", "codex"];
+  let agents: AgentId[] = ["claude", "codex", "opencode"];
   let workerId: AgentId | undefined;
   let timeoutSeconds = 600;
   let keep = false;
@@ -213,20 +215,20 @@ function parseOptions(args: string[]): Options {
       const value = args[index + 1];
       index += 1;
       if (value === "both") leads = ["claude", "codex"];
-      else if (value === "claude" || value === "codex") leads = [value];
-      else throw new Error("--lead must be claude, codex, or both");
+      else if (value === "claude" || value === "codex" || value === "opencode") leads = [value];
+      else throw new Error("--lead must be claude, codex, opencode, or both");
     } else if (arg === "--agent") {
       const value = args[index + 1];
       index += 1;
       if (value === "both") agents = ["claude", "codex"];
-      else if (value === "all") agents = ["claude", "codex", "antigravity"];
-      else if (value === "claude" || value === "codex" || value === "antigravity") agents = [value];
-      else throw new Error("--agent must be claude, codex, antigravity, both, or all");
+      else if (value === "all") agents = ["claude", "codex", "antigravity", "opencode"];
+      else if (value === "claude" || value === "codex" || value === "antigravity" || value === "opencode") agents = [value];
+      else throw new Error("--agent must be claude, codex, antigravity, opencode, both, or all");
     } else if (arg === "--worker") {
       const value = args[index + 1];
       index += 1;
-      if (value === "claude" || value === "codex" || value === "antigravity") workerId = value;
-      else throw new Error("--worker must be claude, codex, or antigravity");
+      if (value === "claude" || value === "codex" || value === "antigravity" || value === "opencode") workerId = value;
+      else throw new Error("--worker must be claude, codex, antigravity, or opencode");
     } else if (arg === "--timeout") {
       const value = Number(args[index + 1]);
       index += 1;

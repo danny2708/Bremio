@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
+import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import { ReasoningLevelSchema } from "@bremio/protocol";
 import { MINIMUM_CLIENT_PROTOCOL, PROTOCOL_VERSION } from "./endpoint";
 import {
@@ -161,7 +162,7 @@ async function handle(
   }
 
   if (method === "GET" && route === "/adapters") {
-    const adapters = [new ClaudeAdapter(), new CodexAdapter(), new AntigravityAdapter()];
+    const adapters = [new ClaudeAdapter(), new CodexAdapter(), new AntigravityAdapter(), new OpenCodeAdapter()];
     const diagnostics = await Promise.all(
       adapters.map(async (adapter) => {
         const [health, capabilities] = await Promise.all([

@@ -59,3 +59,27 @@ normalization tests. That `fetch` is available (Node 22+ has global fetch).
 
 **Deviations:** None — all success criteria met. 7/7 tests pass, typecheck
 clean, full test suite passes (303 tests, 37 files).
+
+## S1-T3 — Offer OpenCode everywhere an agent is chosen
+
+**Done:** Registered `OpenCodeAdapter` in all six surfaces that enumerate agents.
+
+| Surface | Change |
+|---|---|
+| `apps/cli/src/index.ts` | Import, help text (`--agent`, `--lead`, `--worker`), `agentIds` set, registry creation, doctor loop, lead type cast |
+| `apps/daemon/src/server.ts` | Import, `/adapters` endpoint adapter list |
+| `apps/cli/src/tui/data.ts` | Import, `AGENT_LABELS` map, `createAdapters()` |
+| `apps/vscode-extension/src/webview.ts` | Already dynamic (CSS variable `--agent-opencode` was already defined) |
+| `scripts/provider-smoke.ts` | Import, type unions, argument parsing, `createProviderRegistry()`, health check |
+| `apps/cli/package.json`, `apps/daemon/package.json` | Added `@bremio/adapter-opencode: "workspace:*"` dependency |
+
+The hardcoded lead-name check (`values.lead !== "claude" && values.lead !== "codex"`) was replaced with an agent-agnostic check using the `agentIds` set — core no longer learns provider names.
+
+**Tests:** Three new tests added:
+1. `apps/cli/src/opencode-registration.test.ts` — verifies `AGENT_LABELS`, `createAdapters()` returns 4 adapters, and opencode's `getCapabilities()` confirms lead eligibility.
+2. `apps/daemon/src/daemon.test.ts` — `/adapters` endpoint returns 4 adapters including opencode, and opencode reports `leadEligible: true`.
+3. `apps/cli/src/tui/theme.test.ts` — updated the colour check to include opencode.
+
+**Hard:** The daemon `/adapters` endpoint calls `healthCheck()` on each adapter, which can be slow when real provider binaries are probed. The two new daemon tests needed a 15-second timeout.
+
+**Deviations:** None. 308/308 tests pass (38 files), typecheck clean. No hardcoded three-agent triple survives in `apps/` and `packages/` (the `AQT_AGENT_IDS` in `packages/quota/src/aqt-provider.ts` is a data constant listing the three AQT-tracked providers — a different concern from Bremio's agent enumeration).
