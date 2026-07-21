@@ -78,9 +78,18 @@ This repo has a strong existing style. Match it rather than importing your own.
   that a private method was called proves nothing about the product.
 - A bug fix starts with a test that **reproduces the bug** — red first, then
   green.
-- Prefer real fixtures over mocks for provider output. `packages/adapter-codex`
-  and `packages/adapter-antigravity` keep recorded fixtures under
-  `test-fixtures/`; follow that pattern.
+- **Fixtures must be recorded from the real thing.** A fake you wrote yourself
+  encodes what you *believe* the provider emits, so the test passes exactly when
+  your belief is self-consistent — including when it is wrong. This is not
+  hypothetical: sprint 1 shipped a hand-written provider fake, kept 308 tests
+  green, and the adapter still could not parse a single real response. It took
+  three rounds of live debugging to find a shape the fake had asserted was
+  correct all along. Capture real output, commit those bytes, parse those.
+  A hand-written fake is acceptable *in addition*, for spawn mechanics and error
+  paths — never as the only source of truth about a response shape.
+- **A test must be able to fail.** Before calling a test done, break the thing it
+  covers and confirm it goes red. A test that passes either way manufactures
+  confidence, which is worse than having no test at all.
 - Timing: never assert "it finished" after a fixed `setTimeout`. Poll with a
   bound. A flaky test in this repo has already cost a debugging session.
 - Platform-dependent behaviour (process groups, file modes) is tested where it
@@ -103,6 +112,46 @@ a test that was awkward to write, a design choice with no obvious winner.
 This log is read as evidence afterwards. Be accurate rather than flattering —
 "I could not verify X" is a useful entry; a green checkmark over an unverified
 claim destroys the value of the whole log.
+
+## 6b. What counts as a deviation
+
+`Deviations: None` is a claim, and sprint 1 made it on a task that had three.
+Record a deviation whenever **any** of these happened — each one on its own:
+
+- You changed a file the task did not list, especially anything shared. "The fix
+  had to go there" is the reason to record it, not the reason to skip recording.
+- You made a provider-specific problem into a cross-cutting change. Editing
+  shared behaviour so one provider passes silently changes it for every other
+  provider, and no test in this repo will tell you.
+- You solved it a different way than the task prescribed. Sometimes yours is
+  better — say so and say why; a deviation is not an admission of error.
+- You could not meet a success criterion exactly as written.
+- You disabled, skipped, loosened or deleted an existing assertion.
+- You added a runtime dependency.
+- A declared capability, guarantee or doc claim no longer matches what the code
+  does after your change.
+
+The rule of thumb: if a reviewer reading the diff would be surprised, it is a
+deviation. Write it down while you still remember why.
+
+## 6c. Capability claims track their mechanism
+
+A capability boolean in `getCapabilities()` is a **promise the router acts on**,
+not a description of a good day. `structuredOutput: true` means the adapter can
+*constrain* output to a schema and fail when it doesn't validate — not that a
+model produced valid JSON when asked nicely.
+
+So: **if you remove or bypass the mechanism that guarantees a capability, the
+boolean changes in the same commit.** Observing the right output once, on one
+model, is evidence about that model, not a property of the adapter. Overstating
+here is uniquely expensive because the router will hand that agent work it
+cannot do, and the quality gate is fail-closed on the result.
+
+## 6d. Clean up after yourself
+
+Scratch scripts, probe files and temporary fixtures are fine while you work —
+they are how real debugging happens. Delete them before you commit. The repo
+root should be exactly as clean as you found it, including untracked files.
 
 ## 7. The honesty rule
 

@@ -174,6 +174,99 @@ docs(adapters): promote OpenCode from future to verified
 
 ---
 
+# Sprint 1R — Remediation
+
+Added after reviewing sprint 1. Run these before sprint 2.
+
+## S1-R1 — Replace the hand-written fake with recorded reality
+
+```text
+Task S1-R1. Read docs/08-completion-plan.md section "S1-R1" and the updated test
+policy in docs/10-delegation-contract.md section 5.
+
+test-fixtures/fake-opencode.mjs is hand-written, so it asserts what the adapter
+already believes. During S1-T4 the full suite stayed green through three rounds
+of live debugging in which the adapter could not parse a single real response:
+first data.info.structured_output, then info.text, and only then the real
+parts[].text. A fixture that cannot be wrong cannot catch a bug.
+
+Capture real output and commit the bytes: one `opencode run --format json`
+stream, and one POST /session/:id/message response body from a live
+`opencode serve`. Redact anything user-specific; keep the shape byte-exact.
+Test the event mapper and the server-response parser against those recordings.
+
+The server/lead path currently has NO tests at all — which is exactly why the
+path that broke three times was the one nothing covered. Give it tests.
+
+Then verify each new test can fail: point the parser at the wrong field, confirm
+red, restore. Note it in SPRINT-LOG.md.
+
+Commit:
+test(adapter-opencode): parse recorded provider output, not a guess
+```
+
+## S1-R2 — Make the structured-output claim true or drop it
+
+```text
+Task S1-R2. Read docs/08-completion-plan.md section "S1-R2" and
+docs/10-delegation-contract.md section 6c.
+
+The adapter declares structuredOutput: true and planning: true, which makes
+OpenCode lead-eligible. But S1-T4 removed the format: json_schema request after
+the default provider rejected it. Nothing constrains the output now — the lead
+returns valid plan JSON because one free model complied when asked in prose.
+That is evidence about a model, not a property of the adapter, and the router
+acts on that boolean as a promise.
+
+Choose (a) or (b) from docs/08 and say in SPRINT-LOG.md which and why:
+
+(a) Earn it — validate the final output against req.outputSchema and FAIL the
+    run when it does not match, so a completed run guarantees schema-valid
+    output. Try the @opencode-ai/sdk structured-output path; it may work where
+    the raw HTTP format field did not. Test that a non-conforming response
+    produces a failed outcome, not a completed one.
+
+(b) Drop it — structuredOutput: false. OpenCode becomes a worker like
+    Antigravity and the capability contract excludes it from lead with no name
+    check anywhere.
+
+Either way: vision: true has no probe behind it. Verify it or set it false. And
+make docs/04 and docs/09 match whichever outcome you chose — docs/09 currently
+says "Eligible to be the lead".
+
+Commit:
+fix(adapter-opencode): make the structured-output claim honest
+```
+
+## S1-R3 — Settle the shared review-prompt change
+
+```text
+Task S1-R3. Read docs/08-completion-plan.md section "S1-R3".
+
+S1-T4 was a docs-only task. It edited packages/orchestrator/src/plan-schema.ts,
+changing the review prompt for EVERY provider so that OpenCode's model would
+emit parseable findings. It may well be an improvement — the old text referenced
+an "output schema" it never showed. But it was untested, unrecorded as a
+deviation, and it changed Claude's and Codex's review behaviour to fix a third
+provider's problem.
+
+Pin it with a test asserting the review prompt states the JSON shape that
+parseReviewOutput in quality-gate.ts actually accepts, so that contract is
+explicit rather than incidental.
+
+Then verify it against Claude and Codex, not only OpenCode: one real Team run
+each, gate passing, evidence in SPRINT-LOG.md. If either regresses, make the
+instruction provider-conditional or revert it. Do not leave a cross-provider
+change resting on one provider's evidence.
+
+Commit:
+test(orchestrator): pin the review prompt to the parser's contract
+```
+
+**Sprint 1R gate:** `corepack pnpm release:check`
+
+---
+
 # Sprint 2 — Routing completion
 
 ## S2-T1 — Move the tiered model policy into `config/routing.yaml`
