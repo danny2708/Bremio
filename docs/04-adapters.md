@@ -79,11 +79,33 @@ interface AgentAdapter {
 - Binary resolution: PATH, then the installer's default location; override with
   `BREMIO_AGY_BIN`.
 
-## OpenCode / Jan (future, not the MVP)
-- **OpenCode**: has a headless HTTP server (`opencode serve`) → the adapter
-  talks HTTP instead of driving the TUI.
-- **Jan**: local OpenAI-compatible server (default `localhost:1337`) →
-  integrate as a **local model provider / local worker**, no desktop UI
+## OpenCode adapter (`opencode` 1.18.4, verified 2026-07-21)
+- Surface: **one-shot CLI** (`opencode run --format json`) for single-agent
+  implementer/test/review tasks, and **HTTP server** (`opencode serve`) for
+  lead planning. The adapter spawns the process per run; the server is started
+  per-session and killed when done.
+- Binary resolution: `BREMIO_OPENCODE_BIN` → PATH → npm global `.cmd` shim
+  at `%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe`. On Windows,
+  the adapter resolves the `.cmd` shim to the `.exe` by reading the `.cmd`
+  file and spawning the exe directly — avoids the cmd.exe quoting trap.
+- Non-TTY fix: opencode.exe hangs when stdin is a pipe on Windows. The
+  adapter spawns with `stdin: "ignore"` (NUL), which resolves the hang and
+  lets the run complete normally (benchmarked ~22s for a single-agent prompt
+  vs previously timing out at 600s).
+- ACP server response: the `POST /session/:id/message` endpoint returns
+  `{ info, parts }` where the model's text is in `parts[{type:"text"}].text`.
+  The `info.text` and `data.info.structured_output` fields do not exist.
+  The `json_schema` format option causes an upstream error — the default
+  Console provider (deepseek-v4-flash-free) does not support structured
+  output, so the lead prompt is sent as plain text with JSON format
+  instructions.
+- Roles: lead (via server planning), implementer (via CLI), reviewer (via CLI
+  with `--agent plan`), tester (via CLI). Eligible to be the lead.
+- Verified with real provider smoke: single-agent run PASS, Team run with
+  opencode lead + claude worker PASS (3/3 tasks, full plan/delegate/review
+  flow with quality gate).
+- Jan: local OpenAI-compatible server (default `localhost:1337`) → separate
+  integration as a **local model provider / local worker**, no desktop UI
   automation. Strategic role: **near-free capacity** as a fallback when
   cloud agents are low on quota (reading code, preliminary analysis,
   building test skeletons). See `05` — this is where `net_gain` is easiest

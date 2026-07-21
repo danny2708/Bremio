@@ -1,15 +1,35 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, readFileSync } from "node:fs";
 import path from "node:path";
 
 export function resolveOpenCodeBinary(explicit?: string): string | undefined {
   const candidate = explicit ?? process.env.BREMIO_OPENCODE_BIN;
-  if (candidate) return exists(candidate) ? path.resolve(candidate) : undefined;
+  if (candidate) return resolveWindowsCompanion(exists(candidate) ? path.resolve(candidate) : undefined);
 
   const onPath = lookupOnPath();
-  if (onPath) return onPath;
+  if (onPath) return resolveWindowsCompanion(onPath);
 
   return undefined;
+}
+
+function resolveWindowsCompanion(bin: string | undefined): string | undefined {
+  if (!bin || process.platform !== "win32") return bin;
+  const ext = path.extname(bin).toLowerCase();
+  if (ext !== ".cmd" && ext !== ".bat") return bin;
+
+  const exePath = resolveExeFromCmd(bin);
+  return exePath ?? bin;
+}
+
+function resolveExeFromCmd(cmdPath: string): string | undefined {
+  try {
+    const content = readFileSync(cmdPath, "utf8");
+    const match = content.match(/"([^"]+\.exe)"/);
+    if (!match) return undefined;
+    const relative = match[1]!.replace(/%dp0%/gi, path.dirname(cmdPath) + "\\");
+    const resolved = path.resolve(relative);
+    return exists(resolved) ? resolved : undefined;
+  } catch { return undefined; }
 }
 
 function lookupOnPath(): string | undefined {
@@ -51,24 +71,10 @@ export function spawnOpenCode(
   args: string[],
   cwd: string,
 ): ChildProcess {
-  if (process.platform === "win32") {
-    const extension = path.extname(bin).toLowerCase();
-    if (extension === ".cmd" || extension === ".bat") {
-      const comspec = process.env.ComSpec ?? "cmd.exe";
-      const allArgs = `/d /s /c "${bin}" ${args.map((a) => /[ &"']/.test(a) ? `"${a}"` : a).join(" ")}`;
-      return spawn(comspec, [allArgs], {
-        cwd,
-        env: process.env,
-        shell: false,
-        windowsVerbatimArguments: true,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-    }
-  }
   return spawn(bin, args, {
     cwd,
     env: process.env,
     shell: false,
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }

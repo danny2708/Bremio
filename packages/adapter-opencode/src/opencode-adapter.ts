@@ -119,9 +119,9 @@ export class OpenCodeAdapter implements AgentAdapter {
     const readOnly = req.permission === "read-only";
     if (readOnly) args.push("--agent", "plan");
 
-    const prompt = req.systemPrompt
+    const prompt = (req.systemPrompt
       ? `${req.systemPrompt}\n\n${req.prompt}`
-      : req.prompt;
+      : req.prompt).replace(/\r?\n/g, " ");
 
     args.push(prompt);
 
@@ -227,10 +227,6 @@ export class OpenCodeAdapter implements AgentAdapter {
 
       const promptBody: Record<string, unknown> = {
         parts: [{ type: "text", text: req.prompt }],
-        format: {
-          type: "json_schema",
-          schema: req.outputSchema,
-        },
       };
       if (req.model) {
         const [providerID, ...modelParts] = req.model.split("/");
@@ -245,8 +241,9 @@ export class OpenCodeAdapter implements AgentAdapter {
       await this.servers.get(req.runId)?.cleanup();
       this.servers.delete(req.runId);
 
-      const structured = result.data?.info?.structured_output as Record<string, unknown> | undefined;
-      const finalText = structured ? JSON.stringify(structured) : String(result.data?.info?.text ?? "");
+      const parts = result.parts as Array<{ type: string; text?: string }> | undefined;
+      const textPart = parts?.find((p) => p.type === "text");
+      const finalText = textPart?.text ?? "";
 
       const wasCancelled = this.cancelled.delete(req.runId);
       yield {
@@ -256,7 +253,6 @@ export class OpenCodeAdapter implements AgentAdapter {
         outcome: {
           status: wasCancelled ? "cancelled" : "completed",
           ...(finalText ? { finalText } : {}),
-          ...(structured ? { structured } : {}),
         },
       };
     } catch (err) {
@@ -384,14 +380,14 @@ async function sendPrompt(
   serverUrl: string,
   sessionId: string,
   body: Record<string, unknown>,
-): Promise<{ data: { info: Record<string, unknown> } }> {
+): Promise<{ info: Record<string, unknown>; parts: Array<Record<string, unknown>> }> {
   const response = await fetch(`${serverUrl}/session/${encodeURIComponent(sessionId)}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(`prompt failed: ${response.status}`);
-  return await response.json() as { data: { info: Record<string, unknown> } };
+  return await response.json() as { info: Record<string, unknown>; parts: Array<Record<string, unknown>> };
 }
 
 function sleep(ms: number): Promise<void> {

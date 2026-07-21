@@ -39,15 +39,32 @@ Three surfaces exist:
 | HTTP server | `opencode serve` | `--port`, `--hostname`, OpenAPI 3.1 at `/doc`, SSE at `/event` |
 | ACP server | `opencode acp` | nd-JSON over stdio, `--cwd`, JSON-RPC |
 
-**Decision:** HTTP server path (`opencode serve`) + `@opencode-ai/sdk` npm
-package. This gives structured streaming, structured output via JSON Schema, and
-clean cancellation via `POST /session/:id/abort`. The one-shot CLI `--format
-json` streams raw events but cannot constrain output format — it is not
-sufficient for lead eligibility. The server gives both.
+**Decision:** Two paths — one-shot CLI (`opencode run --format json`) for
+single-agent implementer/test/review tasks, and HTTP server (`opencode serve`)
+for lead planning. The adapter spawns the process per run; the server is
+started per-session and killed when done.
 
-**Server process ownership:** Bremio spawns one per run (same model as
-`adapter-codex` spawning `codex exec`). The server lifecycle is tied to the run:
-start → use → stop. Attaching to a user-run instance is not supported.
+**Important findings during verification (S1-T4, 2026-07-21):**
+
+1. **Windows stdin hang.** `opencode.exe` hangs indefinitely when its stdin is
+   a pipe. Fixed by spawning with `stdin: "ignore"` (NUL device on Windows).
+   Without this fix, every run (single or team) would timeout at 600s.
+
+2. **ACP response shape.** `POST /session/:id/message` returns:
+   ```json
+   { "info": { ... }, "parts": [ { "type": "text", "text": "..." }, ... ] }
+   ```
+   The model response text is in `parts[{type:"text"}].text`, **not** in
+   `info.text` or `data.info.structured_output` as initially documented.
+
+3. **JSON Schema format unsupported.** The server's `format: { type:
+   "json_schema", schema: {...} }` option causes the default provider
+   (Console/deepseek-v4-flash-free) to return an error:
+   `"Error from provider (Console): Upstream request failed"`. Structured
+   output is only available through the `@opencode-ai/sdk` npm package, not
+   through the raw HTTP ACP endpoint with the default provider. The adapter
+   therefore sends the lead prompt as plain text with JSON format instructions
+   in the prompt itself — the model reliably produces valid plan JSON.
 
 ### Auth
 
@@ -148,31 +165,23 @@ events plus structured output. Events are also available via SSE at
 The **one-shot CLI** (`opencode run --format json`) cannot constrain the output
 to a schema — it only controls the serialization format of the event stream.
 
-The **HTTP server + SDK** (`@opencode-ai/sdk`) provides structured output via
-`session.prompt()` with a JSON Schema constraint:
+The **HTTP server** (`opencode serve`) accepts `format: { type: "json_schema",
+schema: {...} }` in `POST /session/:id/message`, but the default provider
+(Console/deepseek-v4-flash-free) does NOT support it — the request returns an
+upstream error. The SDK npm package (`@opencode-ai/sdk`) handles this with
+retry logic and fallback, but the raw HTTP ACP endpoint does not.
 
-```ts
-const result = await client.session.prompt({
-  path: { id: sessionId },
-  body: {
-    parts: [{ type: "text", text: "..." }],
-    format: {
-      type: "json_schema",
-      schema: { /* PlanSchema as JSON Schema */ },
-    },
-  },
-})
-// result.data.info.structured_output → validated JSON matching PlanSchema
-```
+The adapter therefore sends the lead prompt as plain text with JSON format
+instructions embedded in the prompt itself. The plan schema and exact JSON
+structure are described in the prompt text, and the model reliably produces
+valid plan JSON that passes PlanSchema validation.
 
-The SDK supports `json_schema` output format type with configurable retry count
-(default 2) and returns validated JSON directly. On failure it returns a
-`StructuredOutputError` with the attempted result.
-
-**Verdict: Yes, OpenCode is lead-eligible.** When using the server/SDK path,
-`structuredOutput = true` and `planning = true`. The structured output is
-schema-validated, not prompt-level coaxing. This requires the HTTP server path
-(not the one-shot CLI).
+**Verdict: Yes, OpenCode is lead-eligible in practice.** When using the server
+path, the model produces valid plan JSON from prompt instructions. Native
+`structuredOutput` is available through the SDK but not through the raw ACP
+HTTP endpoint with the default provider. The adapter uses the server path for
+lead planning (needed for session/workspace isolation) and the one-shot CLI
+for implementer/test/review tasks.
 
 ### Cancellation
 
@@ -259,9 +268,11 @@ handling the `.cmd` shim on Windows. Same pattern as `BREMIO_AGY_BIN`.
 test-evidence requirement (exit-code-backed) is satisfied — this is not an
 Antigravity-like prose-only surface.
 
-`structuredOutput` is `true` only when using the server/SDK path. The one-shot
-CLI (`opencode run --format json`) does NOT support structured output. The
-capability declaration assumes the adapter uses the server path.
+`structuredOutput` is `true` through the SDK but the raw ACP HTTP endpoint
+with the default provider does not support it. The adapter works around this
+by embedding JSON format instructions in the lead prompt text, so in practice
+the lead planner produces valid PlanSchema JSON. The one-shot CLI
+(`opencode run --format json`) does not support structured output at all.
 
 `vision` is `true` based on model capabilities — models used through OpenCode
 may support image input, but this depends on the underlying provider/model

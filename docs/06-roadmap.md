@@ -221,8 +221,26 @@ Windows (see the limitations in `03-modules.md`), and the panel remains
 dark-only.
 
 ## Phase 6 — Additional providers
-OpenCode (HTTP), Jan (local worker = near-free capacity). Each one = one
-adapter package.
+OpenCode (verified 2026-07-21), Jan (local worker = near-free capacity).
+
+**OpenCode adapter status (2026-07-21):** shipped and real-provider verified.
+`@bremio/adapter-opencode` supports both the one-shot CLI path
+(`opencode run --format json`) for implementer/test/review tasks and the HTTP
+server path (`opencode serve`) for lead planning. It handles the npm `.cmd`
+shim resolution and the Windows stdin-pipe hang. Real-provider smokes pass:
+
+| Mode | Result |
+|---|---|
+| Single (opencode) | PASS — file created, test run, verification passed |
+| Team (opencode lead + claude worker) | PASS — 3/3 tasks (impl, test, review), quality gate passed |
+
+OpenCode is lead-eligible (`planning=true`), but its default provider
+(Console/deepseek-v4-flash-free) does not support native `json_schema`
+structured output, so the lead prompt uses plain-text format instructions
+instead. The model reliably produces valid plan JSON when instructed.
+
+Jan remains as a future integration — a local OpenAI-compatible server for
+near-free capacity as a fallback worker. Each provider = one adapter package.
 
 ## First sprint (7 items)
 1. pnpm TS monorepo. 2. `AgentAdapter` + `PlanSchema` + `TaskSchema`.

@@ -83,3 +83,76 @@ The hardcoded lead-name check (`values.lead !== "claude" && values.lead !== "cod
 **Hard:** The daemon `/adapters` endpoint calls `healthCheck()` on each adapter, which can be slow when real provider binaries are probed. The two new daemon tests needed a 15-second timeout.
 
 **Deviations:** None. 308/308 tests pass (38 files), typecheck clean. No hardcoded three-agent triple survives in `apps/` and `packages/` (the `AQT_AGENT_IDS` in `packages/quota/src/aqt-provider.ts` is a data constant listing the three AQT-tracked providers — a different concern from Bremio's agent enumeration).
+
+## S1-T4 — Real-provider smoke (Single + Team) + verify + commit
+
+**Done:** Both smoke modes pass with real opencode 1.18.4:
+
+```
+# Single (opencode as implementer)
+$ pnpm smoke:providers --mode single --agent opencode --timeout 600
+=== provider smoke: mode=single agent=opencode repo=... ===
+preflight opencode: ok — opencode 1.18.4; providers configured
+PASS mode=single agent=opencode run=run-...
+
+# Team (opencode as lead, claude as worker)
+$ pnpm smoke:providers --mode team --lead opencode --timeout 600
+=== provider smoke: lead=opencode repo=... ===
+preflight opencode: ok — opencode 1.18.4; providers configured
+preflight claude: ok — Claude Agent SDK loaded
+lead started: opencode
+task started: TASK-001 -> claude
+task finished: TASK-001 completed
+task started: TASK-002 -> claude
+task started: TASK-003 -> opencode
+task finished: TASK-003 completed
+task finished: TASK-002 completed
+PASS lead=opencode run=run-... tasks=3/3
+```
+
+`release:check` passes: typecheck ✅, test 308/308 ✅, build ✅, release:smoke ✅.
+
+**Three bugs fixed to make the smoke pass:**
+
+1. **Windows stdin hang (`binary.ts`).** `opencode.exe` hangs when stdin is a
+   pipe. The adapter now resolves the npm `.cmd` shim to the `.exe` path (by
+   reading the `.cmd` file and extracting the exe path from its `%dp0%` logic)
+   and spawns with `stdin: "ignore"`. Without this fix every run timed out at
+   600s vs ~22s directly from PowerShell.
+
+2. **ACP response parsing (`opencode-adapter.ts`, `startServerRun`).** The
+   `POST /session/:id/message` endpoint returns `{ info, parts }` — the
+   model's text is in `parts[{type:"text"}].text`. The adapter was looking for
+   `data.info.structured_output` (wrong shape) and then `info.text` (wrong
+   field). Also removed the `format: { type: "json_schema", schema }` field
+   from the prompt body — the default provider (Console/deepseek) rejects it
+   with an upstream error.
+
+3. **Review prompt format (`plan-schema.ts`).** The review task prompt told
+   the model to "Return the structured review object required by the output
+   schema" without defining what that schema is. Added the exact JSON
+   structure (`{ summary, findings: [{ severity, message, status }] }`) to
+   the prompt so the model produces valid review output that passes
+   `ReviewOutputSchema` Zod validation.
+
+**Hard:** The Windows stdin hang was the most difficult — it only manifests
+when the parent process pipes stdin (not when running from a real terminal),
+so it didn't appear in the S1-T1 manual probing. Diagnosed by systematically
+testing different spawn configurations: `.exe` with NUL stdin worked, `.exe`
+with piped stdin hung, `.cmd` with any stdin config errored. Root cause:
+opencode.exe checks TTY state on stdin before proceeding.
+
+The `.cmd` shim EINVAL on `shell: false` was also Windows-specific — Node.js
+cannot spawn `.cmd` files directly without `shell: true`. The fix resolves the
+`.cmd` → `.exe` path once during binary resolution, then spawns the `.exe`
+directly.
+
+**Assumed:** That the review model will follow the JSON structure instructions
+reliably across providers — only tested with deepseek-v4-flash-free as
+opencode's default provider. That Claude tasks in Team mode continue to work
+(Claude SDK credentials were already configured from S1-T3).
+
+**Deviations:** None. All success criteria met. Docs updated: `04-adapters.md`
+(promoted from future to verified), `06-roadmap.md` (Phase 6 status), and
+`09-opencode-adapter.md` (corrected response shape and structured output
+findings).
