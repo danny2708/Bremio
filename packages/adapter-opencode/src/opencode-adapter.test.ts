@@ -190,51 +190,39 @@ describe("parseServerResponse with recorded ACP response", () => {
 });
 
 describe("validateStructuredOutput", () => {
-  const planSchema = {
-    type: "object",
-    required: ["summary", "leadAgentId", "tasks"],
-    properties: {
-      summary: { type: "string" },
-      leadAgentId: { type: "string" },
-      tasks: { type: "array" },
-    },
-  };
-
-  it("passes valid JSON matching the schema", () => {
-    const result = validateStructuredOutput(
-      JSON.stringify({ summary: "a", leadAgentId: "opencode", tasks: [] }),
-      planSchema,
-    );
+  it("passes valid JSON object", () => {
+    const result = validateStructuredOutput(JSON.stringify({ summary: "a" }));
     expect(result.valid).toBe(true);
     if (result.valid) expect((result.data as Record<string, unknown>).summary).toBe("a");
   });
 
-  it("passes valid JSON when no schema is given", () => {
-    const result = validateStructuredOutput('{"ok": true}');
+  it("passes valid JSON array", () => {
+    const result = validateStructuredOutput("[1, 2, 3]");
     expect(result.valid).toBe(true);
   });
 
   it("fails prose output with not-valid-JSON", () => {
-    const result = validateStructuredOutput("Hello, I am a helpful assistant.", planSchema);
+    const result = validateStructuredOutput("Hello, I am a helpful assistant.");
     expect(result.valid).toBe(false);
     if (!result.valid) expect(result.error).toContain("not valid JSON");
   });
 
-  it("fails a JSON array (not an object)", () => {
-    const result = validateStructuredOutput("[1, 2, 3]", planSchema);
+  it("fails empty string", () => {
+    const result = validateStructuredOutput("");
     expect(result.valid).toBe(false);
-    if (!result.valid) expect(result.error).toContain("must be a JSON object");
   });
 
-  it("fails when a required field is missing", () => {
-    const result = validateStructuredOutput(JSON.stringify({ summary: "a" }), planSchema);
-    expect(result.valid).toBe(false);
-    if (!result.valid) expect(result.error).toContain("leadAgentId");
+  it("extracts JSON from prose-prefixed output", () => {
+    const result = validateStructuredOutput(
+      'Here is my plan:\n{"summary": "do it"}',
+    );
+    expect(result.valid).toBe(true);
   });
 
-  it("fails when multiple required fields are missing", () => {
-    const result = validateStructuredOutput("{}", planSchema);
-    expect(result.valid).toBe(false);
-    if (!result.valid) expect(result.error).toContain("summary");
+  it("extracts JSON from fenced code block", () => {
+    const result = validateStructuredOutput(
+      '```json\n{"x": 1}\n```',
+    );
+    expect(result.valid).toBe(true);
   });
 });

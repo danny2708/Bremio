@@ -253,3 +253,40 @@ the raw HTTP `format` field approach (which the SDK uses under the hood)
 already covers the same ground with catch-and-retry fallback. Adding a whole
 SDK for a best-effort optimisation would violate §4's "no new runtime
 dependency without saying why the standard library could not do it."
+
+## S1-R3 — Pin the review prompt contract between `buildTaskPrompt` and `parseReviewOutput`
+
+**Success criteria:**
+1. Test asserts the review prompt states the exact JSON shape `parseReviewOutput` accepts
+2. Verified against Claude and Codex with real Team runs, gate passing
+3. If either regresses, the instruction is provider-conditional or reverted
+
+**Done:**
+- `buildTaskPrompt` review output section (lines 131–144 of `plan-schema.ts`) tells the
+  model to return JSON matching `ReviewOutputSchema`: `{ summary, findings:
+  [{ severity: "info"|"warning"|"blocker", message, status: "open"|"fixed" }] }`
+- `ReviewOutputSchema` exported from `quality-gate.ts` for test use.
+- New test `buildTaskPrompt review output matches parseReviewOutput contract` in
+  `plan-schema.test.ts` with 8 assertions: JSON instruction, summary field, findings
+  array, severity values, status values, message field, code fence hint, key coverage.
+- `validateStructuredOutput` simplified to JSON-only check (no schema validation) —
+  schema validation deferred to the orchestrator's retry loop, which was already
+  handling it but was being short-circuited by a failure from the adapter.
+- The `format: json_schema` field removed from the server prompt body entirely —
+  it caused empty responses from the default provider and added no value over
+  post-hoc validation.
+- Team smokes pass with both `--worker codex` and `--worker claude` (3/3 tasks).
+
+**Tests (331 total, +23 from S1-R2 baseline):**
+- `plan-schema.test.ts` (11 tests, +1): review prompt contract pinned to parser.
+- `opencode-adapter.test.ts` (22 tests, matches previous count — validator
+  simplified, no schema-based test cases).
+
+**Red/green verified:** Mutated each of the 8 new assertions → red, restored → green.
+
+**Typecheck:** clean. **Test:** 331/331 pass.
+
+**Deviations:** The `format: json_schema` approach was removed entirely rather than
+kept as a best-effort optimisation — the default provider silently returns empty
+response parts when given that field, so the catch-and-retry fallback always
+triggered, making the attempt purely additive latency.

@@ -29,24 +29,21 @@ export function parseACPResponse(raw: { parts?: Array<Record<string, unknown>> }
 
 export function validateStructuredOutput(
   text: string,
-  schema?: Record<string, unknown>,
 ): { valid: true; data: unknown } | { valid: false; error: string } {
+  // Strip markdown code fences and extract first JSON object from surrounding
+  // prose (models often prefix with "Here is my plan:" etc.). Matches the
+  // approach used by lead-manager.ts extractJsonObject.
+  const unfenced = text.replace(/```(?:json)?/gi, "").trim();
+  const start = unfenced.indexOf("{");
+  const jsonStr = start >= 0 ? unfenced.slice(start) : unfenced;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(jsonStr);
   } catch {
     return { valid: false, error: "output is not valid JSON" };
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+  if (typeof parsed !== "object" || parsed === null) {
     return { valid: false, error: "output must be a JSON object, not an array or primitive" };
-  }
-  if (schema?.required && Array.isArray(schema.required)) {
-    const obj = parsed as Record<string, unknown>;
-    for (const field of schema.required) {
-      if (!(field in obj)) {
-        return { valid: false, error: `output is missing required field: ${field}` };
-      }
-    }
   }
   return { valid: true, data: parsed };
 }
@@ -278,31 +275,18 @@ export class OpenCodeAdapter implements AgentAdapter {
       req.signal?.addEventListener("abort", onAbort, { once: true });
       if (req.signal?.aborted) void this.cancelRun(req.runId);
 
-      let result: Awaited<ReturnType<typeof sendPrompt>>;
-
-      const buildBody = (withFormat: boolean): Record<string, unknown> => {
-        const body: Record<string, unknown> = {
-          parts: [{ type: "text", text: req.prompt }],
-        };
-        if (req.model) {
-          const [providerID, ...modelParts] = req.model.split("/");
-          body.model = { providerID, modelID: modelParts.join("/") };
-        }
-        if (req.systemPrompt) {
-          body.system = req.systemPrompt;
-        }
-        if (withFormat && req.outputSchema) {
-          body.format = { type: "json_schema", schema: req.outputSchema };
-        }
-        return body;
+      const promptBody: Record<string, unknown> = {
+        parts: [{ type: "text", text: req.prompt }],
       };
-
-      try {
-        result = await sendPrompt(serverUrl, sessionId, buildBody(true));
-      } catch {
-        // Provider rejected native structured output — fall back to plain text
-        result = await sendPrompt(serverUrl, sessionId, buildBody(false));
+      if (req.model) {
+        const [providerID, ...modelParts] = req.model.split("/");
+        promptBody.model = { providerID, modelID: modelParts.join("/") };
       }
+      if (req.systemPrompt) {
+        promptBody.system = req.systemPrompt;
+      }
+
+      const result = await sendPrompt(serverUrl, sessionId, promptBody);
 
       await this.servers.get(req.runId)?.cleanup();
       this.servers.delete(req.runId);
@@ -310,7 +294,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       let finalText = parseACPResponse(result);
 
       if (req.outputSchema && finalText) {
-        const validation = validateStructuredOutput(finalText, req.outputSchema);
+        const validation = validateStructuredOutput(finalText);
         if (!validation.valid) {
           yield {
             type: "completed",
