@@ -21,6 +21,9 @@ results back into one place.
 | 05 | [05-quota-and-routing.md](05-quota-and-routing.md) | Quota normalization (reuses AI-Quota-Tray) + routing scoring |
 | 06 | [06-roadmap.md](06-roadmap.md) | Phased plan (vertical slice first) |
 | 07 | [07-operations.md](07-operations.md) | **Install, update, uninstall, recovery** + known limitations |
+| 08 | [08-completion-plan.md](08-completion-plan.md) | Alpha → v1.0: 5 sprints, 20 tasks, success criteria |
+| 09 | [09-opencode-adapter.md](09-opencode-adapter.md) | OpenCode adapter design + verification checklist |
+| 10 | [10-delegation-contract.md](10-delegation-contract.md) | Working agreement for delegated implementation |
 | 99 | [99-risks-and-open-questions.md](99-risks-and-open-questions.md) | **Read before coding.** ROI, load-bearing risks, items to verify |
 
 ## Status
