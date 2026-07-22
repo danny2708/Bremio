@@ -11,7 +11,7 @@ import {
   ProtocolMismatchError,
   readEndpoint,
 } from "./client";
-import { panelHtml } from "./webview";
+import { panelHtml, renderCapacityCards, type CapacityView } from "./webview";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -183,6 +183,77 @@ describe("webview", () => {
     for (const tab of ["run", "runs", "capacity", "doctor"]) {
       expect(html).toContain(`data-tab="${tab}"`);
     }
+  });
+
+  it("declares no fixed hex background, so cards stay legible on a light theme", () => {
+    // The panel takes its surfaces from --vscode-* variables; a literal hex
+    // background (the old #3a1c1e banner) is invisible on a light theme and is
+    // exactly what this task removed. Brand hexes are allowed only in the
+    // :root token definitions, never as a `background:` value.
+    expect(html).not.toMatch(/background:\s*#[0-9a-fA-F]{3,8}/);
+  });
+});
+
+describe("capacity cards (renderCapacityCards)", () => {
+  // readAt is "now"; each window states its own capture age relative to it.
+  const readAt = 1_000_000;
+  const mixed: CapacityView = {
+    readAt,
+    service: { state: "live" },
+    snapshots: [
+      {
+        agentId: "codex",
+        status: "limited",
+        confidence: "high",
+        source: { name: "Codex app-server", confidenceLabel: "official" },
+        contactFreshness: "fresh",
+        lastContactAt: readAt - 30,
+        windows: [
+          { label: "5-hour", remainingPercent: 80, capturedAt: readAt - 30, freshness: "fresh", confidence: "high", resetsAt: readAt + 3600 },
+          { label: "weekly", remainingPercent: 40, capturedAt: readAt - 7200, freshness: "stale", confidence: "low" },
+          { label: "opaque", capturedAt: readAt - 10, freshness: "fresh", confidence: "high" },
+        ],
+      },
+    ],
+  };
+
+  it("shows percentage, reset time, source, confidence and data age", () => {
+    const out = renderCapacityCards(mixed);
+    expect(out).toContain("80%"); // fresh percentage
+    expect(out).toContain("30s old"); // window data age
+    expect(out).toContain("resets "); // reset time for the window that has one
+    expect(out).toContain("Codex app-server"); // source name
+    expect(out).toContain("high confidence"); // snapshot confidence
+    expect(out).toContain("contact 30s ago"); // last-contact age
+  });
+
+  it("labels a stale window as an observation from the past, not a current fact", () => {
+    const out = renderCapacityCards(mixed);
+    // Matches the CLI: the stale number never leads; its age does.
+    expect(out).toContain("last observed 2.0h ago");
+    expect(out).toContain("40%");
+    // And an absent percentage is stated as unknown, never fabricated as 0%.
+    expect(out).toContain("unknown");
+  });
+
+  it("renders an explicit unavailable state instead of a blank card", () => {
+    const unavailable: CapacityView = {
+      readAt,
+      snapshots: [
+        {
+          agentId: "claude",
+          status: "unknown",
+          source: { name: "AI-Quota-Tray", confidenceLabel: "unavailable" },
+          contactFreshness: "unknown",
+          lastContactAt: readAt,
+          windows: [],
+        },
+      ],
+    };
+    const out = renderCapacityCards(unavailable);
+    expect(out).toContain("SOURCE UNAVAILABLE");
+    expect(out).toContain("claude");
+    expect(out).toContain("no quota windows reported");
   });
 });
 

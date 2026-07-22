@@ -224,11 +224,24 @@ keep everything else.
 
 ## Known limitations in this alpha
 
-- **Windows process trees** are terminated with `taskkill /T /F`, not a Job
-  Object. A Job Object would guarantee that a grandchild cannot outlive its
-  parent; `taskkill` walks the tree it can see at that moment. Verified against
-  a real process tree, with daemon-wide shutdown serialized to avoid concurrent
-  WMI/taskkill races, but it is still a weaker guarantee.
+- **Windows process trees — a narrow residual race.** On POSIX the guarantee is
+  complete: each run's children are detached into their own process group and
+  `kill(-pgid)` reaches every descendant, including ones spawned after
+  cancellation began. On Windows there are no such groups, so the supervisor
+  snapshots the full descendant tree (`Get-CimInstance Win32_Process`) before
+  signalling and re-checks every pid afterwards — a static tree of any depth is
+  confirmed gone, verified in tests to three levels (root → child →
+  grandchild). Daemon-wide shutdown terminates each owned run **sequentially**,
+  not concurrently, so several `taskkill`/WMI sweeps cannot race and leave a
+  process alive past its verification window. The one case still open is a race
+  within a single run: a process spawned in the window between that snapshot and
+  `taskkill /T` completing is neither in the snapshot nor caught by the walk,
+  and would not be verified. Closing it fully needs a Win32 **Job Object** with
+  `KILL_ON_JOB_CLOSE`, which the kernel enforces regardless of when a child
+  appears — but that requires a native addon Bremio deliberately does not carry
+  (the same reason `node:sqlite` was chosen over `better-sqlite3`). Until that
+  trade is revisited, this is the residual risk: not "a grandchild survives" in
+  general, but "a process born during the kill walk may survive."
 - **No registry publication.** `npm i -g bremio` does not work for this alpha;
   install `bremio-0.1.0-alpha.1.tgz` from the artifact you built.
 - **Quota freshness depends on the provider.** Bremio reads AI-Quota-Tray's

@@ -532,6 +532,130 @@ isolation — not a Sprint 2 regression. Three fixes applied:
   caller), so no formula change — added a comment marking the knobs as unwired
   for the sprint that turns scoring on.
 
+---
+
+## S5-T2 — Capacity cards and light-theme support (Claude, parallel worktree)
+
+Done on `sprint/s5-hardening` (worktree off `main`), in parallel with opencode's
+Sprint 3, since S5-T2 touches only `apps/vscode-extension/` and cannot collide.
+
+**Done:**
+- The panel's surfaces were already theme-variable based, but two banner rules
+  weren't: `.banner.bad` had a literal `#3a1c1e` (a dark navy invisible on light
+  themes) and `.banner.warn` referenced `--bremio-accent-muted`, a variable
+  never defined (so warn banners had no fill). Both now tint the theme's own
+  `--bremio-accent` / `--danger` via `color-mix`, matching the badge treatment.
+- Capacity cards were missing most of what the CLI shows. Extracted
+  `renderCapacityCards(capacity)` as an exported, self-contained function and
+  inlined its source into the webview script via `.toString()` bound to a fixed
+  name, so the panel and the unit test run one implementation. Cards now show
+  per window: percentage (or `unknown`), reset time, confidence and data age;
+  and per agent: source name, confidence, last-contact age, and an explicit
+  `SOURCE UNAVAILABLE` line when the source could not be read.
+- Stale labelling now matches the CLI exactly: a fresh window leads with its
+  number; a stale one leads with "last observed X ago" so the age can't be
+  missed and the old number never reads as current fact.
+
+**Tests (+4 in extension.test.ts, 23 total there):**
+1. no literal hex background survives in the generated markup;
+2. cards show percentage, reset time, source, confidence and data age;
+3. a stale window is labelled "last observed X ago" and an absent percentage
+   shows as `unknown`, never fabricated;
+4. an unavailable provider renders its explicit state, not a blank card.
+
+**Red/green verified:** mutated the stale label, the unavailable string, and
+re-introduced a hex background → each corresponding test went red; restored → green.
+
+**Typecheck:** clean. **Tests:** extension suite 23/23.
+
+**Deviations:** None. (docs/06's "panel is dark-only" line is corrected by S5-T3,
+which owns the doc status sync; noted here so it isn't mistaken for an oversight.)
+
+---
+
+## S5-T1 — Windows process-tree guarantee (Claude, parallel worktree)
+
+**Done:**
+- Added a real three-level process-tree test (root → mid → leaf) to
+  `process-supervisor.test.ts`. It spawns the tree, waits for the leaf's
+  heartbeat to prove all three levels are live, snapshots the tree
+  (`collectTree` returns ≥3 pids), terminates, and asserts every pid is gone
+  and the leaf stopped writing. Runs on the current platform (exercised on
+  Windows here); the assertion is meaningful on POSIX too.
+- Rewrote the `docs/07` limitation bullet to state what is actually true:
+  POSIX fully closes the gap via process groups; Windows snapshots the full
+  descendant tree and re-verifies every pid, so a *static* tree of any depth is
+  confirmed gone. The residual is precisely the spawn-during-the-walk race.
+
+**Decision — I did NOT close the race, and did not pretend to.** Full closure
+needs a Win32 Job Object (`KILL_ON_JOB_CLOSE`), which requires a native addon.
+The project declined that twice (2026-07-19, and the node:sqlite-over-
+better-sqlite3 precedent), so adding it would reverse a standing decision —
+the user's call, not a parallel task's. The only non-native alternative is a
+bounded re-enumerate/rekill loop, which merely *narrows* the race (it cannot
+catch a child orphaned in the instant its parent dies, since a walk from a dead
+root can no longer find it), costs a PowerShell process-table scan per pass on
+Windows — reintroducing the very spawn contention Sprint 2 fixed — and risks the
+strongest correctness guarantee in the project for a partial gain. Not worth it
+unsupervised. `terminate()` is therefore unchanged.
+
+**Deviation (§6b):** S5-T1's success criterion asks the alternative to *close*
+the spawn-during-walk gap. I did not — I narrowed the *characterization* (the
+old doc overstated it) and proved depth-3 termination, but the race remains
+open by design. This is the honest "still a limitation, narrowed to X" outcome
+the task text explicitly permits, not a silent pass. Escalated to the user:
+closing it fully is a native-addon decision only they can make.
+
+**Tests (+1):** three-level tree termination. Red/green verified: neutered
+`signalTree` → the test detects the surviving leaf and fails; restored → green.
+
+**Typecheck:** clean. **Tests:** adapter-sdk supervisor suite 14/14.
+
+---
+
+## Local-provider seam — `@bremio/adapter-local` (Claude, parallel worktree)
+
+Not one of the 20 planned tasks: a user request, in parallel with opencode's
+Sprint 3, for a plug-and-play frame so integrating a local model (Jan, Ollama,
+LM Studio, llama.cpp) later is a few lines rather than a new package. Additive
+only — a new package plus one doc; nothing in the CLI, daemon, or router
+changed, so it cannot collide with Sprint 3/4.
+
+**Done:**
+- New package `@bremio/adapter-local` with `LocalOpenAiAdapter`, a generic
+  `AgentAdapter` over the OpenAI-compatible `/v1/chat/completions` (SSE) +
+  `/v1/models` API that virtually every local server exposes. Handles streaming
+  → `AgentEvent`s with one terminal `completed`, usage passthrough, health
+  (unavailable/degraded/ok), model listing and auto-discovery (first loaded
+  model when none is configured), and cooperative cancel that reports
+  `cancelled`, never a false `completed`.
+- `LocalProviderConfig` + `defineLocalProvider()` + presets for Jan/Ollama/LM
+  Studio (data only, each with a `baseUrlEnvVar` override; unregistered).
+- Capabilities default to **all-false** on purpose: a bare chat endpoint owns no
+  tools, so the router hands it nothing until an integration declares — through
+  the config's `capabilities` — what its harness genuinely provides. This keeps
+  the honesty bar of `docs/10` §6c: a boolean only turns on with a mechanism.
+- `docs/11-local-providers.md` documents the seam, the three-step plug-in, the
+  preset table, and why nothing is wired in yet. Indexed in `docs/README.md`.
+
+**Tests (+11):** `local-adapter.test.ts` runs a real in-process OpenAI-format
+SSE server and asserts: conservative-default and override capabilities; model
+listing; health ok/degraded/unavailable; streamed deltas accumulate into the
+final text with exactly one terminal event; usage passthrough; model
+auto-discovery; a non-200 becomes a failed outcome (not a hang); and a
+mid-stream cancel yields `cancelled`, stopping early.
+
+**Red/green verified:** broke `finalText` accumulation → streaming tests red;
+broke the catch-block `cancelled` status → cancel test red; restored → green.
+
+**Typecheck:** clean. **Tests:** full suite 367/367 serial (40 files).
+
+**Deviations:** None — but note the scope boundary: this is the transport +
+lifecycle plumbing, not an agentic harness. Making a local model a real worker
+(file/shell tools) is the integration's job, called out explicitly in docs/11.
+
+---
+
 ## Release-gate and documentation audit (Codex, 2026-07-22)
 
 **Process supervisor:** Reproduced the previously labelled Windows flake
