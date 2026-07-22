@@ -24,6 +24,7 @@ results back into one place.
 | 08 | [08-completion-plan.md](08-completion-plan.md) | Alpha → v1.0: 5 sprints, 20 tasks, success criteria |
 | 09 | [09-opencode-adapter.md](09-opencode-adapter.md) | OpenCode adapter design + verification checklist |
 | 10 | [10-delegation-contract.md](10-delegation-contract.md) | Working agreement for delegated implementation |
+| 11 | [11-local-providers.md](11-local-providers.md) | Plug-and-play seam for local models (Jan/Ollama/LM Studio) |
 | 99 | [99-risks-and-open-questions.md](99-risks-and-open-questions.md) | **Read before coding.** ROI, load-bearing risks, items to verify |
 
 ## Status

@@ -610,3 +610,46 @@ closing it fully is a native-addon decision only they can make.
 `signalTree` → the test detects the surviving leaf and fails; restored → green.
 
 **Typecheck:** clean. **Tests:** adapter-sdk supervisor suite 14/14.
+
+---
+
+## Local-provider seam — `@bremio/adapter-local` (Claude, parallel worktree)
+
+Not one of the 20 planned tasks: a user request, in parallel with opencode's
+Sprint 3, for a plug-and-play frame so integrating a local model (Jan, Ollama,
+LM Studio, llama.cpp) later is a few lines rather than a new package. Additive
+only — a new package plus one doc; nothing in the CLI, daemon, or router
+changed, so it cannot collide with Sprint 3/4.
+
+**Done:**
+- New package `@bremio/adapter-local` with `LocalOpenAiAdapter`, a generic
+  `AgentAdapter` over the OpenAI-compatible `/v1/chat/completions` (SSE) +
+  `/v1/models` API that virtually every local server exposes. Handles streaming
+  → `AgentEvent`s with one terminal `completed`, usage passthrough, health
+  (unavailable/degraded/ok), model listing and auto-discovery (first loaded
+  model when none is configured), and cooperative cancel that reports
+  `cancelled`, never a false `completed`.
+- `LocalProviderConfig` + `defineLocalProvider()` + presets for Jan/Ollama/LM
+  Studio (data only, each with a `baseUrlEnvVar` override; unregistered).
+- Capabilities default to **all-false** on purpose: a bare chat endpoint owns no
+  tools, so the router hands it nothing until an integration declares — through
+  the config's `capabilities` — what its harness genuinely provides. This keeps
+  the honesty bar of `docs/10` §6c: a boolean only turns on with a mechanism.
+- `docs/11-local-providers.md` documents the seam, the three-step plug-in, the
+  preset table, and why nothing is wired in yet. Indexed in `docs/README.md`.
+
+**Tests (+11):** `local-adapter.test.ts` runs a real in-process OpenAI-format
+SSE server and asserts: conservative-default and override capabilities; model
+listing; health ok/degraded/unavailable; streamed deltas accumulate into the
+final text with exactly one terminal event; usage passthrough; model
+auto-discovery; a non-200 becomes a failed outcome (not a hang); and a
+mid-stream cancel yields `cancelled`, stopping early.
+
+**Red/green verified:** broke `finalText` accumulation → streaming tests red;
+broke the catch-block `cancelled` status → cancel test red; restored → green.
+
+**Typecheck:** clean. **Tests:** full suite 367/367 serial (40 files).
+
+**Deviations:** None — but note the scope boundary: this is the transport +
+lifecycle plumbing, not an agentic harness. Making a local model a real worker
+(file/shell tools) is the integration's job, called out explicitly in docs/11.
