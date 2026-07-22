@@ -437,6 +437,15 @@ feat(capacity): finish the observe-and-display surface
 
 # Sprint 3 — Efficiency
 
+**Applies to every S3 task.** This sprint is arithmetic — net_gain, thresholds,
+baselines. Every numeric test MUST assert the exact value hand-computed from
+fixed inputs (e.g. given quota_saved=50 and orchestration_cost=8, assert
+net_gain === 42), never merely that the result is a number, is > 0, or has the
+right type. A sign/type check passes a wrong formula; an exact-value check is
+the only thing that catches one. State each fixture's inputs and the figure you
+derived from them in the test itself, so the expected value is checkable by eye.
+The `unknown` paths assert the exact reason string, not just that it is unknown.
+
 ## S3-T1 — Compute net gain against the single-agent baseline
 
 ```text
