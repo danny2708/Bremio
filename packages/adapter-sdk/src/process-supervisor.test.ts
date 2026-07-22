@@ -60,6 +60,45 @@ setInterval(() => {}, 1000);
   return { parent, markerFile };
 }
 
+/**
+ * A three-level tree: root → mid → leaf, the leaf writing heartbeats.
+ *
+ * The grandchild script above is two levels under the supervisor; this proves
+ * the guarantee holds one level deeper, which is the depth `docs/07` names.
+ */
+async function threeLevelScript(dir: string): Promise<{ root: string; markerFile: string }> {
+  const markerFile = path.join(dir, "leaf.log");
+  const leaf = path.join(dir, "leaf.mjs");
+  const mid = path.join(dir, "mid.mjs");
+  const root = path.join(dir, "root.mjs");
+
+  await fs.writeFile(
+    leaf,
+    `import { appendFileSync } from "node:fs";
+setInterval(() => appendFileSync(${JSON.stringify(markerFile)}, "tick\\n"), 50);
+setInterval(() => {}, 1000);
+`,
+    "utf8",
+  );
+  await fs.writeFile(
+    mid,
+    `import { spawn } from "node:child_process";
+spawn(process.execPath, [${JSON.stringify(leaf)}], { stdio: ["ignore", "inherit", "inherit"] });
+setInterval(() => {}, 1000);
+`,
+    "utf8",
+  );
+  await fs.writeFile(
+    root,
+    `import { spawn } from "node:child_process";
+spawn(process.execPath, [${JSON.stringify(mid)}], { stdio: ["ignore", "inherit", "inherit"] });
+setInterval(() => {}, 1000);
+`,
+    "utf8",
+  );
+  return { root, markerFile };
+}
+
 function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<boolean> {
   return new Promise((resolve) => {
     const deadline = Date.now() + timeoutMs;
@@ -123,6 +162,43 @@ describe("process supervisor", () => {
 
     // And it must have stopped writing: a surviving grandchild would keep
     // appending to a worktree the user believes is finished.
+    const sizeAfterKill = (await fs.stat(markerFile)).size;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect((await fs.stat(markerFile)).size).toBe(sizeAfterKill);
+  }, 30_000);
+
+  it("confirms a real three-level tree is gone after termination", async () => {
+    // root → mid → leaf, the depth docs/07 names. The full tree is snapshotted
+    // before signalling and every pid re-checked after, so a confirmed stop
+    // means the leaf died too — not just the process the supervisor spawned.
+    const dir = await scratch();
+    const { root, markerFile } = await threeLevelScript(dir);
+    const s = supervisor();
+
+    const child = s.spawn("run-3", process.execPath, [root], { stdio: "ignore" });
+    const rootPid = child.pid as number;
+
+    // The leaf only writes once it is alive, so a non-empty marker proves all
+    // three levels exist before we tear the tree down.
+    expect(
+      await waitFor(() => {
+        try {
+          return require("node:fs").statSync(markerFile).size > 0;
+        } catch {
+          return false;
+        }
+      }, 10_000),
+    ).toBe(true);
+
+    const tree = await collectTree([rootPid]);
+    expect(tree.length).toBeGreaterThanOrEqual(3); // root + mid + leaf
+
+    const outcome = await s.terminate("run-3", { graceMs: 1_500, forceMs: 5_000 });
+    expect(outcome.stopped).toBe(true);
+    for (const pid of tree) expect(pidAlive(pid)).toBe(false);
+
+    // The leaf must have stopped writing: a survivor would keep touching a
+    // worktree the user believes is finished.
     const sizeAfterKill = (await fs.stat(markerFile)).size;
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect((await fs.stat(markerFile)).size).toBe(sizeAfterKill);

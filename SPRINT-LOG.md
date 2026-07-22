@@ -570,3 +570,43 @@ re-introduced a hex background → each corresponding test went red; restored �
 
 **Deviations:** None. (docs/06's "panel is dark-only" line is corrected by S5-T3,
 which owns the doc status sync; noted here so it isn't mistaken for an oversight.)
+
+---
+
+## S5-T1 — Windows process-tree guarantee (Claude, parallel worktree)
+
+**Done:**
+- Added a real three-level process-tree test (root → mid → leaf) to
+  `process-supervisor.test.ts`. It spawns the tree, waits for the leaf's
+  heartbeat to prove all three levels are live, snapshots the tree
+  (`collectTree` returns ≥3 pids), terminates, and asserts every pid is gone
+  and the leaf stopped writing. Runs on the current platform (exercised on
+  Windows here); the assertion is meaningful on POSIX too.
+- Rewrote the `docs/07` limitation bullet to state what is actually true:
+  POSIX fully closes the gap via process groups; Windows snapshots the full
+  descendant tree and re-verifies every pid, so a *static* tree of any depth is
+  confirmed gone. The residual is precisely the spawn-during-the-walk race.
+
+**Decision — I did NOT close the race, and did not pretend to.** Full closure
+needs a Win32 Job Object (`KILL_ON_JOB_CLOSE`), which requires a native addon.
+The project declined that twice (2026-07-19, and the node:sqlite-over-
+better-sqlite3 precedent), so adding it would reverse a standing decision —
+the user's call, not a parallel task's. The only non-native alternative is a
+bounded re-enumerate/rekill loop, which merely *narrows* the race (it cannot
+catch a child orphaned in the instant its parent dies, since a walk from a dead
+root can no longer find it), costs a PowerShell process-table scan per pass on
+Windows — reintroducing the very spawn contention Sprint 2 fixed — and risks the
+strongest correctness guarantee in the project for a partial gain. Not worth it
+unsupervised. `terminate()` is therefore unchanged.
+
+**Deviation (§6b):** S5-T1's success criterion asks the alternative to *close*
+the spawn-during-walk gap. I did not — I narrowed the *characterization* (the
+old doc overstated it) and proved depth-3 termination, but the race remains
+open by design. This is the honest "still a limitation, narrowed to X" outcome
+the task text explicitly permits, not a silent pass. Escalated to the user:
+closing it fully is a native-addon decision only they can make.
+
+**Tests (+1):** three-level tree termination. Red/green verified: neutered
+`signalTree` → the test detects the surviving leaf and fails; restored → green.
+
+**Typecheck:** clean. **Tests:** adapter-sdk supervisor suite 14/14.
