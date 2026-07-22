@@ -4,10 +4,11 @@ The remaining distance between the shipped `v0.1.0-alpha.1` and the design in
 `docs/00`–`docs/06`, broken into 5 sprints and 20 tasks.
 
 **Execution status (2026-07-22):** Sprint 1 plus its remediation and Sprint 2
-are merged into `main`. Sprint 3 and Sprint 4 are not implemented. Sprint 5 is
-still open: the supervisor gate was stabilized by serializing daemon-wide
+are merged into `main`. Sprint 3 is complete on `sprint/efficiency-s3`; Sprint
+4 remains open. Sprint 5 is still open:
+the supervisor gate was stabilized by serializing daemon-wide
 Windows termination, but the stronger Job Object guarantee in S5-T1 is not
-claimed. Current Windows gates pass `release:check` (351 tests) and
+claimed. Current Windows gates pass `release:check` (365 tests) and
 `e2e:fresh` (21 checks); the latest `posix:verify` attempt is blocked because
 this machine has no installed WSL distribution.
 

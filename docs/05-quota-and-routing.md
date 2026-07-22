@@ -249,12 +249,25 @@ and lead planning/repair. Planning entries use `scope:"coordination"`, remain
 separate from task completion metrics, and are recorded best-effort even when
 planning fails. Both paths add `scope:"run"` entries with explicit `flowMode`,
 a mode-appropriate `outcomeVerified`, and optional user-supplied
-`comparisonId`. `bremio stats` reports coverage and calibration blockers;
-missing dimensions remain unknown and Bremio never estimates a price.
+`comparisonId`. `bremio stats` reports provider-cost net gain per comparison
+group and in aggregate, plus coverage and calibration blockers. Any incomplete
+comparison remains `unknown` with its exact reason; aggregate net gain remains
+unknown if even one group is incomplete. Calibration blockers name the missing
+dimension and its sample deficit. Bremio never estimates a price.
 Provider-confirmed model ids are recorded when exposed (including Claude's
 system event), while an unreported Codex default remains unknown rather than
-inferred. This data is still insufficient to calculate `net_gain` until paired
-single-agent baselines and provider-reported cost coverage exist.
+inferred. A group cannot produce numeric `net_gain` until it has a verified
+single-agent baseline and complete provider-reported task and coordination
+costs.
+
+`bremio compare --repo <path> "<prompt>"` creates the paired evidence without
+manual `comparisonId` bookkeeping. It refuses before provider execution when
+the target tree is dirty, captures one `HEAD`, runs the Single side in a
+disposable detached worktree, and starts Team from that same clean commit. The
+Single ledger is imported only after Team finishes so the pre-task kill-switch
+cannot turn the controlled Team side into another Single run. Cancelling one
+side does not reuse its abort signal for the other, and cancelled/failed run
+summaries remain explicit negative evidence rather than disappearing.
 
 ```json
 { "provider":"codex", "model":"gpt-5.6-terra", "effort":"medium",
@@ -266,8 +279,14 @@ to the run) to make the multi-vs-single comparison honest. Once there are
 enough samples, the ledger yields an empirical task→model map.
 
 ## Guardrail & calibration gate
-- **Kill-switch**: if a run's orchestration overhead > X% of task cost →
-  auto fall back to single-agent. Stops the system from going net-negative.
+- **Kill-switch (implemented):** after a valid Team plan but before assignment,
+  worktree creation, or worker execution, compare provider-reported coordination
+  cost with the cheapest objectively verified Single task cost for the same
+  `comparisonId`. The documented default in `config/routing.yaml` is 25%. If
+  overhead exceeds that share, run the original prompt directly with the
+  baseline provider and preserve the reason in the report. The check is inert
+  unless calibration is ready and every included entry reports `costUsd`; it is
+  never revisited after worker execution starts.
 - **Calibration gate** (matches Kian-Brain's human-gate philosophy): the
   router is **not** allowed to trust cheap-first until the ledger has enough
   samples proving it doesn't create escalation waste.
@@ -283,9 +302,10 @@ recommendation is
 optimization. Policy thresholds are programmatically configurable.
 
 This deliberately does not claim subjective quality equivalence or convert
-tokens into subscription quota. The automatic kill-switch remains open because
-provider-reported cost coverage is currently partial. The CLI can now collect
-explicit Single baselines, but automatic mode selection remains disabled.
+tokens into subscription quota. The kill-switch therefore fires only for a
+calibrated, fully measured comparison; partial real-world cost coverage leaves
+it inert. The CLI can collect explicit Single baselines, but automatic initial
+mode selection remains disabled.
 
 ## Router scoring (Phase 4, once the ledger exists)
 The lead only describes the **need**, never picks a model name:
@@ -413,16 +433,18 @@ ledger has enough evidence to enable optimization automatically.
       blockers, and a fail-closed single-agent recommendation in `bremio stats`.
 - [x] Add an explicit direct CLI Single baseline execution mode for Claude
       and Codex.
-- [ ] Enforce an automatic orchestration-cost kill-switch only after reported
-      cost coverage meets the calibration gate.
+- [x] Enforce an automatic orchestration-cost kill-switch only after reported
+      cost coverage meets the calibration gate. The decision is made after
+      planning and before the first task; missing cost keeps it inert.
 
 ## Build order for this section
 1. Ledger first (log the cost of every run, even before smart routing exists).
 2. Consume quota from AI-Quota-Tray (Codex + Claude official; Antigravity per
    current AQT coverage). **Read-only observation slice shipped; router wiring
    waits for fresh-data calibration.**
-3. Single-agent-vs-multi evidence gate. **Readiness reporting and direct
-   baseline execution shipped; automatic selection and kill-switch remain open.**
+3. Single-agent-vs-multi evidence gate. **Readiness reporting, direct baseline
+   execution, net-gain arithmetic, and the calibrated pre-task kill-switch have
+   shipped; automatic initial mode selection remains open.**
 4. Scoring router + calibration gate. **The weighted, capability-aware router
    is implemented behind opt-in capacity routing; automatic/cheap-first mode
    remains disabled until paired evidence passes the gate.**

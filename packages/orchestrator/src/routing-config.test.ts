@@ -30,6 +30,7 @@ describe("routing config schema", () => {
       speedWeight: 5,
       preferenceWeight: 5,
     });
+    expect(cfg.efficiency).toEqual({ maxOrchestrationCostShare: 0.4 });
 
     expect(cfg.tiers.trivial).toMatchObject({
       claude: "claude-sonnet-4-20250514",
@@ -50,6 +51,7 @@ describe("routing config schema", () => {
     const missingPath = path.resolve(FIXTURES, "nonexistent-routing.yaml");
     const cfg = await loadRoutingConfig(missingPath);
     expect(cfg).toEqual(getDefaultRoutingConfig());
+    expect(cfg.efficiency.maxOrchestrationCostShare).toBe(0.25);
   });
 
   it("contains no hardcoded provider model id literals in orchestrator source", async () => {

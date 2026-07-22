@@ -9,17 +9,18 @@ dashboard/quota/parallelism before the core loop runs.
 distributable npm tarball contains the bundled CLI/TUI and daemon; the VS Code
 extension ships as a local VSIX. Four adapters are registered: lead-capable
 Claude/Codex plus worker-only Antigravity/OpenCode. `pnpm release:check`
-typechecks, runs 351 tests, builds, packs, installs into a clean temporary
+typechecks, runs 365 tests, builds, packs, installs into a clean temporary
 project, and exercises the installed version/help/doctor commands. A separate
 fresh-profile E2E verifies daemon startup, authentication, persistence,
 restart, and diagnostics. Real-provider smoke remains explicit because it
 consumes quota.
 
-The next product milestone is evidence, not more surface area: compute net gain,
-collect matched Single/Team comparisons, and only then decide whether Auto
-routing has positive ROI. Parallel execution, TUI, daemon, and editor
-integration have already shipped in the alpha; light-theme panel polish and
-automatic decisions remain open.
+The next product milestone is evidence, not more surface area: net gain is
+computed and reported fail-closed, and `bremio compare` now collects matched
+Single/Team samples from one clean commit. The next step is running enough real
+pairs to satisfy calibration before Auto routing may make decisions. Parallel
+execution, TUI, daemon, and editor integration have already shipped in the
+alpha; light-theme panel polish and automatic decisions remain open.
 
 ## Execution modes — manual before automatic
 
@@ -115,16 +116,17 @@ Usage ledger → consume AI-Quota-Tray → single-vs-multi decision +
 kill-switch → scoring router + calibration gate. Enforce the `net_gain > 0`
 invariant.
 
-**Early slices shipped:** a measurement-only ledger and `bremio stats` that
+**Efficiency slices shipped:** a measurement-only ledger and `bremio stats` that
 preserve provider-reported task and lead-planning token/cost usage without
 estimation (including failed planning attempts), plus a
 read-only schema-v1 AI-Quota-Tray SQLite consumer and `bremio quota`. The first
 quota-aware safety router is available only through explicit opt-in; stale,
 missing, errored, disabled, or unsupported quota cannot hard-exclude an agent.
-Automatic optimization, the kill-switch, and `net_gain` enforcement are not
-implemented yet; confirmed model ids are preserved when a provider exposes
-them, but unreported worker defaults and paired baseline/cost evidence remain
-incomplete before efficiency claims.
+The ledger now computes `net_gain` against the cheapest fully measured verified
+Single baseline. A calibration-gated kill-switch can stop Team after planning
+but before worker tasks when measured coordination cost exceeds the configured
+share. Automatic initial flow selection remains open; unreported costs keep the
+switch inert rather than creating an estimate.
 
 **Capacity sub-roadmap:**
 
@@ -167,14 +169,15 @@ remains behind ledger calibration. Verified Antigravity display names now map
 to provider model ids in `packages/quota/src/antigravity-models.ts`; unknown
 buckets remain unmapped and cannot drive routing.
 
-**4D calibration status (2026-07-18):** Single and Team runs now record flow
+**4D calibration status (updated 2026-07-22):** Single and Team runs record flow
 mode and a mode-appropriate objective outcome; `--comparison <id>` links
 controlled runs. `bremio stats` evaluates configurable minimum paired
 evidence, non-inferiority, actual-model coverage, provider-reported cost
 coverage, and Team-only coordination coverage. It recommends Single while
-evidence is insufficient. Automatic flow selection and the cost kill-switch
-remain open;
-no token-to-quota or missing-price estimate is introduced.
+evidence is insufficient. Net-gain computation, fail-closed stats presentation,
+controlled pair collection, and the calibrated pre-task cost kill-switch are
+implemented; automatic initial flow selection remains open. No token-to-quota
+or missing-price estimate is introduced.
 
 ## Phase 5 — Parallel + VS Code extension
 Run tasks in parallel, panel UI. UI is just a surface; the value lives in the

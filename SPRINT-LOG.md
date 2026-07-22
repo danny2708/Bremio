@@ -561,3 +561,145 @@ adapters, worker-only Antigravity/OpenCode, TUI, daemon, extension, parallel
 scheduler, completed Sprint 2 capacity/routing work, current process-tree
 guarantee, local-artifact installation, dropped Jan direction, and remaining
 Sprint 3–5 work.
+
+---
+
+## S3-T1 — Compute net gain against the single-agent baseline
+
+**Done:** Added `packages/orchestrator/src/net-gain.ts` and exported
+`computeNetGain` from `@bremio/orchestrator`. It joins run summaries to task
+and coordination ledger entries by `runId`, compares one objectively verified
+Team run with every objectively verified Single run carrying the same
+`comparisonId`, and chooses the cheapest fully measured Single run as the
+baseline. The measured equation is provider-reported USD only:
+
+`netGainUsd = (baselineCostUsd - multiAgentTaskCostUsd) - orchestrationCostUsd`.
+
+Every `scope:"coordination"` entry is included regardless of kind, so planning,
+aggregation, handoff, and escalation retry costs cannot disappear from the
+calculation when recorded. Multiple Team runs are never silently averaged or
+ranked; the caller must identify `multiRunId`.
+
+**Honesty boundary:** Any absent task/coordination entry, missing `costUsd`,
+missing or unverified Single baseline, unverified Team outcome, or ambiguous
+Team selection returns `status:"unknown"` with a blocker naming the exact run
+or ledger entry. Token counts and subscription percentages are never converted
+to cost, and a partially measured comparison never produces a number.
+
+**Tests:** Added the four required cases: complete data computes the expected
+value; one missing coordination cost returns a specific unknown; no Single
+baseline returns unknown; and multiple Single runs select the cheapest verified
+baseline rather than an average. Focused tests passed 4/4. Full
+`corepack pnpm release:check` passed typecheck, 355/355 tests, build, and clean
+packed installation.
+
+**Deviations:** None.
+
+---
+
+## S3-T2 — Fall back to Single when coordination costs too much
+
+**Done:** Added `efficiency.maxOrchestrationCostShare` to
+`config/routing.yaml` and the validated routing schema, with a documented
+default of 0.25. `runBremio` evaluates the switch after a valid plan and after
+its coordination ledger write, but before assignment, task worktrees, or any
+worker run. It never re-evaluates after `runPlan` begins, so completed work is
+not discarded or paid for twice.
+
+The decision reads the same shared `findBestSingleAgentBaseline` logic as
+S3-T1. It requires the global calibration gate to be ready, every candidate
+Single baseline and current coordination entry to carry provider-reported
+`costUsd`, and the winning baseline provider to remain registered and capable
+of workspace writes. Missing or ambiguous evidence makes the switch inert. If
+measured coordination cost exceeds the configured share of the cheapest
+verified Single baseline, Bremio runs the original prompt through that baseline
+provider's direct Single path.
+
+**Visibility:** The returned Single report carries `fallback` metadata with the
+Team planning run id, baseline run/cost, coordination cost, threshold, and exact
+reason. The reason is persisted in `report.json`, printed by the CLI, shown in
+the TUI, and emitted as a daemon status event. Team callers now handle the
+honest `BremioRunReport` union instead of assuming every `runBremio` call ends
+as a Team report.
+
+**Tests:** Added the four required integration cases using real ledger files
+and git workspaces: above-threshold fallback before any Team worker call;
+incomplete planning cost remains Team; below-threshold cost remains Team; and
+the exact reason reaches both the hook and persisted report. The fixtures carry
+five fully measured paired groups so the real calibration gate, not a mock,
+authorizes the positive cases. Focused S3/config tests passed 12/12. Full
+`corepack pnpm release:check` passed typecheck, 359/359 tests, build, and clean
+packed installation.
+
+**Deviations:** None.
+
+---
+
+## S3-T3 — Report net gain and name every calibration blocker
+
+**Done:** `bremio stats` now reports measured net gain for every
+`comparisonId` and across all comparison groups. Each Team run is measured
+through the S3-T1 provider-reported cost calculation. A group with multiple
+Team runs is numeric only when every run is known; the global aggregate is
+numeric only when every group is known. A measured zero is printed as
+`$0.0000`, while incomplete evidence is printed as `unknown` with the exact
+run or ledger-entry reason.
+
+Calibration blockers now include the observed count, required threshold, and
+the number of additional fully observed samples needed for the specific
+dimension: evaluable pairs, non-inferior Team outcomes, actual-model entries,
+provider-reported cost entries, or Team runs with coordination evidence. The
+existing fail-closed rule remains unchanged: any blocker keeps the
+recommendation at `single-agent`.
+
+**Tests:** Added the three required CLI cases: mixed known-zero and unknown net
+gain preserves their distinction; empty evidence names every missing dimension
+and sample deficit; and one failed cost-coverage threshold keeps the
+recommendation at Single. Focused S3-T1/T3 and calibration tests passed 14/14.
+The full in-sandbox run reached 358/362 before four Windows process-tree tests
+failed because the sandbox could not inspect or terminate spawned PIDs. The
+same supervisor file passed 13/13 outside the sandbox, then the complete
+outside-sandbox `corepack pnpm release:check` passed typecheck, 362/362 tests,
+build, and clean packed installation.
+
+**Deviations:** None.
+
+---
+
+## S3-T4 — Collect paired evidence in one command
+
+**Done:** Added `bremio compare --repo <path> "<prompt>"` with optional
+`--agent`, `--lead`, and `--worker` selection. The command generates one shared
+`comparisonId`, refuses a dirty target before either provider starts, and
+executes the existing `runSingleAgent` and `runBremio` flows rather than
+duplicating either path.
+
+The Single baseline runs first in a disposable detached worktree at the
+captured target `HEAD`; its code changes are intentionally discarded because
+this command collects evidence, not a merge candidate. Its ledger stays local
+until Team has started from the same unchanged target commit, preventing the
+S3-T2 kill-switch from consuming the new baseline and replacing the Team side
+with a second Single run. The Single ledger is then imported into the target
+ledger, producing two run summaries with the shared comparison id and their
+mode-appropriate objective outcomes. A second target snapshot blocks Team if
+the base tree drifted while Single was running.
+
+**Visibility and cancellation:** The CLI prints Single and Team side by side,
+including measured net gain or an explicit unknown reason. Each side has its
+own abort controller; cancelling Single does not pre-cancel Team. Team planning
+failures and cancellations now also persist an objective negative run summary,
+so interrupted comparisons cannot silently lose one side of their evidence.
+
+**Tests:** Added exactly the three required integration cases through the real
+orchestrator functions: both summaries share the generated id and objective
+outcome; a dirty tree is rejected before any adapter request or Bremio state is
+created; and cancelling Single leaves an honest cancelled summary while Team
+finishes coherently. Focused compare/run suites passed 11/11. The Sprint 3
+`corepack pnpm release:check` passed outside the managed sandbox: typecheck,
+365/365 tests across 42 files (including 13/13 Windows process-supervisor
+tests), build, and clean packed installation.
+
+**Deviations:** `runBremio` gained a run-scope negative summary for planning
+failure/cancellation. This is required by the stated cancellation-coherence
+criterion and fixes a pre-existing evidence gap; it does not change execution
+or retry behavior.

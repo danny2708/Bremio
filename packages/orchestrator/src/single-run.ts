@@ -54,6 +54,16 @@ export interface SingleRunVerification {
   reasons: string[];
 }
 
+export interface SingleRunFallback {
+  fromMode: "team";
+  teamRunId: string;
+  reason: string;
+  baselineRunId: string;
+  baselineTaskCostUsd: number;
+  orchestrationCostUsd: number;
+  maxOrchestrationCostShare: number;
+}
+
 export interface SingleRunReport {
   mode: "single";
   runId: string;
@@ -68,6 +78,8 @@ export interface SingleRunReport {
     dirtyBefore: string[];
     dirtyAfter: string[];
   };
+  /** Present only when Team stopped before task execution and delegated here. */
+  fallback?: SingleRunFallback;
 }
 
 interface WorkspaceState {

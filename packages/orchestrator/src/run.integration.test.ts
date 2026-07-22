@@ -11,6 +11,7 @@ import type {
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
+import type { BremioRunReport, RunReport } from "./aggregator";
 import { ledgerPathFor, readLedger } from "./ledger";
 import { createRegistry } from "./registry";
 import { runBremio } from "./run";
@@ -196,6 +197,10 @@ function git(args: string[]): void {
   execFileSync("git", args, { cwd: repo, stdio: "pipe" });
 }
 
+function expectTeamReport(report: BremioRunReport): asserts report is RunReport {
+  expect(report.mode).toBe("team");
+}
+
 beforeAll(async () => {
   repo = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-it-"));
   git(["init", "-q", "-b", "main"]);
@@ -222,9 +227,9 @@ describe("runBremio end-to-end (mock adapters)", () => {
       reasoningLevel: "high",
       comparisonId: "greeting-case",
     });
+    expectTeamReport(report);
 
     // one prompt -> valid plan -> implementation + test + independent review
-    expect(report.mode).toBe("team");
     expect(report.tasks).toHaveLength(4);
 
     // ≥1 task handed to a DIFFERENT agent than the lead
@@ -313,6 +318,7 @@ describe("runBremio end-to-end (mock adapters)", () => {
         },
       },
     });
+    expectTeamReport(report);
 
     const impl = report.tasks.find((t) => t.task.id === "TASK-002");
     expect(impl?.result.status).toBe("cancelled");
@@ -328,6 +334,7 @@ describe("runBremio end-to-end (mock adapters)", () => {
       registry,
       taskTimeoutMs: 50,
     });
+    expectTeamReport(report);
 
     const impl = report.tasks.find((t) => t.task.id === "TASK-002");
     expect(impl?.result.status).toBe("cancelled");
@@ -351,13 +358,20 @@ describe("runBremio end-to-end (mock adapters)", () => {
 
     const after = await readLedger(ledgerPathFor(repo));
     const added = after.slice(before.length);
-    expect(added).toHaveLength(1);
+    expect(added).toHaveLength(2);
     expect(added[0]).toMatchObject({
       scope: "coordination",
       provider: "claude",
       kind: "planning",
       status: "failed",
       usage: { inputTokens: 7, outputTokens: 1 },
+    });
+    expect(added[1]).toMatchObject({
+      scope: "run",
+      flowMode: "multi-agent",
+      status: "failed",
+      qualityGatePassed: false,
+      outcomeVerified: false,
     });
   });
 });

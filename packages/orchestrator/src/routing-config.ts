@@ -48,6 +48,11 @@ export const RoutingConfigSchema = z.object({
     speedWeight: 5,
     preferenceWeight: 5,
   }),
+  efficiency: z.object({
+    maxOrchestrationCostShare: z.number().min(0).max(1).default(0.25),
+  }).default({
+    maxOrchestrationCostShare: 0.25,
+  }),
   tiers: TierSchema,
 }).superRefine((data, ctx) => {
   for (const key of Object.keys(data.tiers)) {

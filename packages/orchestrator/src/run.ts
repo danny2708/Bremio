@@ -15,18 +15,27 @@ import type {
   CapacityRoutingPolicyInput,
 } from "@bremio/quota";
 import { WorktreeManager, getCurrentBranch } from "@bremio/workspace";
-import { buildReport, type RunReport } from "./aggregator";
+import { buildReport, type BremioRunReport, type RunReport } from "./aggregator";
+import { evaluateCalibrationReadiness } from "./calibration";
 import { createPlan, LeadPlanError } from "./lead-manager";
-import { appendLedgerEntry, ledgerPathFor } from "./ledger";
+import { appendLedgerEntry, ledgerPathFor, readLedger } from "./ledger";
+import { findBestSingleAgentBaseline } from "./net-gain";
 import type { AgentRegistry } from "./registry";
 import { assignAgents } from "./router";
+import {
+  getDefaultRoutingConfig,
+  loadRoutingConfig,
+  type RoutingConfig,
+} from "./routing-config";
 import { runPlan, type SchedulerHooks } from "./scheduler";
+import type { SingleRunFallback } from "./single-run";
 import { validatePlan } from "./validator";
 
 export interface RunBremioHooks extends SchedulerHooks {
   onLeadStart?(leadId: string): void;
   onLeadEvent?(event: AgentEvent): void;
   onPlan?(plan: Plan, assign: Map<string, string>): void;
+  onFallback?(reason: string, agentId: string): void;
 }
 
 export interface RunBremioOptions {
@@ -51,6 +60,8 @@ export interface RunBremioOptions {
   modelByAgent?: ReadonlyMap<string, string>;
   /** Links controlled single/multi runs of the same request for calibration. */
   comparisonId?: string;
+  /** Parsed policy override; otherwise config/routing.yaml (or its defaults) is used. */
+  routingConfig?: RoutingConfig;
   signal?: AbortSignal;
   logger?: Logger;
   hooks?: RunBremioHooks;
@@ -70,9 +81,14 @@ export function createRunId(now = new Date()): string {
  * worktree execution → aggregate into one report (also written to
  * `.bremio/runs/<runId>/report.json`).
  */
-export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
+export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport> {
   const { leadId, prompt, registry, logger } = opts;
   const repoPath = path.resolve(opts.repoPath);
+  const efficiency = opts.routingConfig?.efficiency ?? (
+    opts.comparisonId
+      ? (await loadRoutingConfig()).efficiency
+      : getDefaultRoutingConfig().efficiency
+  );
   const runId = createRunId();
   const bremioDir = path.join(repoPath, ".bremio");
   const runDir = path.join(bremioDir, "runs", runId);
@@ -139,11 +155,12 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
       onEvent: onLeadEvent,
     }));
   } catch (err) {
+    const status = err instanceof LeadPlanError ? err.status : "failed";
     await recordPlanningLedger({
       ledgerPath: ledgerPathFor(repoPath),
       runId,
       leadId,
-      status: err instanceof LeadPlanError ? err.status : "failed",
+      status,
       durationMs: Date.now() - planningStarted,
       ...(opts.model ? { requestedModel: opts.model } : {}),
       ...observedIdentity(observedLeadModels, observedLeadReasoningLevels),
@@ -151,6 +168,12 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
         ? { requestedReasoningLevel: opts.reasoningLevel }
         : {}),
       ...(leadUsage ? { usage: leadUsage } : {}),
+    });
+    await recordInterruptedTeamSummary({
+      ledgerPath: ledgerPathFor(repoPath),
+      runId,
+      status,
+      ...(opts.comparisonId ? { comparisonId: opts.comparisonId } : {}),
     });
     throw err;
   }
@@ -170,6 +193,55 @@ export async function runBremio(opts: RunBremioOptions): Promise<RunReport> {
   logger?.info({ tasks: plan.tasks.length, attempts }, "lead produced a plan");
 
   validatePlan(plan, capabilitiesByAgent);
+
+  // This is the only meaningful kill-switch point: planning has finished, its
+  // provider-reported coordination cost is durable, and no task worktree or
+  // worker run exists yet. Once assign/runPlan starts we never re-evaluate or
+  // restart the original prompt, because that would double-pay completed work.
+  if (opts.comparisonId) {
+    const decision = await evaluateCoordinationFallback({
+      ledgerPath: ledgerPathFor(repoPath),
+      comparisonId: opts.comparisonId,
+      teamRunId: runId,
+      maxOrchestrationCostShare: efficiency.maxOrchestrationCostShare,
+      registry,
+      capabilitiesByAgent,
+    });
+    if (decision.status === "triggered") {
+      const fallback: SingleRunFallback = {
+        fromMode: "team",
+        teamRunId: runId,
+        reason: decision.reason,
+        baselineRunId: decision.baselineRunId,
+        baselineTaskCostUsd: decision.baselineTaskCostUsd,
+        orchestrationCostUsd: decision.orchestrationCostUsd,
+        maxOrchestrationCostShare: efficiency.maxOrchestrationCostShare,
+      };
+      logger?.warn({ fallback, agentId: decision.agentId }, "Team fell back to Single");
+      opts.hooks?.onFallback?.(decision.reason, decision.agentId);
+
+      // Dynamic import avoids making single-run.ts <-> run.ts a runtime cycle;
+      // single-run reuses createRunId from this module.
+      const { runSingleAgent } = await import("./single-run");
+      const singleReport = await runSingleAgent({
+        primaryAgentId: decision.agentId,
+        repoPath,
+        prompt,
+        registry,
+        ...(opts.taskTimeoutMs ? { timeoutMs: opts.taskTimeoutMs } : {}),
+        comparisonId: opts.comparisonId,
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      });
+      const report = { ...singleReport, fallback };
+      await fs.writeFile(
+        path.join(report.runDir, "report.json"),
+        JSON.stringify(report, null, 2),
+        "utf8",
+      );
+      return report;
+    }
+    logger?.debug({ reason: decision.reason }, "coordination kill-switch inert");
+  }
 
   const capacityByAgent = opts.capacitySnapshots
     ? new Map(opts.capacitySnapshots.map((snapshot) => [snapshot.agentId, snapshot] as const))
@@ -287,6 +359,13 @@ interface RunSummaryLedgerInput {
   comparisonId?: string;
 }
 
+interface InterruptedTeamSummaryInput {
+  ledgerPath: string;
+  runId: string;
+  status: "failed" | "cancelled";
+  comparisonId?: string;
+}
+
 /** Record orchestration overhead without ever masking the actual run outcome. */
 async function recordPlanningLedger(input: PlanningLedgerInput): Promise<void> {
   try {
@@ -344,4 +423,127 @@ async function recordRunSummary(input: RunSummaryLedgerInput): Promise<void> {
   } catch {
     // calibration measurement is best-effort; it must never replace the run result
   }
+}
+
+/** Preserve an objective negative outcome when Team stops during planning. */
+async function recordInterruptedTeamSummary(
+  input: InterruptedTeamSummaryInput,
+): Promise<void> {
+  try {
+    await appendLedgerEntry(input.ledgerPath, {
+      ts: new Date().toISOString(),
+      runId: input.runId,
+      taskId: `${input.runId}::summary`,
+      scope: "run",
+      provider: "bremio",
+      role: "orchestrator",
+      kind: "run-summary",
+      status: input.status,
+      filesChanged: 0,
+      flowMode: "multi-agent",
+      ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
+      qualityGatePassed: false,
+      outcomeVerified: false,
+    });
+  } catch {
+    // calibration measurement is best-effort; never replace the planning error
+  }
+}
+
+interface EvaluateFallbackInput {
+  ledgerPath: string;
+  comparisonId: string;
+  teamRunId: string;
+  maxOrchestrationCostShare: number;
+  registry: AgentRegistry;
+  capabilitiesByAgent: ReadonlyMap<string, AgentCapabilities>;
+}
+
+interface TriggeredFallback {
+  status: "triggered";
+  reason: string;
+  agentId: string;
+  baselineRunId: string;
+  baselineTaskCostUsd: number;
+  orchestrationCostUsd: number;
+}
+
+interface InertFallback {
+  status: "inert";
+  reason: string;
+}
+
+type FallbackDecision = TriggeredFallback | InertFallback;
+
+async function evaluateCoordinationFallback(
+  input: EvaluateFallbackInput,
+): Promise<FallbackDecision> {
+  const entries = await readLedger(input.ledgerPath);
+  const calibration = evaluateCalibrationReadiness(entries);
+  if (calibration.status !== "ready") {
+    return {
+      status: "inert",
+      reason: `calibration gate is not ready: ${calibration.blockers.join("; ")}`,
+    };
+  }
+  const baseline = findBestSingleAgentBaseline(entries, input.comparisonId);
+  if (baseline.status === "unknown") {
+    return { status: "inert", reason: baseline.reason };
+  }
+  if (!input.registry.has(baseline.agentId)) {
+    return {
+      status: "inert",
+      reason: `best Single baseline provider "${baseline.agentId}" is not registered`,
+    };
+  }
+  const baselineCapabilities = input.capabilitiesByAgent.get(baseline.agentId);
+  if (!baselineCapabilities?.repositoryRead || !baselineCapabilities.repositoryWrite) {
+    return {
+      status: "inert",
+      reason: `best Single baseline provider "${baseline.agentId}" cannot run with workspace-write access`,
+    };
+  }
+
+  const coordinationEntries = entries.filter((entry) =>
+    entry.runId === input.teamRunId && entry.scope === "coordination");
+  if (coordinationEntries.length === 0) {
+    return { status: "inert", reason: "current Team run has no coordination entries" };
+  }
+  const missingCoordinationCost = coordinationEntries.find(
+    (entry) => entry.usage?.costUsd === undefined,
+  );
+  if (missingCoordinationCost) {
+    return {
+      status: "inert",
+      reason: `coordination entry "${missingCoordinationCost.taskId}" is missing provider-reported costUsd`,
+    };
+  }
+  const orchestrationCostUsd = coordinationEntries.reduce(
+    (total, entry) => total + (entry.usage?.costUsd ?? 0),
+    0,
+  );
+  const costLimitUsd = baseline.costUsd * input.maxOrchestrationCostShare;
+  if (orchestrationCostUsd <= costLimitUsd) {
+    return {
+      status: "inert",
+      reason: `coordination cost $${orchestrationCostUsd.toFixed(4)} is within the configured limit $${costLimitUsd.toFixed(4)}`,
+    };
+  }
+
+  const reason =
+    `Team fallback: coordination cost $${orchestrationCostUsd.toFixed(4)} exceeded ` +
+    `${formatPercent(input.maxOrchestrationCostShare)} of best Single baseline ` +
+    `$${baseline.costUsd.toFixed(4)} (run ${baseline.runId})`;
+  return {
+    status: "triggered",
+    reason,
+    agentId: baseline.agentId,
+    baselineRunId: baseline.runId,
+    baselineTaskCostUsd: baseline.costUsd,
+    orchestrationCostUsd,
+  };
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }

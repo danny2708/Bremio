@@ -31,6 +31,7 @@ import {
 } from "@bremio/daemon";
 import { mergeCommand } from "./merge";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
+import { collectComparison, printComparison, type ComparisonSide } from "./compare";
 import { capacityCommand } from "./quota";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
@@ -48,6 +49,7 @@ ${c.bold("Usage")}
   bremio tui [--repo <path>]              same, explicitly
   bremio run --mode single --agent <agent> --repo <path> "<prompt>"
   bremio run --mode team --lead <agent> [--worker <agent>] --repo <path> "<prompt>"
+  bremio compare [--agent <agent>] [--lead <agent>] --repo <path> "<prompt>"
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
@@ -74,6 +76,16 @@ ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --comparison <id>       Link this run to a controlled Single/Team experiment.
   --json                  Print the report as JSON (suppresses progress).
   --verbose               Emit structured operational logs to stderr.
+
+${c.bold("compare")}  collect a controlled Single-vs-Team calibration pair
+  --repo <path>           Clean target git repository. Required.
+  Single changes run in a disposable worktree; only their evidence is retained.
+  --agent <agent>         Single baseline provider (default: claude).
+  --lead <agent>          Team lead provider (default: claude).
+  --worker <agent>        Explicit Team worker; must differ from the lead.
+  --reasoning <level>     Reasoning level for Single and Team lead.
+  --timeout <seconds>     Hard timeout for Single and each Team task.
+  --concurrency <n>       Team tasks to run at once (default: 2).
 
 ${c.bold("merge")}    review a completed task's diff, then merge it into the base branch
   <taskId>                The task to merge (e.g. TASK-002).
@@ -168,6 +180,9 @@ async function main(): Promise<void> {
     case "run":
       await runCommand(values, positionals);
       return;
+    case "compare":
+      process.exitCode = await compareCommandFromCli(values, positionals);
+      return;
     case "merge":
       process.exitCode = await mergeCommandFromCli(values, positionals);
       return;
@@ -194,6 +209,147 @@ async function main(): Promise<void> {
       console.error(c.red(`unknown command: ${command}`));
       console.log(USAGE);
       process.exitCode = 2;
+  }
+}
+
+async function compareCommandFromCli(values: Values, positionals: string[]): Promise<number> {
+  const prompt = (values.prompt ?? positionals.slice(1).join(" ")).trim();
+  const agentIds = new Set(["claude", "codex", "antigravity", "opencode"]);
+  const singleAgentId = values.agent ?? "claude";
+  const teamLeadId = values.lead ?? "claude";
+  const errors: string[] = [];
+  if (!values.repo) errors.push("--repo <path> is required");
+  if (!prompt) errors.push('a prompt is required, e.g. bremio compare --repo . "add a health endpoint"');
+  if (!agentIds.has(singleAgentId)) {
+    errors.push(`--agent must be a known agent id: ${[...agentIds].sort().join(", ")}`);
+  }
+  if (!agentIds.has(teamLeadId)) {
+    errors.push(`--lead must be a known agent id: ${[...agentIds].sort().join(", ")}`);
+  }
+  if (values.worker && !agentIds.has(values.worker)) {
+    errors.push(`--worker must be a known agent id: ${[...agentIds].sort().join(", ")}`);
+  }
+  if (values.worker === teamLeadId) errors.push("--worker must be different from --lead");
+  if (values.mode !== undefined) errors.push("compare generates both modes; do not pass --mode");
+  if (values.comparison !== undefined) {
+    errors.push("compare generates its own shared comparison id; do not pass --comparison");
+  }
+  if (values["capacity-routing"]) {
+    errors.push("--capacity-routing is not supported by controlled comparisons");
+  }
+  const timeoutSeconds = values.timeout === undefined ? undefined : Number(values.timeout);
+  if (timeoutSeconds !== undefined && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
+    errors.push("--timeout must be a positive number of seconds");
+  }
+  const concurrency = values.concurrency === undefined ? undefined : Number(values.concurrency);
+  if (concurrency !== undefined && (!Number.isInteger(concurrency) || concurrency < 1)) {
+    errors.push("--concurrency must be a positive whole number of tasks");
+  }
+  const reasoningLevels = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh"]);
+  if (values.reasoning && !reasoningLevels.has(values.reasoning as ReasoningLevel)) {
+    errors.push("--reasoning must be 'low', 'medium', 'high', or 'xhigh'");
+  }
+  if (errors.length > 0) {
+    for (const error of errors) console.error(c.red(`error: ${error}`));
+    console.log(`\n${USAGE}`);
+    return 2;
+  }
+
+  const repoPath = path.resolve(values.repo as string);
+  if (!existsSync(repoPath)) {
+    console.error(c.red(`error: repo path does not exist: ${repoPath}`));
+    return 2;
+  }
+
+  const json = values.json === true;
+  const registry = createRegistry([
+    new ClaudeAdapter(),
+    new CodexAdapter(),
+    new AntigravityAdapter(),
+    new OpenCodeAdapter(),
+  ]);
+  const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
+  const singleController = new AbortController();
+  const teamController = new AbortController();
+  let activeSide: ComparisonSide | undefined;
+  let cancelling = false;
+  const onInterrupt = () => {
+    if (!activeSide) return;
+    if (cancelling) {
+      console.error(c.red("\nforce exit"));
+      process.exit(130);
+    }
+    cancelling = true;
+    console.error(c.yellow(`\n⚠ cancelling ${activeSide} side (Ctrl+C again to force)…`));
+    (activeSide === "single" ? singleController : teamController).abort();
+  };
+  process.on("SIGINT", onInterrupt);
+
+  try {
+    const result = await collectComparison({
+      repoPath,
+      prompt,
+      registry,
+      singleAgentId,
+      teamLeadId,
+      ...(values.worker ? { teamWorkerId: values.worker } : {}),
+      ...(values.model ? { model: values.model } : {}),
+      ...(values.reasoning
+        ? { reasoningLevel: values.reasoning as ReasoningLevel }
+        : {}),
+      ...(timeoutSeconds !== undefined ? { timeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
+      ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
+      singleSignal: singleController.signal,
+      teamSignal: teamController.signal,
+      logger,
+      hooks: {
+        onSideStart: (side) => {
+          activeSide = side;
+          cancelling = false;
+          if (!json) console.log(`\n${c.bold(side === "single" ? "Single baseline" : "Team flow")}`);
+        },
+        single: json
+          ? {}
+          : {
+              onStart: (id) => console.log(`${c.bold("●")} ${c.cyan(id)} is running in an isolated baseline worktree…`),
+              onEvent: (event) => {
+                const line = compactEvent(event);
+                if (line) console.log(line);
+              },
+            },
+        team: json
+          ? {}
+          : {
+              onLeadStart: (id) => console.log(`${c.bold("●")} Lead ${c.cyan(id)} is planning…`),
+              onLeadEvent: (event) => {
+                const line = compactEvent(event);
+                if (line) console.log(line);
+              },
+              onPlan: (plan, assign) => printPlan(plan, assign),
+              onTaskStart: (task, id) =>
+                console.log(`\n${c.bold("▶")} ${c.cyan(task.id)} ${task.title} ${c.bold(`→ ${id}`)}`),
+              onEvent: (task, _id, event) => {
+                const line = compactEvent(event);
+                if (line) console.log(`${c.dim(`[${task.id}]`)} ${line}`);
+              },
+              onTaskComplete: (taskResult) =>
+                console.log(`  ${statusGlyph(taskResult.status)} ${c.cyan(taskResult.taskId)}`),
+            },
+      },
+    });
+    activeSide = undefined;
+    if (json) console.log(JSON.stringify(result, null, 2));
+    else printComparison(result);
+    return result.single.verification.status === "passed" &&
+        result.team.qualityGate.status === "passed"
+      ? 0
+      : 1;
+  } catch (error) {
+    console.error(c.red(`\nComparison failed: ${(error as Error).message}`));
+    if (values.verbose) console.error((error as Error).stack);
+    return 1;
+  } finally {
+    process.off("SIGINT", onInterrupt);
   }
 }
 
@@ -325,6 +481,8 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
           if (l) console.log(l);
         },
         onPlan: (plan, assign) => printPlan(plan, assign),
+        onFallback: (reason, agentId) =>
+          console.log(c.yellow(`\n⚠ ${reason}; continuing directly with ${agentId}`)),
         onTaskStart: (task, agentId) =>
           console.log(`\n${c.bold("▶")} ${c.cyan(task.id)} ${task.title} ${c.bold(`→ ${agentId}`)}`),
         // Tasks run concurrently by default, so every streamed line and every
@@ -413,10 +571,11 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     if (json) console.log(JSON.stringify(report, null, 2));
     else printReport(report);
 
-    process.exitCode =
-      report.summary.failed > 0 ||
-      report.tasks.length === 0 ||
-      report.qualityGate.status !== "passed"
+    process.exitCode = report.mode === "single"
+      ? report.result.status === "completed" ? 0 : 1
+      : report.summary.failed > 0 ||
+          report.tasks.length === 0 ||
+          report.qualityGate.status !== "passed"
         ? 1
         : 0;
   } catch (err) {

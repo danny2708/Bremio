@@ -106,7 +106,10 @@ describe("evaluateCalibrationReadiness", () => {
 
     expect(result.evaluableComparisons).toBe(1);
     expect(result.nonInferiorRate).toBe(0);
-    expect(result.blockers).toContain("multi-agent non-inferior rate 0%/90%");
+    expect(result.blockers).toContain(
+      "multi-agent non-inferior rate 0%/90% (0/1); " +
+        "need 9 additional non-inferior comparisons",
+    );
   });
 
   it("requires provider-reported cost instead of estimating missing entries", () => {
@@ -116,7 +119,10 @@ describe("evaluateCalibrationReadiness", () => {
 
     const result = evaluateCalibrationReadiness(entries, { minimumPairedComparisons: 1 });
     expect(result.reportedCostCoverage).toBeCloseTo(2 / 3);
-    expect(result.blockers).toContain("provider-reported cost coverage 67%/80%");
+    expect(result.blockers).toContain(
+      "provider-reported cost coverage 67%/80% (2/3); " +
+        "need 2 additional cost-reported ledger entries",
+    );
     expect(result.recommendation).toBe("single-agent");
   });
 });
