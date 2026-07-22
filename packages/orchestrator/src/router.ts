@@ -9,6 +9,7 @@ import {
   type CapacityRoutingPolicyInput,
 } from "@bremio/quota";
 import { capabilityHolds } from "./validator";
+import { loadRoutingConfig, type RoutingConfig } from "./routing-config";
 
 export interface AssignAgentsOptions {
   capabilitiesByAgent?: ReadonlyMap<string, AgentCapabilities>;
@@ -243,6 +244,10 @@ export function roleForKind(kind: TaskKind): AgentRole {
     case "other":
       return "implementer";
   }
+}
+
+export function routingInputFromConfig(config: RoutingConfig): CapacityRoutingPolicyInput {
+  return { ...config.capacityPolicy };
 }
 
 export function permissionForKind(kind: TaskKind): Permission {

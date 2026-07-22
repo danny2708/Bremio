@@ -13,7 +13,11 @@
     "@bremio/protocol": "workspace:*",
     "@bremio/quota": "workspace:*",
     "@bremio/workspace": "workspace:*",
+    "js-yaml": "^5.2.1",
     "pino": "^9.5.0",
     "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9"
   }
 }

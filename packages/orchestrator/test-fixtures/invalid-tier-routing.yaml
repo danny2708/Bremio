@@ -1,0 +1,8 @@
+capacityPolicy:
+  healthyRemainingPercentMin: 50
+  limitedRemainingPercentMin: 20
+  criticalRemainingPercentMin: 5
+
+tiers:
+  unknown_tier:
+    claude: claude-sonnet-4-20250514

@@ -1,0 +1,44 @@
+capacityPolicy:
+  healthyRemainingPercentMin: 60
+  limitedRemainingPercentMin: 25
+  criticalRemainingPercentMin: 10
+  avoidCriticalAgents: true
+  prohibitExhaustedAgents: true
+  reserveLeadCapacityPercent: 20
+  unknownQuotaPenalty: 15
+  criticalQuotaPenalty: 50
+
+scoring:
+  capabilityWeight: 35
+  quotaWeight: 20
+  taskFitWeight: 20
+  qualityWeight: 15
+  speedWeight: 5
+  preferenceWeight: 5
+
+tiers:
+  trivial:
+    claude: claude-sonnet-4-20250514
+    codex: gpt-5.6-terra
+    antigravity: claude-sonnet-4-20250514
+    opencode: deepseek-chat
+  low:
+    claude: claude-sonnet-4-20250514
+    codex: gpt-5.6-terra
+    antigravity: claude-sonnet-4-20250514
+    opencode: deepseek-chat
+  medium:
+    claude: claude-opus-4-20250514
+    codex: gpt-5.6-zeus
+    antigravity: claude-opus-4-20250514
+    opencode: deepseek-chat
+  high:
+    claude: claude-opus-4-20250514
+    codex: gpt-5.6-zeus
+    antigravity: claude-opus-4-20250514
+    opencode: deepseek-reasoner
+  critical:
+    claude: claude-opus-4-20250514
+    codex: gpt-5.6-zeus
+    antigravity: claude-opus-4-20250514
+    opencode: deepseek-reasoner
