@@ -467,3 +467,35 @@ timeouts — process-supervisor, worktree, and 2 in run.integration — all pass
 individually).
 
 **Deviations:** None.
+
+## S2-T4 — Finish the capacity observe-and-display surface
+
+**Done:** Completed the remaining observe-and-display items for the capacity
+surface in both CLI and TUI:
+
+1. **`openNativeUsage` implementation:** Added `openNativeUsageFor()` utility in
+   `packages/quota/src/open-native-usage.ts` that returns a URL-opening function
+   for `codex` (→ `https://platform.openai.com/usage`) and `claude`
+   (→ `https://claude.ai/settings/usage`), and `undefined` for all other agents.
+   Wired into `AqtQuotaProvider.openNativeUsage` — present for Codex/Claude,
+   absent for Antigravity. Exported from `@bremio/quota`.
+
+2. **CLI `--open-usage` flag:** Added to `bremio capacity --open-usage <agent>`.
+   Opens the native page via the OS default browser (OS-agnostic: `start` on
+   Windows, `open` on macOS, `xdg-open` on Linux). Returns an error for agents
+   with no native page.
+
+3. **Unavailable-state rendering in TUI:** `CapacityScreen` now shows
+   `SOURCE UNAVAILABLE — no data from AI-Quota-Tray` in warning colour when
+   `source.confidenceLabel === "unavailable"`.
+
+4. **Tests (+3, total 350):**
+   - `openNativeUsage` present for Codex/Claude (aqt-provider.test.ts)
+   - `openNativeUsage` absent for Antigravity (aqt-provider.test.ts)
+   - `quotaCommand` returns 0 with last-known data when service is not live
+     (quota.test.ts)
+
+**Typecheck:** clean. **Test:** 349/350 pass (1 pre-existing Windows flaky
+timeout — worktree dependency bases). No regressions.
+
+**Deviations:** None.

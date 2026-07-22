@@ -50,8 +50,8 @@ ${c.bold("Usage")}
   bremio run --mode team --lead <agent> [--worker <agent>] --repo <path> "<prompt>"
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
-  bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
-  bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
+  bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
+  bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
   bremio daemon [start|status|stop|restart]   manage the local daemon (HTTP + SSE, loopback)
   bremio update                           how to update the CLI, daemon and extension
   bremio doctor [--json]                  adapter health; --json for a support bundle
@@ -92,7 +92,8 @@ ${c.bold("quota")}    backward-compatible alias for capacity
   --db <path>             Override the default AI-Quota-Tray database path.
   --no-refresh            Read last-known data without asking AQT to fetch.
   --aging-after <minutes> Degrade source confidence after this age (default: 15).
-  --stale-after <minutes> Treat older snapshots as unknown (default: 30).`;
+  --stale-after <minutes> Treat older snapshots as unknown (default: 30).
+  --open-usage <agent>    Open the agent's native usage page (codex, claude).`;
 
 function parseCli() {
   return parseArgs({
@@ -118,6 +119,7 @@ function parseCli() {
       "capacity-routing": { type: "boolean", default: false },
       // parseArgs has no `--no-x` negation, so the opt-out is its own flag.
       "no-refresh": { type: "boolean", default: false },
+      "open-usage": { type: "string" },
       out: { type: "string" },
       comparison: { type: "string" },
       json: { type: "boolean", default: false },
@@ -492,6 +494,7 @@ async function quotaCommandFromCli(values: Values): Promise<number> {
     ...(timing.agingAfterSeconds !== undefined
       ? { agingAfterSeconds: timing.agingAfterSeconds }
       : {}),
+    ...(values["open-usage"] ? { openUsage: values["open-usage"] } : {}),
   });
 }
 

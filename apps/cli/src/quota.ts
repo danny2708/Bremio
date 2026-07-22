@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
   defaultAqtDatabasePath,
+  openNativeUsageFor,
   readAqtQuota,
   refreshAqtIfAvailable,
   toAqtCapacitySnapshots,
@@ -16,6 +17,8 @@ export interface QuotaCommandOptions {
   agingAfterSeconds?: number;
   /** Ask AI-Quota-Tray to fetch from the providers before reading. */
   refresh?: boolean;
+  /** Open the provider's own native usage page. */
+  openUsage?: string;
 }
 
 /**
@@ -46,6 +49,17 @@ export function quotaCommand(
   options: QuotaCommandOptions,
   service?: AqtServiceStatus,
 ): number {
+  if (options.openUsage) {
+    const open = openNativeUsageFor(options.openUsage);
+    if (!open) {
+      console.error(c.red(`error: ${options.openUsage} has no native usage page`));
+      return 1;
+    }
+    void open();
+    console.log(c.dim(`opening ${options.openUsage} native usage page…`));
+    return 0;
+  }
+
   const databasePath = options.databasePath ?? defaultAqtDatabasePath();
   if (!databasePath) {
     console.error(c.red("error: cannot locate AI-Quota-Tray database; pass --db <path>"));

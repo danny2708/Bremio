@@ -120,6 +120,9 @@ export function CapacityScreen(): React.JSX.Element {
               {"    "}contact {snapshot.contactFreshness} {age} ago ·{" "}
               {snapshot.confidence} confidence in the numbers
             </Text>
+            {snapshot.source.confidenceLabel === "unavailable" ? (
+              <Text color={theme.warning}>    SOURCE UNAVAILABLE — no data from AI-Quota-Tray</Text>
+            ) : null}
             {snapshot.windows.length === 0 ? (
               <Text color={theme.muted}>    no quota windows reported</Text>
             ) : (

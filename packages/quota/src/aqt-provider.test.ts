@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AqtQuotaSnapshot } from "./aqt-reader";
-import { toAgentCapacitySnapshot, toAqtCapacitySnapshots } from "./aqt-provider";
+import { AqtQuotaProvider, toAgentCapacitySnapshot, toAqtCapacitySnapshots } from "./aqt-provider";
 
 const SOURCE: AqtQuotaSnapshot = {
   databasePath: "quota.sqlite3",
@@ -265,5 +265,31 @@ describe("confidence reflects the data, not the connection", () => {
     const snapshot = toAgentCapacitySnapshot(SOURCE, "codex");
     expect(snapshot.status).toBe("limited");
     expect(snapshot.confidence).toBe("high");
+  });
+});
+
+describe("openNativeUsage", () => {
+  it("is present for Codex and Claude", () => {
+    const codex = new AqtQuotaProvider({
+      agentId: "codex",
+      databasePath: "/dev/null/quota.sqlite3",
+      staleAfterSeconds: 300,
+    });
+    const claude = new AqtQuotaProvider({
+      agentId: "claude",
+      databasePath: "/dev/null/quota.sqlite3",
+      staleAfterSeconds: 300,
+    });
+    expect(codex.openNativeUsage).toBeDefined();
+    expect(claude.openNativeUsage).toBeDefined();
+  });
+
+  it("is absent for Antigravity", () => {
+    const provider = new AqtQuotaProvider({
+      agentId: "antigravity",
+      databasePath: "/dev/null/quota.sqlite3",
+      staleAfterSeconds: 300,
+    });
+    expect(provider.openNativeUsage).toBeUndefined();
   });
 });

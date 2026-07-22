@@ -6,6 +6,7 @@ import type {
   QuotaWindow,
 } from "./capacity";
 import { AgentCapacitySnapshotSchema } from "./capacity";
+import { openNativeUsageFor } from "./open-native-usage";
 import {
   readAqtQuota,
   type AqtQuotaSnapshot,
@@ -31,10 +32,12 @@ export interface CapacityFreshnessOptions {
 export class AqtQuotaProvider implements QuotaProvider {
   readonly id: string;
   readonly #options: AqtQuotaProviderOptions;
+  readonly openNativeUsage: (() => Promise<void>) | undefined;
 
   constructor(options: AqtQuotaProviderOptions) {
     this.id = `aqt:${options.agentId}`;
     this.#options = options;
+    this.openNativeUsage = openNativeUsageFor(options.agentId);
   }
 
   async readSnapshot(): Promise<AgentCapacitySnapshot> {
