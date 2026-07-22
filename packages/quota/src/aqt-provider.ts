@@ -12,6 +12,7 @@ import {
   type ProviderQuota,
   type ReadAqtQuotaOptions,
 } from "./aqt-reader";
+import { ANTIGRAVITY_MODEL_MAP } from "./antigravity-models";
 
 export const AQT_AGENT_IDS = ["claude", "codex", "antigravity"] as const;
 export type AqtAgentId = (typeof AQT_AGENT_IDS)[number];
@@ -68,10 +69,12 @@ export function toAgentCapacitySnapshot(
       agingAfterSeconds,
       source.staleAfterSeconds,
     );
+    const modelId = agentId === "antigravity" ? ANTIGRAVITY_MODEL_MAP[bucket.bucketId] : undefined;
     return {
       id: bucket.bucketId,
       label: bucket.bucketName,
       scope: agentId === "antigravity" ? "model" : "account",
+      ...(modelId ? { modelId } : {}),
       ...(bucket.usedPercent !== undefined ? { usedPercent: bucket.usedPercent } : {}),
       ...(bucket.remainingPercent !== undefined
         ? { remainingPercent: bucket.remainingPercent }

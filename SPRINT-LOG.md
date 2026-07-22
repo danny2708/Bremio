@@ -321,3 +321,92 @@ process-supervisor are pre-existing flakiness under full suite load — all pass
 when run individually).
 
 **Deviations:** None.
+
+## S2-T1 — Move the tiered model policy into `config/routing.yaml`
+
+**Done:**
+- Created `config/routing.yaml` with three blocks: `capacityPolicy` (matching
+  the documented defaults from `routing-policy.ts`), `scoring` (weights for
+  S2-T3's weighted router), and `tiers` (maps `reasoningRequirement` →
+  per-adapter model id, so a tier never names one provider's model globally).
+- Created `packages/orchestrator/src/routing-config.ts` with a Zod 4 schema
+  that validates all three blocks. `loadRoutingConfig(path?)` reads and
+  validates the YAML file; `getDefaultRoutingConfig()` returns the documented
+  defaults. The schema uses `.default()` on every field so an absent file yields
+  defaults. A `superRefine` validates tier keys against the known set
+  (`trivial`/`low`/`medium`/`high`/`critical`), rejecting unknown keys with
+  the config path in the error message.
+- Wired into `router.ts`: exports `routingInputFromConfig()` that extracts the
+  `CapacityRoutingPolicyInput` from a `RoutingConfig`, so callers can load the
+  config once and pass it through the existing `AssignAgentsOptions.capacityPolicy`
+  field.
+- Exported `loadRoutingConfig`, `getDefaultRoutingConfig`, `RoutingConfig` and
+  `routingInputFromConfig` from `@bremio/orchestrator`.
+- New dependency: `js-yaml` + `@types/js-yaml` — the standard library has no
+  YAML parser, so this is a justified addition.
+
+**Tests (335 total, +4):**
+1. Valid file parses into the expected policy object (custom thresholds verify
+   the file is read, not just defaults).
+2. Invalid tier key (`unknown_tier`) is rejected with the config path in the
+   error.
+3. Missing file produces documented defaults.
+4. No hardcoded provider model id literals in orchestrator source
+   (regex-scan: `claude-sonnet|claude-opus|gpt-|deepseek|gemini-` — none found).
+
+**Red/green verified:** Mutated the valid-file threshold assertion → red;
+mutated the invalid-tier key → red; restored both → green.
+
+**Typecheck:** clean. **Test:** 335/335 pass. No existing test needed editing.
+
+**Deviations:** None.
+
+## S2-T2 — Map Antigravity buckets to verified model ids
+
+**Done:**
+- Created `packages/quota/src/antigravity-models.ts` with an explicit mapping
+  table from AQT's display-derived bucket keys to verified model ids. Chose a
+  dedicated module (not `config/routing.yaml`) because:
+  1. The mapping is used in `@bremio/quota`, not `@bremio/orchestrator` — the
+     config file would create a cross-package dependency.
+  2. The mapping is a static data table, not operator-tunable policy. Unknown
+     keys fail closed (modelId stays absent), so the table is a trusted list
+     that must be updated in code when Antigravity adds models.
+- Wired into `aqt-provider.ts:toAgentCapacitySnapshot`: Antigravity buckets
+  look up `ANTIGRAVITY_MODEL_MAP[bucket.bucketId]`; found → modelId is set,
+  not found → modelId stays absent and the window stays ineligible for routing.
+- Retired Antigravity buckets remain filtered by the reader (`aqt-reader.ts`
+  line 142 filters `severity !== "retired"` before the provider ever sees
+  them). The `antigravity-models.ts` module inherits this safety property.
+
+**Known map entries (source of truth: `antigravity-adapter.ts` `listModels()`):**
+
+| AQT bucket key | Model family id |
+|---|---|
+| `gemini-pro-high` | `gemini-3.1-pro` |
+| `gemini-35-flash-medium` | `gemini-3.5-flash` |
+| `gemini-35-flash-high` | `gemini-3.5-flash` |
+| `claude-sonnet-46-thinking` | `claude-sonnet-4.6` |
+
+**Tests (339 total, +4):**
+1. `aqt-provider.test.ts` — known key (`gemini-pro-high`) resolves to
+   `gemini-3.1-pro`.
+2. `aqt-provider.test.ts` — unknown key (`bogus-model-unknown`) leaves modelId
+   absent even when the bucket is fresh.
+3. `routing-policy.test.ts` — already tested: `assessCapacity` with two
+   model-scoped windows (`gemini-pro` at 0%, `gemini-flash` at 90%) proves
+   a limited model does not exclude a different model. No new test needed.
+4. `aqt-reader.test.ts` — a retired Antigravity bucket (`severity: 'retired'`)
+   is filtered before the provider maps it, so its modelId is never set.
+
+**Coverage audit in `docs/05` ticked:** 4C box 4 now checked — Antigravity is
+no longer "blocked on verified model-id mapping."
+
+**Red/green verified:** Mutated the known-key assertion → red; mutated the
+unknown-key assertion → red; restored both → green. Existing routing-policy
+tests unchanged. Existing retired-bucket test unchanged.
+
+**Typecheck:** clean. **Test:** 337/337 pass (2 pre-existing Windows flaky
+timeouts — process-supervisor and worktree — pass individually).
+
+**Deviations:** None.

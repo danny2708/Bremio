@@ -96,7 +96,84 @@ describe("AQT capacity mapping", () => {
       freshness: "fresh",
       confidence: "high",
     });
+    expect(snapshot.windows[0]?.modelId).toBe("gemini-3.1-pro");
+  });
+
+  it("maps a known bucket key to its verified model id", () => {
+    const snapshot = toAgentCapacitySnapshot(SOURCE, "antigravity");
+    expect(snapshot.windows[0]).toMatchObject({
+      id: "gemini-pro-high",
+      modelId: "gemini-3.1-pro",
+    });
+  });
+
+  it("leaves modelId absent for an unknown bucket key", () => {
+    const unknownSource: AqtQuotaSnapshot = {
+      ...SOURCE,
+      providers: SOURCE.providers.map((provider) =>
+        provider.agentId === "antigravity"
+          ? {
+              ...provider,
+              buckets: [
+                {
+                  bucketId: "bogus-model-unknown",
+                  bucketName: "Bogus Model Unknown",
+                  remainingPercent: 50,
+                  fetchedAt: 1_990,
+                  sourceName: "Antigravity language server",
+                  confidence: "local_official",
+                  severity: "normal",
+                },
+              ],
+            }
+          : provider,
+      ),
+    };
+    const snapshot = toAgentCapacitySnapshot(unknownSource, "antigravity");
     expect(snapshot.windows[0]?.modelId).toBeUndefined();
+  });
+
+  it("assigns distinct modelIds to multiple Antigravity buckets from different model families", () => {
+    const multiSource: AqtQuotaSnapshot = {
+      ...SOURCE,
+      providers: SOURCE.providers.map((provider) =>
+        provider.agentId === "antigravity"
+          ? {
+              ...provider,
+              buckets: [
+                {
+                  bucketId: "gemini-pro-high",
+                  bucketName: "Gemini Pro High",
+                  remainingPercent: 30,
+                  fetchedAt: 1_980,
+                  sourceName: "Antigravity language server",
+                  confidence: "local_official",
+                  severity: "warning",
+                },
+                {
+                  bucketId: "gemini-35-flash-medium",
+                  bucketName: "Gemini 3.5 Flash (Medium)",
+                  remainingPercent: 90,
+                  fetchedAt: 1_985,
+                  sourceName: "Antigravity language server",
+                  confidence: "local_official",
+                  severity: "normal",
+                },
+              ],
+            }
+          : provider,
+      ),
+    };
+    const snapshot = toAgentCapacitySnapshot(multiSource, "antigravity");
+    expect(snapshot.windows).toHaveLength(2);
+    expect(snapshot.windows[0]).toMatchObject({
+      id: "gemini-pro-high",
+      modelId: "gemini-3.1-pro",
+    });
+    expect(snapshot.windows[1]).toMatchObject({
+      id: "gemini-35-flash-medium",
+      modelId: "gemini-3.5-flash",
+    });
   });
 
   it("returns an explicit unavailable card when AQT has no provider", () => {
