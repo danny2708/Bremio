@@ -29,29 +29,25 @@ results back into one place.
 
 ## Status
 
-- Code status (2026-07-18): the Phase 1 implementation is shipped: Claude and
-  Codex adapters, strict plan validation, sequential worktree execution,
-  reports, cancellation, logs, and the CLI are available. See the root
-  `README.md` for the current commands and verification count.
-- Phase 2 is implemented locally: dependent tasks inherit upstream branches,
-  test tasks provide shell exit-code evidence, reviews use structured findings
-  and a different agent, reports compute a fail-closed gate, and `bremio merge`
-  refuses runs whose gate is missing or failed.
-- A small Phase-3/Phase-4 foundation also shipped early: confirmation-gated
-  manual merge/cleanup, an append-only usage ledger and `bremio stats`
-  (including provider-reported task and lead-planning token/cost data when
-  available, with coordination separated from task outcomes),
-  plus read-only AQT SQLite normalization exposed through `bremio quota`, an
-  opt-in capacity safety router, and fail-closed calibration readiness.
-  Automatic quota optimization remains disabled pending paired evidence.
-- Fresh real-provider fixtures passed Claude Single, Codex Single, Claude-led
-  Team, and Codex-led Team after the Claude session reset. Both Team directions
-  completed implementation, tests, and independent review with a 3/3 quality
-  gate. Antigravity's official SDK adapter is locally verified but its first
-  billed run remains credential-blocked and is not a v0.1 release gate.
-- The v0.1 release cut builds a local npm tarball and verifies it through a
-  clean temporary install. See the root `README.md` for build/install and the
-  quota-consuming provider-smoke commands.
+- Code status (2026-07-22): `0.1.0-alpha.1` ships the CLI and Ink TUI, a
+  durable loopback daemon, and a VS Code panel. Team execution is
+  dependency-aware and parallel (default concurrency 2), while git worktree
+  mutations stay serialized. Reports, cancellation states, diagnostics,
+  quality-gated manual merge, durable history, and recovery paths are present.
+- Claude and Codex are lead-capable. Antigravity uses the authenticated `agy`
+  CLI and OpenCode uses its CLI/HTTP surfaces; both are Single/Team workers but
+  are excluded from lead selection by their capability contracts. Real smoke
+  evidence exists for all four providers, including both Claude/Codex lead
+  directions and worker runs for Antigravity and OpenCode.
+- Capacity can ask AQT to refresh through its authenticated loopback API, then
+  reads AQT's schema-v1 SQLite source. CLI/TUI surfaces preserve windows,
+  freshness, confidence, unavailable/last-known states, and native usage links.
+  Scored capacity routing is opt-in; Auto mode, net-gain enforcement, and the
+  cost kill-switch remain deferred until paired evidence is sufficient.
+- The local release gate passes typecheck, 351 tests, bundle build, clean packed
+  install, and a 21-check fresh-profile daemon E2E on Windows. The current
+  machine has no WSL distribution, so the separate POSIX verification command
+  is environment-blocked in the latest audit rather than marked passed.
 - Origin: brainstorm with an agent (2026-07). These docs have been **filtered
   and reworked**, not copied verbatim.
 - Resolved v0.1 decisions and remaining risks: see

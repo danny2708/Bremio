@@ -10,15 +10,18 @@ already exists in the same Side-Projects directory. If Bremio re-reads
 quota itself = writing the hardest piece of logic twice. → Consume AQT;
 quota is Phase 4, not the MVP.
 
-**R2 — Antigravity auth is a different capacity pool.** The official SDK uses
-Gemini API-key or Vertex credentials; it does not reuse the Antigravity IDE
-login/subscription whose quota AQT observes. → report SDK auth separately and
-never route from IDE quota as though it guaranteed SDK execution capacity.
+**R2 — Antigravity execution and observation are separate surfaces.** Bremio
+runs the authenticated `agy` CLI, while AQT observes the IDE language server's
+quota buckets. Both belong to the user's Google AI subscription, but a fresh
+IDE bucket is still not proof that a particular `agy` run will start. → keep
+execution health and capacity confidence separate, and route only mapped model
+buckets.
 
-**R3 — Antigravity shell is not workspace-sandboxed.** SDK file policies are
-workspace-scoped, but `run_command` can still mutate outside that boundary.
-→ disable shell for read-only runs and keep Antigravity out of test gates until
-the SDK exposes both a stronger sandbox and reliable command exit codes.
+**R3 — Antigravity write mode is not an OS sandbox.** `--add-dir` targets the
+worktree and `--mode plan` covers read-only work, but non-interactive writes use
+`--dangerously-skip-permissions`. Prompt/worktree scoping cannot prevent every
+external mutation. → keep Antigravity out of test gates and lead roles, and do
+not claim containment stronger than the CLI provides.
 
 **R4 — Handoff loss can make multi-agent worse than single.** An agent
 receiving a plan loses the original agent's reasoning. → baseline = best
@@ -28,10 +31,11 @@ single agent; enforce `outcome ≥ baseline` + the single-agent escape hatch.
 twice. → only enable cheap-first after the calibration gate; escalate the
 correct stage, never raise both reasoning and model tier at once.
 
-**R6 — Scope creep (MVP turning into v1.0).** Scheduler + router + 3
-adapters + worktrees + quota + extension all inside "MVP" is a planning-
-fallacy signal. → lock Phase 1 to Claude+Codex sequential; everything else
-explicitly out of scope.
+**R6 — Scope creep (alpha turning into v1.0).** Four adapters, routing,
+worktrees, daemon, TUI, quota and an extension now exist. → keep Auto,
+kill-switch, panel polish and publication behind the evidence/tasks in
+`08-completion-plan.md`; do not rename the alpha to v1 because the surface is
+large.
 
 ## ROI & sequencing (Chief-of-Staff)
 
@@ -51,8 +55,9 @@ expanding.
 - [x] Codex RPC `account/rateLimits/read` → retained behind AI-Quota-Tray;
       Bremio consumes AQT's normalized schema-v1 multi-window cache rather than
       duplicating the provider RPC.
-- [x] Antigravity programmatic surface → official `google-antigravity==0.1.7`
-      inspected and integrated through a JSONL Python sidecar.
+- [x] Antigravity programmatic surface → authenticated `agy` CLI 1.1.4
+      verified in non-interactive print mode with mandatory workspace targeting
+      and integrated as a prose-only Single/Team worker.
 - [x] Where/how AQT writes its quota cache → confirmed schema-v1 SQLite under
       AQT's LocalAppData directory; Bremio reads it read-only.
 

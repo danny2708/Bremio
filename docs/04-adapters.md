@@ -25,7 +25,7 @@ interface AgentAdapter {
 - Quota in Bremio: consume AQT's opt-in Claude Code status-line bridge (5-hour
   and 7-day windows). SDK token usage is telemetry, not a quota percentage.
 - Roles: lead, planner, implementer, reviewer. Eligible to be the lead.
-- Risk: lowest of the three. **Start here.**
+- Risk: lowest among the current adapters. **Start here.**
 
 ## Codex adapter
 - Surface: `codex exec` (one-shot) or the **Codex App Server**
@@ -121,12 +121,9 @@ interface AgentAdapter {
   (3/3 tasks). That run is why S1-T4 first called OpenCode lead-eligible — it
   is evidence the mechanism can work on one model on one day, not evidence it
   is a guarantee. S1-R4 revisits the verdict for that reason.
-- Jan: local OpenAI-compatible server (default `localhost:1337`) → separate
-  integration as a **local model provider / local worker**, no desktop UI
-  automation. Strategic role: **near-free capacity** as a fallback when
-  cloud agents are low on quota (reading code, preliminary analysis,
-  building test skeletons). See `05` — this is where `net_gain` is easiest
-  to keep positive.
+- Jan was dropped from the current roadmap. No adapter was implemented, and
+  there is no measured evidence that maintaining another local-provider path
+  would improve net gain over OpenCode and the existing cloud workers.
 
 ## Plugin manifest (adding a provider = 1 package)
 ```ts

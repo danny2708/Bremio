@@ -82,6 +82,18 @@ takes: no `~/.bremio`, no database, no daemon. It installs the tarball, starts
 the daemon from nothing, runs something, restarts, and confirms the history
 survived. Your real profile is neither read nor modified.
 
+The complete pre-release evidence set is:
+
+```powershell
+corepack pnpm release:check   # typecheck + 351 tests + build + packed install
+corepack pnpm e2e:fresh       # 21 fresh-profile daemon/install checks
+corepack pnpm posix:verify    # run from Linux or a configured WSL distribution
+```
+
+`posix:verify` is not emulated through Windows Node. If `/bin/bash` is absent,
+record the gate as environment-blocked and run it on a real Linux/WSL host;
+never convert that into a pass.
+
 ---
 
 ## Update
@@ -219,17 +231,19 @@ keep everything else.
   snapshots the full descendant tree (`Get-CimInstance Win32_Process`) before
   signalling and re-checks every pid afterwards — a static tree of any depth is
   confirmed gone, verified in tests to three levels (root → child →
-  grandchild). The one case still open is a race: a process spawned in the
-  window between that snapshot and `taskkill /T` completing is neither in the
-  snapshot nor caught by the walk, and would not be verified. Closing it fully
-  needs a Win32 **Job Object** with `KILL_ON_JOB_CLOSE`, which the kernel
-  enforces regardless of when a child appears — but that requires a native
-  addon Bremio deliberately does not carry (the same reason `node:sqlite` was
-  chosen over `better-sqlite3`). Until that trade is revisited, this is the
-  residual risk: not "a grandchild survives" in general, but "a process born
-  during the kill walk may survive."
-- **No registry publication.** `npm i -g bremio` will not work until v0.1.0 is
-  published; install from the artifact you built.
+  grandchild). Daemon-wide shutdown terminates each owned run **sequentially**,
+  not concurrently, so several `taskkill`/WMI sweeps cannot race and leave a
+  process alive past its verification window. The one case still open is a race
+  within a single run: a process spawned in the window between that snapshot and
+  `taskkill /T` completing is neither in the snapshot nor caught by the walk,
+  and would not be verified. Closing it fully needs a Win32 **Job Object** with
+  `KILL_ON_JOB_CLOSE`, which the kernel enforces regardless of when a child
+  appears — but that requires a native addon Bremio deliberately does not carry
+  (the same reason `node:sqlite` was chosen over `better-sqlite3`). Until that
+  trade is revisited, this is the residual risk: not "a grandchild survives" in
+  general, but "a process born during the kill walk may survive."
+- **No registry publication.** `npm i -g bremio` does not work for this alpha;
+  install `bremio-0.1.0-alpha.1.tgz` from the artifact you built.
 - **Quota freshness depends on the provider.** Bremio reads AI-Quota-Tray's
   database, which only advances when the provider's own tooling runs. Stale
   readings are labelled with their age rather than presented as current.

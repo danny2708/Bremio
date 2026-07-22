@@ -3,8 +3,9 @@
 ## Principle #1
 
 **The orchestrator is independent of every provider.** Claude is only the
-*default lead*, not "the core system." If Codex/Antigravity/OpenCode/Jan
-becomes the lead later, the core must not need to be rewritten.
+*default lead*, not "the core system." Any current or future adapter becomes a
+lead only when its capability contract provides reliable planning and
+structured output; the core must not need to be rewritten.
 
 ## Layer diagram
 
@@ -24,13 +25,11 @@ execution path.
 │  Worktree Mgr  Event Stream Result Aggregator         │
 └───────────────────────────┬──────────────────────────┘
                             │  provider-agnostic AgentAdapter protocol
-        ┌───────────────────┼────────────────────┐
-        ▼                   ▼                     ▼
-  Claude Adapter      Codex Adapter       Antigravity Adapter
-  (Agent SDK)         (app-server/exec)   (agy CLI, print mode)
-        └───────────────────┼────────────────────┘
-                            ▼
-                  Future adapters (OpenCode / Jan)
+        ┌───────────────────┼────────────────────┬───────────────────┐
+        ▼                   ▼                    ▼                   ▼
+  Claude Adapter      Codex Adapter      Antigravity Adapter  OpenCode Adapter
+  (Agent SDK)         (exec JSONL)       (agy print mode)      (CLI / HTTP)
+  lead + worker       lead + worker      worker-only           worker-only
 ```
 
 ## Core concept 1 — Lead is a ROLE, not a separate adapter

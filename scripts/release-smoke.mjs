@@ -59,7 +59,7 @@ try {
     throw new Error("installed CLI doctor invoked a provider through shell:true");
   }
   const doctor = doctorResult.stdout;
-  for (const adapter of ["claude", "codex", "antigravity"]) {
+  for (const adapter of ["claude", "codex", "antigravity", "opencode"]) {
     if (!doctor.includes(adapter)) throw new Error(`doctor omitted ${adapter}`);
   }
 

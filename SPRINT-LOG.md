@@ -653,3 +653,35 @@ broke the catch-block `cancelled` status → cancel test red; restored → green
 **Deviations:** None — but note the scope boundary: this is the transport +
 lifecycle plumbing, not an agentic harness. Making a local model a real worker
 (file/shell tools) is the integration's job, called out explicitly in docs/11.
+
+---
+
+## Release-gate and documentation audit (Codex, 2026-07-22)
+
+**Process supervisor:** Reproduced the previously labelled Windows flake
+outside the managed sandbox. The full supervisor file passed 12/13 once, with
+only daemon-wide `terminateAll()` failing while two WMI + `taskkill /T`
+sequences ran concurrently. Changed shutdown to terminate owned runs
+sequentially: shutdown is a correctness boundary, and concurrent process-tree
+walks did not provide useful throughput. The complete 13-test supervisor suite
+then passed three consecutive runs. Assertions now include the complete
+termination outcomes when this boundary fails again.
+
+**Windows release evidence:** `corepack pnpm release:check` passed typecheck,
+351/351 tests, bundle build, and clean packed installation for
+`0.1.0-alpha.1`. `corepack pnpm e2e:fresh` passed 21/21 checks: scratch-profile
+install, CLI/doctor, authenticated daemon startup, persistence across restart,
+single-instance refusal, and diagnostic redaction. The fresh-install harness
+now invokes `npm-cli.js` without `shell:true` and removes its generated tarball;
+the rerun emitted no `DEP0190` warning and left no artifact behind.
+
+**POSIX evidence:** `corepack pnpm posix:verify` could not start because this
+machine has no configured WSL distribution (`/bin/bash` was absent). This is
+recorded as environment-blocked, not passed. No Linux behavior was inferred
+from Windows Node.
+
+**Docs:** Reconciled the status surface with `main`: alpha version, four
+adapters, worker-only Antigravity/OpenCode, TUI, daemon, extension, parallel
+scheduler, completed Sprint 2 capacity/routing work, current process-tree
+guarantee, local-artifact installation, dropped Jan direction, and remaining
+Sprint 3–5 work.

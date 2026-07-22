@@ -29,14 +29,14 @@ remain unknown/low-confidence signals rather than hard exclusions.
 
 | Agent | Already available through AQT SQLite | Gap in Bremio |
 |---|---|---|
-| Claude Code | 5-hour and 7-day windows from the opt-in status-line bridge | No graphical Capacity card/open-native-usage action; extra windows such as "Weekly Fable" are not currently whitelisted by AQT and must remain absent until a structured source is verified. |
+| Claude Code | 5-hour and 7-day windows from the opt-in status-line bridge | CLI/TUI cards and native-usage action are implemented. Extra windows such as "Weekly Fable" are not currently whitelisted by AQT and must remain absent until a structured source is verified. |
 | Codex | Every `rateLimitsByLimitId` entry, including primary/secondary windows and optional individual limits | Multiple windows are preserved and the 4C evaluator uses their minimum remaining percentage. |
-| Antigravity | One bucket per model from `clientModelConfigs[].quotaInfo`, with remaining fraction and reset time | The CLI displays every bucket and the evaluator is model-aware, but routing stays disabled until each display key maps to a verified provider model id. |
+| Antigravity | One bucket per model from `clientModelConfigs[].quotaInfo`, with remaining fraction and reset time | CLI/TUI display every bucket. Known display keys map to verified provider model ids; unknown keys stay visible but cannot drive routing. |
 
-AQT currently persists Antigravity's display-derived bucket key, not a verified
-provider model id. Bremio therefore marks those windows as model-scoped but
-does not populate `modelId`; 4C must add an explicit mapping before routing on
-them.
+AQT persists Antigravity's display-derived bucket key rather than a provider
+model id. Bremio maps only the display names verified through `agy models list`
+in `packages/quota/src/antigravity-models.ts`; unrecognized names deliberately
+remain unmapped and are not routing evidence.
 
 Current runtime check on 2026-07-18 found AQT stopped and the database last
 updated on 2026-07-12. `bremio quota` correctly reports every provider as
@@ -199,9 +199,11 @@ agents are always better."
 ```
 effective_capacity  ≈  Σ_i ( quota_i / cost_per_task_i )
 ```
-Pooling multiple providers + **local (Jan), near-free** is the biggest and
-most reliable win. Routing only improves things by **lowering
-cost_per_task**, and only the **NET** portion counts.
+Pooling providers can increase effective capacity, but only measured
+cost-per-task improvements count. Jan was dropped from the current roadmap:
+there is no implemented adapter or evidence that another local-provider path
+would improve net gain. Routing only helps by **lowering cost_per_task**, and
+only the **NET** portion counts.
 
 **(c) Measure net, not gross. The invariant to enforce is `net_gain > 0`,
 NOT `efficiency > 0`** (the latter is always vacuously true, since its
@@ -370,9 +372,10 @@ telemetry and are never converted into quota percentage.
       through `bremio capacity` while retaining `bremio quota` as an alias.
 - [x] Split requested/actual model and reasoning metadata in reports and the
       ledger without inferring provider defaults.
-- [ ] Add graphical **Capacity** cards; the CLI surface already displays
-      data age, source, confidence, freshness, and every window.
-- [ ] Add re-read refresh, `Open usage`, and unavailable states.
+- [x] Add graphical **Capacity** cards in the TUI while keeping the CLI's data
+      age, source, confidence, freshness, and every-window detail.
+- [x] Add AQT-backed refresh, provider-specific `Open usage`, and explicit
+      unavailable/last-known states in CLI/TUI surfaces.
 - [ ] Extend AQT's Claude whitelist only when another structured window is
       verified; do not synthesize "Weekly Fable" from token usage.
 
@@ -420,5 +423,6 @@ ledger has enough evidence to enable optimization automatically.
    waits for fresh-data calibration.**
 3. Single-agent-vs-multi evidence gate. **Readiness reporting and direct
    baseline execution shipped; automatic selection and kill-switch remain open.**
-4. Scoring router + calibration gate. **Capacity safety routing is opt-in;
-   cheap-first remains disabled until paired evidence passes the gate.**
+4. Scoring router + calibration gate. **The weighted, capability-aware router
+   is implemented behind opt-in capacity routing; automatic/cheap-first mode
+   remains disabled until paired evidence passes the gate.**

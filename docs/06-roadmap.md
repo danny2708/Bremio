@@ -3,21 +3,23 @@
 Principle: **prove the cheap thing before building the expensive one.** No
 dashboard/quota/parallelism before the core loop runs.
 
-## v0.1 CLI release cut
+## v0.1 alpha release cut
 
-**Status (2026-07-18): shipped locally.** Feature scope is frozen at the
-explicit Single/Team CLI, three current adapters, the Team quality gate and
-manual merge lifecycle, plus measurement and opt-in capacity safety routing.
-The distributable npm tarball contains a bundled Node CLI and the Antigravity
-sidecar. `pnpm release:check` typechecks, runs the automated suite, builds,
-packs, installs into a clean temporary project, and exercises the installed
-version/help/doctor commands. Real-provider smoke remains explicit because it
+**Status (updated 2026-07-22): shipped locally as `0.1.0-alpha.1`.** The
+distributable npm tarball contains the bundled CLI/TUI and daemon; the VS Code
+extension ships as a local VSIX. Four adapters are registered: lead-capable
+Claude/Codex plus worker-only Antigravity/OpenCode. `pnpm release:check`
+typechecks, runs 351 tests, builds, packs, installs into a clean temporary
+project, and exercises the installed version/help/doctor commands. A separate
+fresh-profile E2E verifies daemon startup, authentication, persistence,
+restart, and diagnostics. Real-provider smoke remains explicit because it
 consumes quota.
 
-The next product milestone is evidence, not more surface area: configure SDK
-credentials and verify a real Antigravity worker run, collect matched
-Single/Team comparisons, and only then decide whether Auto routing has positive
-ROI. Parallel execution, dashboard, and editor integration stay out of v0.1.
+The next product milestone is evidence, not more surface area: compute net gain,
+collect matched Single/Team comparisons, and only then decide whether Auto
+routing has positive ROI. Parallel execution, TUI, daemon, and editor
+integration have already shipped in the alpha; light-theme panel polish and
+automatic decisions remain open.
 
 ## Execution modes — manual before automatic
 
@@ -39,10 +41,9 @@ Still deferred after the manual-mode evidence gate:
 - extracting Single into another package (keep it as an orchestrator module
   until a concrete package boundary is justified).
 
-Phase 1.5 now provides Antigravity as a Single agent and explicit Team
-implementation worker. The next execution milestone is real-provider
-Antigravity verification once SDK credentials are configured, followed by
-evidence-driven hardening rather than automatic expansion into later phases.
+Phase 1.5 provides Antigravity as a real-verified Single agent and explicit
+Team implementation worker through the authenticated `agy` CLI. It remains
+excluded from planning and test-gate roles by capability, not by provider name.
 
 ## Phase 1 — Vertical slice (the real MVP)
 Only **Claude (lead) + Codex (worker)**, **sequential**. Both return plan
@@ -142,12 +143,13 @@ incomplete before efficiency claims.
 Do not copy AQT's provider fetch implementations into Bremio. Add a stable AQT
 refresh boundary (command/IPC/shared package) if re-reading SQLite is not enough.
 
-**4A contract status (2026-07-18):** the canonical capacity schema and
+**4A status (updated 2026-07-22):** the canonical capacity schema and
 `QuotaProvider` are implemented. AQT snapshots now map to one Claude, Codex,
 and Antigravity capacity card through `bremio capacity` (`bremio quota` remains
-an alias). Run history now separates requested and provider-confirmed model and
-reasoning metadata. A graphical card surface and native-usage actions remain
-open.
+an alias). Run history separates requested and provider-confirmed model and
+reasoning metadata. The TUI renders capacity cards with explicit unavailable
+and last-known states; CLI/TUI refresh through AQT and native usage actions are
+available where a provider exposes one.
 
 **4B freshness status (2026-07-18):** capacity snapshots and individual
 windows now carry explicit freshness. Confidence degrades as data ages while
@@ -155,13 +157,15 @@ last-known values remain visible; the CLI shows per-window update timestamps
 and suppresses low-capacity alerts for stale, unknown, or low-confidence data.
 AQT-owned polling remains open.
 
-**4C routing status (2026-07-18):** a conservative, opt-in safety router is
+**4C routing status (updated 2026-07-22):** a conservative, opt-in scored
+router is
 available through `bremio run --capacity-routing`. It applies configurable
 50%/20%/5% bands, protects a 15% lead reserve, uses the minimum across Codex
 account windows, hard-excludes only fresh high-confidence exhaustion, and
 treats stale/unknown/low-confidence data as a soft signal. Automatic enablement
-remains behind ledger calibration. Antigravity routing remains blocked until
-AQT exposes or Bremio can explicitly map verified provider model ids.
+remains behind ledger calibration. Verified Antigravity display names now map
+to provider model ids in `packages/quota/src/antigravity-models.ts`; unknown
+buckets remain unmapped and cannot drive routing.
 
 **4D calibration status (2026-07-18):** Single and Team runs now record flow
 mode and a mode-appropriate objective outcome; `--comparison <id>` links
@@ -216,12 +220,14 @@ liveness. The extension reconnects from its last sequence rather than replaying
 or skipping. Provider failures are classified into a small set of codes with a
 bounded, conservative retry policy.
 
-Still open in Phase 5: cancellation does not guarantee an empty process tree on
-Windows (see the limitations in `03-modules.md`), and the panel remains
-dark-only.
+Still open in Phase 5: Windows tree termination is confirmed with a centralized
+supervisor and `taskkill /T /F`, but it is weaker than a Job Object against a
+descendant created during the kill walk. The panel remains dark-only.
 
 ## Phase 6 — Additional providers
-OpenCode (verified 2026-07-21), Jan (local worker = near-free capacity).
+OpenCode (verified 2026-07-21). Jan was dropped from the current roadmap: there
+is no adapter or measured evidence that maintaining another local-provider path
+would beat OpenCode and the existing cloud workers.
 
 **OpenCode adapter status (updated S1-R4, 2026-07-22):** shipped and
 real-provider verified as a **worker**. `@bremio/adapter-opencode` supports the
@@ -244,8 +250,8 @@ output — was not reliable enough to trust with whole-plan authorship. Claude
 and Codex cover the lead role with a schema constraint their own provider
 enforces; OpenCode is a strong worker instead.
 
-Jan remains as a future integration — a local OpenAI-compatible server for
-near-free capacity as a fallback worker. Each provider = one adapter package.
+Additional providers now require measured demand and one adapter package each;
+none is committed for the alpha-to-v1 path.
 
 ## First sprint (7 items)
 1. pnpm TS monorepo. 2. `AgentAdapter` + `PlanSchema` + `TaskSchema`.

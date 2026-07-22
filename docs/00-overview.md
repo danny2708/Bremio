@@ -24,9 +24,9 @@ A **control plane** with two explicit manual execution modes:
 - The **orchestrator** (independent of every provider) makes the final call
   on which agent does which task, with what permissions, in which worktree,
   with which model.
-- The lead can be **swapped** between Claude and Codex. Antigravity is a
-  Single/Team implementation worker until its planning and test-gate contracts
-  are strong enough; later providers may expand the lead pool.
+- The lead can be **swapped** between Claude and Codex. Antigravity and
+  OpenCode are Single/Team workers whose current structured-output contracts
+  are not strong enough for lead eligibility.
 - The lead **can also** take on code tasks, depending on quota.
 - **Auto** selection and Single→Team escalation are later phases, not aliases
   for either manual mode.
@@ -39,8 +39,9 @@ A **control plane** with two explicit manual execution modes:
   programmatic surfaces instead.
 - ❌ **Doesn't scrape quota from UI/IDE.** Only reads official sources; if a
   source is missing, it's reported as `unknown`.
-- ❌ **Not a v1.0 right away.** The MVP is a sequential vertical slice — no
-  polished dashboard, no parallelism, no auto-merge (see `06-roadmap.md`).
+- ❌ **Not a v1.0 right away.** The original MVP was a sequential vertical
+  slice. The alpha has since added parallel execution and UI surfaces, but it
+  still does not claim Auto routing, auto-merge, or v1 readiness.
 - ❌ **Doesn't rebuild a quota reader.** See the boundary below.
 
 ## Boundary with AI-Quota-Tray (important)
@@ -54,9 +55,9 @@ be writing the same hardest piece of logic twice, in the same directory.
 ## Success criteria (MVP)
 
 See `06-roadmap.md`. In short: one prompt can run either directly through one
-Claude/Codex/Antigravity adapter in the current workspace (Single), or through
-a Claude/Codex lead that returns Plan JSON and delegates isolated tasks (Team),
-optionally to Antigravity for implementation.
+Claude/Codex/Antigravity/OpenCode adapter in the current workspace (Single), or
+through a Claude/Codex lead that returns Plan JSON and delegates isolated tasks
+(Team), optionally to Antigravity or OpenCode as workers.
 Both paths are cancellable, observable, and leave durable reports/logs.
 
 ## Core values guiding the design

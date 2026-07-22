@@ -18,10 +18,9 @@ bremio/
 │   ├── adapter-claude/
 │   ├── adapter-codex/
 │   ├── adapter-antigravity/
-│   ├── adapter-opencode/   # (later)
-│   └── adapter-jan/        # (later)
-├── config/  agents.yaml · routing.yaml · policies.yaml
-└── data/    bremio.db (SQLite)
+│   └── adapter-opencode/
+├── config/  routing.yaml
+└── ~/.bremio/bremio.db     # daemon state (SQLite, outside the repo)
 ```
 
 ## Responsibilities per package
@@ -37,14 +36,15 @@ implements this interface.
 
 **orchestrator** — `single-run` (one direct adapter pass-through in the current
 workspace), `lead-manager` (selects/coordinates the Team lead),
-`scheduler` (runs tasks by dependency order, sequential in Phase 1),
+`scheduler` (runs dependency-ready tasks concurrently while serializing git),
 `router` (scoring to pick agent+model), `result-aggregator` (collects
 TaskResults → report). **Knows nothing** about specific providers.
 
-**quota** — currently reads AI-Quota-Tray's schema-v1 SQLite cache read-only
-and normalizes provider/bucket freshness for `bremio quota`. It **consumes**
-AI-Quota-Tray instead of reading provider sources itself (see 05); router
-integration remains gated on calibration. Its canonical `QuotaProvider`
+**quota** — asks AI-Quota-Tray to refresh through its authenticated loopback
+API, then reads AQT's schema-v1 SQLite cache read-only and normalizes
+provider/bucket freshness for `bremio capacity`. It **consumes** AI-Quota-Tray
+instead of reading provider sources itself (see 05); scored routing is explicit
+opt-in while automatic mode remains gated on calibration. Its canonical `QuotaProvider`
 contract supports multiple account windows, per-model windows, source age, and
 confidence. Quota is intentionally separate from `AgentAdapter`.
 
@@ -184,15 +184,19 @@ Each task is granted `permissions` (`read-only` for analysis, test, and review;
 per-provider enforcement in `04-adapters.md` (Antigravity enforces read-only
 through `agy --mode plan`).
 
-## Known limitations (2026-07-18)
+## Known limitations (updated 2026-07-22)
 
 Stated plainly rather than left to be discovered:
 
-- **Cancellation does not guarantee an empty process tree.** Adapters call
-  `child.kill()`, which on Windows does not reach grandchildren — `codex` and
-  `agy` spawn their own children. `adapter-claude` runs through an SDK and has
-  no child process to kill at all. Orphan cleanup is therefore best-effort, and
-  a centralized process-management abstraction is still outstanding.
+- **Windows tree termination is confirmed but is not a Job Object guarantee.**
+  `ProcessSupervisor` centrally owns spawned children, snapshots descendants,
+  uses `taskkill /T` with forced escalation, and verifies every known PID is
+  gone. Daemon-wide shutdown terminates runs sequentially to avoid WMI/taskkill
+  contention. A descendant created during the taskkill walk can still escape;
+  closing that gap requires a Job Object or an equivalent stronger mechanism.
+- **SDK cancellation is cooperative.** Claude has no child process Bremio can
+  kill. The supervisor aborts the SDK call and reports success only after the
+  in-process work settles; otherwise the run becomes `cancellation_failed`.
 - **A run in flight does not resume after a daemon crash.** It is marked
   `interrupted` and can be retried, which starts fresh. No adapter exposes a
   safe mid-run resume, so `capabilities.resume` is advertised as false.
@@ -203,5 +207,7 @@ Stated plainly rather than left to be discovered:
   and a wrong guess spends real quota.
 - **The extension panel is dark-only.** A light variant is a CSS block away but
   is not implemented.
-- **Verified on Windows only.** POSIX paths through the lock, discovery
-  permissions and process handling have not been exercised.
+- **POSIX verification needs a real Linux/WSL environment.** The repository has
+  `pnpm posix:verify` for process groups, lock/discovery permissions, SQLite,
+  SSE, and cancellation. It cannot run through a Windows-only Node process;
+  the latest local audit was blocked because no WSL distribution was installed.
