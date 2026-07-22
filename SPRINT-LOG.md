@@ -531,3 +531,42 @@ isolation — not a Sprint 2 regression. Three fixes applied:
   (stale/unknown never hard-excludes), and the path is dormant (opt-in, no live
   caller), so no formula change — added a comment marking the knobs as unwired
   for the sprint that turns scoring on.
+
+---
+
+## S5-T2 — Capacity cards and light-theme support (Claude, parallel worktree)
+
+Done on `sprint/s5-hardening` (worktree off `main`), in parallel with opencode's
+Sprint 3, since S5-T2 touches only `apps/vscode-extension/` and cannot collide.
+
+**Done:**
+- The panel's surfaces were already theme-variable based, but two banner rules
+  weren't: `.banner.bad` had a literal `#3a1c1e` (a dark navy invisible on light
+  themes) and `.banner.warn` referenced `--bremio-accent-muted`, a variable
+  never defined (so warn banners had no fill). Both now tint the theme's own
+  `--bremio-accent` / `--danger` via `color-mix`, matching the badge treatment.
+- Capacity cards were missing most of what the CLI shows. Extracted
+  `renderCapacityCards(capacity)` as an exported, self-contained function and
+  inlined its source into the webview script via `.toString()` bound to a fixed
+  name, so the panel and the unit test run one implementation. Cards now show
+  per window: percentage (or `unknown`), reset time, confidence and data age;
+  and per agent: source name, confidence, last-contact age, and an explicit
+  `SOURCE UNAVAILABLE` line when the source could not be read.
+- Stale labelling now matches the CLI exactly: a fresh window leads with its
+  number; a stale one leads with "last observed X ago" so the age can't be
+  missed and the old number never reads as current fact.
+
+**Tests (+4 in extension.test.ts, 23 total there):**
+1. no literal hex background survives in the generated markup;
+2. cards show percentage, reset time, source, confidence and data age;
+3. a stale window is labelled "last observed X ago" and an absent percentage
+   shows as `unknown`, never fabricated;
+4. an unavailable provider renders its explicit state, not a blank card.
+
+**Red/green verified:** mutated the stale label, the unavailable string, and
+re-introduced a hex background → each corresponding test went red; restored → green.
+
+**Typecheck:** clean. **Tests:** extension suite 23/23.
+
+**Deviations:** None. (docs/06's "panel is dark-only" line is corrected by S5-T3,
+which owns the doc status sync; noted here so it isn't mistaken for an oversight.)

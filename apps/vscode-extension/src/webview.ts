@@ -15,6 +15,155 @@
  * and the lead badge.
  */
 
+interface CapacityWindowView {
+  label: string;
+  remainingPercent?: number;
+  resetsAt?: number;
+  capturedAt?: number;
+  freshness?: string;
+  confidence?: string;
+}
+interface CapacitySnapshotView {
+  agentId: string;
+  status: string;
+  confidence?: string;
+  source?: { name?: string; confidenceLabel?: string };
+  contactFreshness?: string;
+  lastContactAt?: number;
+  windows?: CapacityWindowView[];
+}
+export interface CapacityView {
+  error?: string;
+  service?: { state?: string };
+  readAt?: number;
+  snapshots?: CapacitySnapshotView[];
+}
+
+/**
+ * Render the capacity tab from a snapshot payload.
+ *
+ * Self-contained (its own escape and age helpers, no module-scope references)
+ * because `panelHtml` inlines its source into the webview script via
+ * `.toString()` — one implementation serves both the browser panel and the
+ * unit test, so a rendering test exercises the real code rather than a copy.
+ *
+ * The honesty rules match the CLI exactly: an unknown percentage shows as
+ * `unknown`, a stale window leads with "last observed X ago" instead of stating
+ * an old number as fact, and an unavailable source says so rather than blanking.
+ */
+export function renderCapacityCards(capacity: CapacityView): string {
+  const esc = (value: unknown): string =>
+    String(value ?? "").replace(
+      /[&<>"']/g,
+      (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }) as Record<string, string>)[c] ?? c,
+    );
+  const fmtAge = (seconds: number): string => {
+    if (!Number.isFinite(seconds) || seconds < 0) return "unknown";
+    if (seconds < 60) return Math.round(seconds) + "s";
+    if (seconds < 3600) return Math.round(seconds / 60) + "m";
+    if (seconds < 86400) return (seconds / 3600).toFixed(1) + "h";
+    return (seconds / 86400).toFixed(1) + "d";
+  };
+
+  if (capacity.error) return '<div class="banner bad">' + esc(capacity.error) + "</div>";
+
+  const live = capacity.service?.state === "live";
+  const banner =
+    capacity.service && !live
+      ? '<div class="banner warn">AI-Quota-Tray is not responding — values below are last-known, not live.</div>'
+      : "";
+
+  const readAt = typeof capacity.readAt === "number" ? capacity.readAt : undefined;
+
+  const cards = (capacity.snapshots ?? [])
+    .map((s) => {
+      const statusClass = s.status === "healthy" ? "ok" : s.status === "unknown" ? "warn" : "bad";
+      const unavailable = s.source?.confidenceLabel === "unavailable";
+      const contactAge =
+        readAt !== undefined && typeof s.lastContactAt === "number" ? fmtAge(readAt - s.lastContactAt) : undefined;
+
+      const sourceLine =
+        '<div class="muted" style="font-size:11px;margin-bottom:6px">' +
+        esc(s.source?.name ?? "unknown source") +
+        (s.source?.confidenceLabel ? " · " + esc(s.source.confidenceLabel) : "") +
+        (s.confidence ? " (" + esc(s.confidence) + " confidence)" : "") +
+        (contactAge ? " · contact " + esc(contactAge) + " ago" : "") +
+        "</div>";
+
+      const unavailableLine = unavailable
+        ? '<div class="banner warn" style="margin:4px 0">SOURCE UNAVAILABLE — no data from AI-Quota-Tray</div>'
+        : "";
+
+      const windows = (s.windows ?? [])
+        .map((w) => {
+          const pct = w.remainingPercent;
+          const known = typeof pct === "number";
+          const meterClass = !known ? "" : pct >= 50 ? "" : pct >= 20 ? "warn" : "bad";
+          const age = readAt !== undefined && typeof w.capturedAt === "number" ? fmtAge(readAt - w.capturedAt) : undefined;
+          const reset = typeof w.resetsAt === "number" ? " · resets " + esc(new Date(w.resetsAt * 1000).toISOString()) : "";
+          const fresh = w.freshness === "fresh";
+
+          let value: string;
+          if (!known) {
+            value = "unknown" + reset;
+          } else if (fresh) {
+            value = pct.toFixed(0) + "%" + (age ? " · " + esc(age) + " old" : "") + reset;
+          } else {
+            value = "last observed " + (age ? esc(age) + " ago" : "unknown age") + " · " + pct.toFixed(0) + "%" + reset;
+          }
+          const confidenceTag = w.confidence ? " · " + esc(w.confidence) : "";
+
+          return (
+            '<div class="window">' +
+            '<div class="window-label"><span class="secondary">' +
+            esc(w.label) +
+            "</span>" +
+            '<span class="muted">' +
+            value +
+            confidenceTag +
+            "</span></div>" +
+            '<div class="meter ' +
+            meterClass +
+            '"><span style="width:' +
+            (known ? pct : 0) +
+            '%"></span></div>' +
+            "</div>"
+          );
+        })
+        .join("");
+
+      const emptyWindows = (s.windows ?? []).length === 0 ? '<div class="muted">no quota windows reported</div>' : "";
+
+      return (
+        '<div class="card">' +
+        '<div class="card-head">' +
+        '<span class="agent" data-agent="' +
+        esc(s.agentId) +
+        '"><span class="card-title">' +
+        esc(s.agentId) +
+        "</span></span>" +
+        '<span class="badge ' +
+        statusClass +
+        '">' +
+        esc(s.status) +
+        "</span>" +
+        '<div class="spacer"></div>' +
+        '<span class="muted">contact ' +
+        esc(s.contactFreshness ?? "unknown") +
+        "</span>" +
+        "</div>" +
+        sourceLine +
+        unavailableLine +
+        windows +
+        emptyWindows +
+        "</div>"
+      );
+    })
+    .join("");
+
+  return banner + cards;
+}
+
 export function panelHtml(nonce: string, cspSource: string, iconUri = ""): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -253,8 +402,11 @@ pre.log {
 
 .empty { color: var(--text-muted); padding: 24px; text-align: center; }
 .banner { border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; font-size: 12px; }
-.banner.warn { background: var(--bremio-accent-muted); color: var(--bremio-accent-hover); }
-.banner.bad { background: #3a1c1e; color: var(--danger); }
+/* Tint the theme's own accent/danger rather than a fixed hex, so the banner is
+ * legible on light themes too — the old #3a1c1e navy was invisible on white,
+ * and --bremio-accent-muted was never defined, leaving warn with no fill. */
+.banner.warn { background: color-mix(in srgb, var(--bremio-accent) 16%, transparent); color: var(--bremio-accent-hover); }
+.banner.bad { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
 </style>
 </head>
 <body>
@@ -451,7 +603,7 @@ window.addEventListener("message", (event) => {
       </div>\`).join("");
   }
   if (message.type === "capacity") {
-    $("tab-capacity").innerHTML = renderCapacity(message.capacity);
+    $("tab-capacity").innerHTML = renderCapacityCards(message.capacity);
   }
   if (message.type === "runs") {
     $("tab-runs").innerHTML = renderRuns(message.runs);
@@ -520,32 +672,9 @@ function renderGate(gate, runId) {
     + "</div></div>";
 }
 
-function renderCapacity(capacity) {
-  if (capacity.error) return '<div class="banner bad">' + escapeHtml(capacity.error) + "</div>";
-  const live = capacity.service?.state === "live";
-  const banner = live
-    ? ""
-    : '<div class="banner warn">AI-Quota-Tray is not responding — values below are last-known, not live.</div>';
-  return banner + (capacity.snapshots ?? []).map((s) => \`
-    <div class="card">
-      <div class="card-head">
-        <span class="agent" data-agent="\${escapeHtml(s.agentId)}"><span class="card-title">\${escapeHtml(s.agentId)}</span></span>
-        <span class="badge \${s.status === "healthy" ? "ok" : s.status === "unknown" ? "warn" : "bad"}">\${escapeHtml(s.status)}</span>
-        <div class="spacer"></div>
-        <span class="muted">contact \${escapeHtml(s.contactFreshness)}</span>
-      </div>
-      \${(s.windows ?? []).map((w) => {
-        const pct = w.remainingPercent;
-        const cls = pct === undefined ? "" : pct >= 50 ? "" : pct >= 20 ? "warn" : "bad";
-        return \`<div class="window">
-          <div class="window-label"><span class="secondary">\${escapeHtml(w.label)}</span>
-          <span class="muted">\${pct === undefined ? "unknown" : pct.toFixed(0) + "%"} · \${escapeHtml(w.freshness)}</span></div>
-          <div class="meter \${cls}"><span style="width:\${pct === undefined ? 0 : pct}%"></span></div>
-        </div>\`;
-      }).join("")}
-      \${(s.windows ?? []).length === 0 ? '<div class="muted">no quota windows reported</div>' : ""}
-    </div>\`).join("");
-}
+// Inlined from webview.ts so the panel and the unit test share one renderer.
+// Bound to a fixed name here regardless of how the source function is compiled.
+const renderCapacityCards = ${renderCapacityCards.toString()};
 
 function renderRuns(payload) {
   const runs = payload.runs ?? [];
