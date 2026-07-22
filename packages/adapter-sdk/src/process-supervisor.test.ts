@@ -2,20 +2,41 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProcessSupervisor, collectTree, pidAlive } from "./process-supervisor";
+import { spawn, type ChildProcess } from "node:child_process";
+import {
+  ProcessSupervisor,
+  collectTree,
+  findWorkspaceStrays,
+  parseWindowsDate,
+  pidAlive,
+  type ProcessDetail,
+} from "./process-supervisor";
 
 const dirs: string[] = [];
 const supervisors: ProcessSupervisor[] = [];
+const loose: ChildProcess[] = [];
 
 afterEach(async () => {
   // Never leave a test's processes behind, whatever the assertions did.
   for (const supervisor of supervisors.splice(0)) {
     await supervisor.terminateAll({ graceMs: 500, forceMs: 2_000 }).catch(() => {});
   }
+  for (const child of loose.splice(0)) {
+    child.kill("SIGKILL");
+  }
   for (const dir of dirs.splice(0)) {
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
   }
 });
+
+/** A live process this test owns, used as a real pid the alive-check accepts. */
+function looseProcess(extraArg = ""): ChildProcess {
+  const args = ["-e", "setInterval(() => {}, 1000)"];
+  if (extraArg) args.push(extraArg);
+  const child = spawn(process.execPath, args, { stdio: "ignore" });
+  loose.push(child);
+  return child;
+}
 
 function supervisor(): ProcessSupervisor {
   const created = new ProcessSupervisor();
@@ -354,4 +375,138 @@ describe("cooperative (SDK) cancellation", () => {
     const outcome = await s.terminate("already-done", { graceMs: 500 });
     expect(outcome.stopped).toBe(true);
   });
+});
+
+describe("workspace stray detection", () => {
+  const workspace = path.join(os.tmpdir(), "bremio-stray-workspace");
+  const runStartedAt = 1_000_000;
+
+  /** A process-table row naming a real, live pid so the alive-check accepts it. */
+  function row(pid: number, overrides: Partial<ProcessDetail> = {}): ProcessDetail {
+    return {
+      pid,
+      ppid: 1,
+      commandLine: "node worker.js " + workspace,
+      startedAtMs: runStartedAt + 5_000,
+      ...overrides,
+    };
+  }
+
+  it("reports a live process that still references the workspace", async () => {
+    const child = looseProcess();
+    const strays = await findWorkspaceStrays(workspace, runStartedAt, async () => [
+      row(child.pid as number),
+    ]);
+    expect(strays).toEqual([child.pid]);
+  });
+
+  it("never reports this process or its ancestors", async () => {
+    // The CLI or daemon running the supervisor legitimately names the repo on
+    // its own command line; flagging it would cry wolf on every cancellation.
+    const self = await findWorkspaceStrays(workspace, runStartedAt, async () => [row(process.pid)]);
+    expect(self).toEqual([]);
+
+    const ancestor = await findWorkspaceStrays(workspace, runStartedAt, async () => [
+      { pid: process.pid, ppid: 4242, commandLine: "irrelevant", startedAtMs: runStartedAt },
+      row(4242),
+    ]);
+    expect(ancestor).toEqual([]);
+  });
+
+  it("never reports a process that started before this run", async () => {
+    // A second Bremio invocation in the same repository is not this run's stray.
+    const child = looseProcess();
+    const strays = await findWorkspaceStrays(workspace, runStartedAt, async () => [
+      row(child.pid as number, { startedAtMs: runStartedAt - 1 }),
+    ]);
+    expect(strays).toEqual([]);
+  });
+
+  it("gives the benefit of the doubt when the start time is unreadable", async () => {
+    const child = looseProcess();
+    const strays = await findWorkspaceStrays(workspace, runStartedAt, async () => [
+      row(child.pid as number, { startedAtMs: undefined }),
+    ]);
+    expect(strays).toEqual([]);
+  });
+
+  it("ignores processes that do not reference the workspace", async () => {
+    const child = looseProcess();
+    const strays = await findWorkspaceStrays(workspace, runStartedAt, async () => [
+      row(child.pid as number, { commandLine: "node unrelated.js" }),
+    ]);
+    expect(strays).toEqual([]);
+  });
+
+  it("stays silent when the process table cannot be read", async () => {
+    // A diagnostic must never block or fail a cancellation.
+    const strays = await findWorkspaceStrays(workspace, runStartedAt, async () => {
+      throw new Error("enumeration failed");
+    });
+    expect(strays).toEqual([]);
+  });
+
+  it("reads the date format Windows PowerShell actually emits", () => {
+    // Probed, not assumed: PowerShell 5.1 writes Microsoft's "/Date(ms)/" for a
+    // DateTime, so Date.parse alone yields NaN and every candidate would be
+    // dismissed as "start time unknown" — making this check inert on Windows.
+    expect(parseWindowsDate("/Date(1784682460722)/")).toBe(1784682460722);
+    expect(parseWindowsDate("/Date(1784682460722+0700)/")).toBe(1784682460722);
+    expect(parseWindowsDate("2026-07-22T10:31:42.000Z")).toBe(Date.parse("2026-07-22T10:31:42.000Z"));
+    expect(parseWindowsDate("not a date")).toBeUndefined();
+    expect(parseWindowsDate(undefined)).toBeUndefined();
+  });
+
+  it("refuses to call a run stopped while a stray still holds its workspace", async () => {
+    // The honesty property: the supervised tree died, but something orphaned
+    // still points at the workspace, so this is not a confirmed stop.
+    //
+    // The process table is read through an injected reader rather than the live
+    // one. Real enumeration is deliberately best-effort — it returns nothing
+    // when it cannot run — so asserting against it would make this test go
+    // quiet under process load instead of failing honestly. The real reader is
+    // covered by `parseWindowsDate` against the format Windows actually emits.
+    const dir = await scratch();
+    const stray = looseProcess(dir); // never supervised: an orphan by construction
+    expect(await waitFor(() => pidAlive(stray.pid as number))).toBe(true);
+
+    const s = new ProcessSupervisor({
+      readProcessDetails: async () => [
+        {
+          pid: stray.pid as number,
+          ppid: 1,
+          commandLine: `node worker.js ${dir}`,
+          startedAtMs: Date.now(),
+        },
+      ],
+    });
+    supervisors.push(s);
+    s.spawn("run-stray", process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+      cwd: dir,
+    });
+
+    const outcome = await s.terminate("run-stray", { graceMs: 1_000, forceMs: 3_000 });
+
+    expect(outcome.stopped).toBe(false);
+    if (!outcome.stopped) {
+      expect(outcome.reason).toContain("reference the run workspace");
+      expect(outcome.survivingPids).toContain(stray.pid);
+    }
+  }, 30_000);
+
+  it("still confirms a stop when nothing references the workspace", async () => {
+    // The other half: the guard must not turn every clean cancellation into a
+    // failure, or the signal is worthless.
+    const dir = await scratch();
+    const s = new ProcessSupervisor({ readProcessDetails: async () => [] });
+    supervisors.push(s);
+    s.spawn("run-clean", process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+      cwd: dir,
+    });
+
+    const outcome = await s.terminate("run-clean", { graceMs: 1_000, forceMs: 3_000 });
+    expect(outcome.stopped).toBe(true);
+  }, 30_000);
 });

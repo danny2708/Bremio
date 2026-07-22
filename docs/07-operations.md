@@ -241,7 +241,16 @@ keep everything else.
   appears — but that requires a native addon Bremio deliberately does not carry
   (the same reason `node:sqlite` was chosen over `better-sqlite3`). Until that
   trade is revisited, this is the residual risk: not "a grandchild survives" in
-  general, but "a process born during the kill walk may survive."
+  general, but "a process born during the kill walk may survive." What Bremio
+  does do is refuse to lie about it: after a termination that otherwise looked
+  clean, the process table is checked for anything still referencing the run's
+  workspace that started after the run did, and if something is found the run
+  is reported `cancellation_failed` with the pids rather than `cancelled`. That
+  check is best-effort — it stays silent when it cannot read the process table,
+  and it excludes this process, its ancestors, and anything predating the run,
+  because a false alarm would destroy the signal as thoroughly as a false
+  success. It narrows the failure from *silent* to *stated*; it does not close
+  the race.
 - **No registry publication.** `npm i -g bremio` does not work for this alpha;
   install `bremio-0.1.0-alpha.1.tgz` from the artifact you built.
 - **Quota freshness depends on the provider.** Bremio reads AI-Quota-Tray's

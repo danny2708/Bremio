@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { execFile } from "node:child_process";
+import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -58,18 +59,41 @@ interface CooperativeWork {
 interface Supervised {
   children: Set<ChildProcess>;
   cooperative: Set<CooperativeWork>;
+  /**
+   * Absolute directory this run works in, when known. Used only to look for
+   * survivors after a termination that otherwise looked clean — see
+   * `findWorkspaceStrays`.
+   */
+  workspacePath?: string;
+  /** When supervision began; a stray must have started after this. */
+  startedAtMs: number;
 }
 
 const DEFAULT_GRACE_MS = 3_000;
 const DEFAULT_FORCE_MS = 5_000;
 
+export interface ProcessSupervisorOptions {
+  /**
+   * How the process table is read when looking for orphaned survivors.
+   * Defaults to the real enumeration; injectable so the wiring can be tested
+   * without depending on a live process table, which is best-effort and goes
+   * quiet under load.
+   */
+  readProcessDetails?: () => Promise<ProcessDetail[]>;
+}
+
 export class ProcessSupervisor {
   readonly #runs = new Map<string, Supervised>();
+  readonly #readProcessDetails: () => Promise<ProcessDetail[]>;
+
+  constructor(options: ProcessSupervisorOptions = {}) {
+    this.#readProcessDetails = options.readProcessDetails ?? readProcessDetails;
+  }
 
   #entry(runId: string): Supervised {
     let entry = this.#runs.get(runId);
     if (!entry) {
-      entry = { children: new Set(), cooperative: new Set() };
+      entry = { children: new Set(), cooperative: new Set(), startedAtMs: Date.now() };
       this.#runs.set(runId, entry);
     }
     return entry;
@@ -88,14 +112,21 @@ export class ProcessSupervisor {
       ...options,
       ...(process.platform === "win32" ? {} : { detached: true }),
     });
-    this.adopt(runId, child);
+    this.adopt(runId, child, typeof options.cwd === "string" ? options.cwd : undefined);
     return child;
   }
 
-  /** Take ownership of a process spawned elsewhere. */
-  adopt(runId: string, child: ChildProcess): void {
+  /**
+   * Take ownership of a process spawned elsewhere.
+   *
+   * `workspacePath` is optional but worth passing: it is the only handle on a
+   * survivor that has been orphaned and can no longer be found by walking the
+   * process tree.
+   */
+  adopt(runId: string, child: ChildProcess, workspacePath?: string): void {
     const entry = this.#entry(runId);
     entry.children.add(child);
+    if (workspacePath) entry.workspacePath = path.resolve(workspacePath);
     child.once("close", () => entry.children.delete(child));
   }
 
@@ -192,9 +223,25 @@ export class ProcessSupervisor {
     // AbortSignal will still be running here, and saying "cancelled" then
     // would tell the user work had stopped while it carried on.
     const unsettled = await waitForCooperative(entry.cooperative, graceMs);
+
+    // Everything we could see is gone — but a process born between the tree
+    // snapshot and `taskkill /T` completing was never in the snapshot, and once
+    // its parent died it was reparented, so no walk from the roots can reach it
+    // (docs/07 §Known limitations). We cannot kill what we cannot find, but we
+    // can refuse to call this a confirmed stop: anything still pointing at this
+    // run's workspace, started after supervision began, is reported instead of
+    // silently left behind.
+    const strays =
+      surviving.length === 0 && unsettled.length === 0 && entry.workspacePath
+        ? await findWorkspaceStrays(
+            entry.workspacePath,
+            entry.startedAtMs,
+            this.#readProcessDetails,
+          )
+        : [];
     const durationMs = Date.now() - started;
 
-    if (surviving.length > 0 || unsettled.length > 0) {
+    if (surviving.length > 0 || unsettled.length > 0 || strays.length > 0) {
       const reasons: string[] = [];
       if (surviving.length > 0) reasons.push(`${surviving.length} process(es) survived termination`);
       if (unsettled.length > 0) {
@@ -202,10 +249,15 @@ export class ProcessSupervisor {
           `${unsettled.length} in-process call(s) did not stop after abort (${unsettled.join(", ")})`,
         );
       }
+      if (strays.length > 0) {
+        reasons.push(
+          `${strays.length} process(es) still reference the run workspace (${strays.join(", ")})`,
+        );
+      }
       return {
         stopped: false,
         reason: reasons.join("; "),
-        survivingPids: surviving,
+        survivingPids: [...surviving, ...strays],
         escalated,
         durationMs,
       };
@@ -271,6 +323,140 @@ export async function collectTree(roots: number[]): Promise<number[]> {
   } catch {
     return [...roots];
   }
+}
+
+/** One row of the process table, enough to identify an orphaned survivor. */
+export interface ProcessDetail {
+  pid: number;
+  ppid: number;
+  commandLine: string;
+  /** Epoch ms the process started, or `undefined` when it could not be read. */
+  startedAtMs: number | undefined;
+}
+
+/**
+ * Processes that still reference `workspacePath` and cannot be explained.
+ *
+ * This is the honesty backstop for the one gap the tree walk cannot close. It
+ * deliberately biases towards silence: this repository's whole cancellation
+ * contract rests on `cancelled` being trustworthy, and a false alarm would
+ * destroy that signal just as effectively as a false success. So a candidate is
+ * only reported when every exclusion is satisfiable —
+ *
+ *   - it is not this process, nor any ancestor of it (the CLI or daemon whose
+ *     own command line legitimately names the repository);
+ *   - it demonstrably started *after* supervision began, which rules out a
+ *     second Bremio invocation working in the same repository;
+ *   - its start time is actually known — an unreadable timestamp means "cannot
+ *     rule this out", and the run is given the benefit of the doubt.
+ *
+ * Enumeration failure returns nothing rather than throwing: a cancellation must
+ * never be blocked by a diagnostic.
+ */
+export async function findWorkspaceStrays(
+  workspacePath: string,
+  startedAtMs: number,
+  readDetails: () => Promise<ProcessDetail[]> = readProcessDetails,
+): Promise<number[]> {
+  let rows: ProcessDetail[];
+  try {
+    rows = await readDetails();
+  } catch {
+    return [];
+  }
+
+  const excluded = ancestryOf(process.pid, rows);
+  const needle = path.resolve(workspacePath).toLowerCase();
+
+  return rows
+    .filter((row) =>
+      !excluded.has(row.pid) &&
+      row.startedAtMs !== undefined &&
+      row.startedAtMs >= startedAtMs &&
+      row.commandLine.toLowerCase().includes(needle))
+    .map((row) => row.pid)
+    .filter(pidAlive);
+}
+
+/** A pid and every ancestor above it, so none of them is mistaken for a stray. */
+function ancestryOf(pid: number, rows: readonly ProcessDetail[]): Set<number> {
+  const parents = new Map(rows.map((row) => [row.pid, row.ppid] as const));
+  const seen = new Set<number>();
+  let current: number | undefined = pid;
+  while (current !== undefined && current > 0 && !seen.has(current)) {
+    seen.add(current);
+    current = parents.get(current);
+  }
+  return seen;
+}
+
+/**
+ * Epoch ms from whatever the host's JSON writer produced for a `DateTime`.
+ *
+ * Verified against the real thing rather than assumed: Windows PowerShell 5.1
+ * emits Microsoft's `"/Date(1784682460722)/"` (optionally with a trailing
+ * offset), not ISO 8601, so `Date.parse` alone returns NaN — which, under the
+ * "unknown start time is not a stray" rule, would have made this whole check
+ * silently inert on the one platform that needs it.
+ */
+export function parseWindowsDate(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const microsoft = /\/Date\((-?\d+)/.exec(value);
+  if (microsoft?.[1]) {
+    const ms = Number(microsoft[1]);
+    return Number.isFinite(ms) ? ms : undefined;
+  }
+  const iso = Date.parse(value);
+  return Number.isFinite(iso) ? iso : undefined;
+}
+
+/** pid, ppid, command line and start time for every process visible to this user. */
+export async function readProcessDetails(): Promise<ProcessDetail[]> {
+  if (process.platform === "win32") {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress -Depth 2",
+      ],
+      { windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
+    );
+    const parsed: unknown = JSON.parse(stdout.trim() || "[]");
+    // A single result serializes as an object rather than an array.
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    return list.flatMap((raw): ProcessDetail[] => {
+      const row = raw as Record<string, unknown>;
+      const pid = Number(row.ProcessId);
+      if (!Number.isFinite(pid)) return [];
+      return [{
+        pid,
+        ppid: Number(row.ParentProcessId) || 0,
+        commandLine: typeof row.CommandLine === "string" ? row.CommandLine : "",
+        startedAtMs: parseWindowsDate(row.CreationDate),
+      }];
+    });
+  }
+
+  // `etimes` is elapsed seconds, which is stable across timezones and locales.
+  const { stdout } = await execFileAsync("ps", ["-eo", "pid=,ppid=,etimes=,args="], {
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  const now = Date.now();
+  return stdout
+    .split("\n")
+    .flatMap((line): ProcessDetail[] => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+      if (!match) return [];
+      const [, pid, ppid, elapsed, args] = match;
+      return [{
+        pid: Number(pid),
+        ppid: Number(ppid),
+        commandLine: args ?? "",
+        startedAtMs: now - Number(elapsed) * 1000,
+      }];
+    });
 }
 
 /** pid -> ppid for every process visible to this user. */
