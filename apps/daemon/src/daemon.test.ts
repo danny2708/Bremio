@@ -160,8 +160,8 @@ describe("daemon HTTP surface", () => {
     const body = (await response.json()) as { adapters: Array<{ id: string; leadEligible: boolean }> };
     const opencode = body.adapters.find((a) => a.id === "opencode");
     expect(opencode).toBeDefined();
-    // OpenCode has planning=true and structuredOutput=true per S1-T1 findings.
-    expect(opencode!.leadEligible).toBe(true);
+    // OpenCode has planning=true but structuredOutput=false since S1-R4.
+    expect(opencode!.leadEligible).toBe(false);
   }, 15_000);
 });
 

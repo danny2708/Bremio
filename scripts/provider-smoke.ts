@@ -8,8 +8,8 @@ import { CodexAdapter } from "../packages/adapter-codex/src/index";
 import { OpenCodeAdapter } from "../packages/adapter-opencode/src/index";
 import { createRegistry, runBremio, runSingleAgent } from "../packages/orchestrator/src/index";
 
-type LeadId = "claude" | "codex" | "opencode";
-type AgentId = LeadId | "antigravity";
+type LeadId = "claude" | "codex";
+type AgentId = LeadId | "antigravity" | "opencode";
 type SmokeMode = "single" | "team" | "both";
 
 interface Options {
@@ -215,8 +215,8 @@ function parseOptions(args: string[]): Options {
       const value = args[index + 1];
       index += 1;
       if (value === "both") leads = ["claude", "codex"];
-      else if (value === "claude" || value === "codex" || value === "opencode") leads = [value];
-      else throw new Error("--lead must be claude, codex, opencode, or both");
+      else if (value === "claude" || value === "codex") leads = [value];
+      else throw new Error("--lead must be claude, codex, or both");
     } else if (arg === "--agent") {
       const value = args[index + 1];
       index += 1;

@@ -223,21 +223,26 @@ dark-only.
 ## Phase 6 — Additional providers
 OpenCode (verified 2026-07-21), Jan (local worker = near-free capacity).
 
-**OpenCode adapter status (2026-07-21):** shipped and real-provider verified.
-`@bremio/adapter-opencode` supports both the one-shot CLI path
-(`opencode run --format json`) for implementer/test/review tasks and the HTTP
-server path (`opencode serve`) for lead planning. It handles the npm `.cmd`
-shim resolution and the Windows stdin-pipe hang. Real-provider smokes pass:
+**OpenCode adapter status (updated S1-R4, 2026-07-22):** shipped and
+real-provider verified as a **worker**. `@bremio/adapter-opencode` supports the
+one-shot CLI path (`opencode run --format json`) for implementer/test/review
+tasks, and the HTTP server path (`opencode serve`) for review tasks that carry
+an `outputSchema`. It handles the npm `.cmd` shim resolution and the Windows
+stdin-pipe hang. Real-provider smokes pass:
 
 | Mode | Result |
 |---|---|
 | Single (opencode) | PASS — file created, test run, verification passed |
-| Team (opencode lead + claude worker) | PASS — 3/3 tasks (impl, test, review), quality gate passed |
+| Team (opencode worker, claude/codex lead) | PASS — 3/3 tasks (impl, test, review), quality gate passed |
 
-OpenCode is lead-eligible (`planning=true`), but its default provider
-(Console/deepseek-v4-flash-free) does not support native `json_schema`
-structured output, so the lead prompt uses plain-text format instructions
-instead. The model reliably produces valid plan JSON when instructed.
+OpenCode is **not lead-eligible** (`structuredOutput=false`). It was briefly
+`true`: a Team run with opencode as lead passed on 2026-07-21, but the
+mechanism behind it — post-hoc JSON extraction with no schema enforcement and
+no repair loop, plus a discovered failure mode where the default provider
+returns an empty response instead of an error when asked for schema-constrained
+output — was not reliable enough to trust with whole-plan authorship. Claude
+and Codex cover the lead role with a schema constraint their own provider
+enforces; OpenCode is a strong worker instead.
 
 Jan remains as a future integration — a local OpenAI-compatible server for
 near-free capacity as a fallback worker. Each provider = one adapter package.

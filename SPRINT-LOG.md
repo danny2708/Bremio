@@ -290,3 +290,34 @@ dependency without saying why the standard library could not do it."
 kept as a best-effort optimisation — the default provider silently returns empty
 response parts when given that field, so the catch-and-retry fallback always
 triggered, making the attempt purely additive latency.
+
+## S1-R4 — Make OpenCode worker-only, for real, everywhere
+
+**Done:**
+- `structuredOutput` flipped to `false` in `opencode-adapter.ts` with a comment
+  explaining the mechanism gap (empty response on schema constraint, no retry loop).
+- `daemon.test.ts` (line 164): lead-eligibility assertion changed to `false`.
+- `opencode-registration.test.ts`: test renamed to "worker-only capabilities";
+  `structuredOutput` assertion changed to `false`.
+- `index.ts` lead validation: the error message no longer enumerates provider
+  names — uses the general `agentIds` set (typo protection only). A new
+  capability check after `registry` construction calls
+  `registry.get(leadId)!.getCapabilities()` and fails with the specific missing
+  capability name, so the next capability-only provider won't hit the same bug.
+- `provider-smoke.ts`: `LeadId` narrowed to `"claude" | "codex"`; `AgentId` kept
+  broad (`... | "opencode"`) so `--agent opencode` and `--worker opencode`
+  still parse. `--lead opencode` now rejected at argument-parse time.
+- `grep -rn '"claude", "codex", "opencode"' apps/ scripts/` finds no remaining
+  lead-context match.
+
+**Verification:**
+- `bremio run --mode team --lead opencode` → `error: --lead 'opencode' lacks required capability: structuredOutput`
+- `bremio run --mode team --worker opencode --lead codex` → accepted past validation
+- `pnpm smoke:providers --lead opencode` → `--lead must be claude, codex, or both`
+- `bremio doctor` shows OpenCode `lead-eligible: no` (planning=true, structuredOutput=false)
+
+**Typecheck:** clean. **Test:** 331/331 pass (3 timeouts in run.integration and
+process-supervisor are pre-existing flakiness under full suite load — all pass
+when run individually).
+
+**Deviations:** None.

@@ -16,12 +16,12 @@ describe("opencode registration in TUI data", () => {
     expect(ids).toContain("antigravity");
   });
 
-  it("opencode adapter reports lead-eligible capabilities", async () => {
+  it("opencode adapter reports worker-only capabilities", async () => {
     const adapters = createAdapters();
     const opencode = adapters.find((a) => a.id === "opencode");
     expect(opencode).toBeDefined();
     const caps = await opencode!.getCapabilities();
     expect(caps.planning).toBe(true);
-    expect(caps.structuredOutput).toBe(true);
+    expect(caps.structuredOutput).toBe(false);
   }, 15_000);
 });

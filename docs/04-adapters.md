@@ -80,10 +80,11 @@ interface AgentAdapter {
   `BREMIO_AGY_BIN`.
 
 ## OpenCode adapter (`opencode` 1.18.4, verified 2026-07-21)
-- Surface: **one-shot CLI** (`opencode run --format json`) for single-agent
-  implementer/test/review tasks, and **HTTP server** (`opencode serve`) for
-  lead planning. The adapter spawns the process per run; the server is started
-  per-session and killed when done.
+- Surface: **one-shot CLI** (`opencode run --format json`) for
+  implementer/test/review tasks, and **HTTP server** (`opencode serve`) for any
+  task whose request carries an `outputSchema` (review tasks; not lead
+  planning — see verdict below). The adapter spawns the process per run; the
+  server is started per-session and killed when done.
 - Binary resolution: `BREMIO_OPENCODE_BIN` → PATH → npm global `.cmd` shim
   at `%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe`. On Windows,
   the adapter resolves the `.cmd` shim to the `.exe` by reading the `.cmd`
@@ -94,21 +95,32 @@ interface AgentAdapter {
   vs previously timing out at 600s).
 - ACP server response: the `POST /session/:id/message` endpoint returns
   `{ info, parts }` where the model's text is in `parts[{type:"text"}].text`.
-  The `info.text` and `data.info.structured_output` fields do not exist.
-  The adapter includes `format: { type: "json_schema", schema }` in the prompt
-  body when `outputSchema` is provided; if the provider rejects it (the
-  default Console provider does), the adapter falls back to a text prompt with
-  JSON format instructions and validates the response post-hoc.
-- Structured output: the adapter validates `req.outputSchema` by parsing the
-  response as JSON, checking it is an object, and verifying all required fields
-  from the schema are present. Non-conforming output yields a `failed` outcome.
-  This is an adapter-level guarantee — a completed run is always
-  schema-conforming.
-- Roles: lead (via server planning), implementer (via CLI), reviewer (via CLI
-  with `--agent plan`), tester (via CLI). Eligible to be the lead.
-- Verified with real provider smoke: single-agent run PASS, Team run with
-  opencode lead + claude worker PASS (3/3 tasks, full plan/delegate/review
-  flow with quality gate).
+  The `info.text` and `data.info.structured_output` fields do not exist. The
+  default Console provider (`deepseek-v4-flash-free`) returns **200 OK with an
+  empty `parts` array** when asked for `format: json_schema` — not an error the
+  adapter can catch. That failure mode is why the adapter no longer sends
+  `format` at all (removed in S1-R3): the request always goes as plain text.
+- Structured output (**not a guarantee — see verdict below**): the adapter
+  extracts the first JSON object from the response (stripping code fences and
+  any leading prose) and checks it parses and is an object. It does **not**
+  check `outputSchema.required` — that field-level check is left to whichever
+  caller re-validates the result (the lead's own repair-prompt retry, for a
+  planning call; nothing, for a review task). A `failed` outcome only means
+  "not JSON at all," not "matches the schema."
+- Roles: implementer (via CLI), reviewer (via CLI or HTTP server, whichever
+  `req.outputSchema` selects), tester (via CLI). **Not eligible to be the
+  lead** — the router excludes it through the capability contract
+  (`structuredOutput: false`), not a provider-specific check. Reasoning (S1-R4,
+  2026-07-22): the mechanism above has no repair loop and a demonstrated
+  silent-empty-response failure mode; Claude and Codex already provide the
+  lead role with a schema constraint the provider itself enforces. OpenCode
+  remains a fully capable **worker** for analysis, implementation, test and
+  review tasks.
+- Verified with real provider smoke (2026-07-21, historical): single-agent run
+  PASS; a Team run with opencode as **lead** + claude worker also PASSED
+  (3/3 tasks). That run is why S1-T4 first called OpenCode lead-eligible — it
+  is evidence the mechanism can work on one model on one day, not evidence it
+  is a guarantee. S1-R4 revisits the verdict for that reason.
 - Jan: local OpenAI-compatible server (default `localhost:1337`) → separate
   integration as a **local model provider / local worker**, no desktop UI
   automation. Strategic role: **near-free capacity** as a fallback when

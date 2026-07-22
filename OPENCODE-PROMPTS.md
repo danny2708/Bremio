@@ -263,6 +263,57 @@ Commit:
 test(orchestrator): pin the review prompt to the parser's contract
 ```
 
+## S1-R4 — Make OpenCode worker-only, for real, everywhere
+
+```text
+Task S1-R4. Read docs/08-completion-plan.md section "S1-R4" and docs/10 in
+full before starting.
+
+Decision (final, not yours to revisit): OpenCode is a worker, not a lead
+candidate. S1-R2 offered "earn structuredOutput:true or drop it"; S1-R3 did
+neither cleanly — it removed the format:json_schema attempt and the
+required-field check, but left the boolean at true. Set it to false.
+
+docs/04-adapters.md, docs/06-roadmap.md and docs/09-opencode-adapter.md were
+already corrected by hand to state the new verdict and the reasoning (the
+provider's silent-empty-response failure mode, no repair loop unlike
+lead-manager.ts's two attempts). Do not re-word them — your job is to make the
+code match what they now say, and to fix the mechanism the claim depends on
+everywhere it appears, not just the flag.
+
+Concretely:
+1. packages/adapter-opencode/src/opencode-adapter.ts: flip structuredOutput to
+   false. Leave planning:true — that gates analysis-kind worker tasks and is
+   unrelated to the lead role.
+2. Update packages/adapter-opencode/src/opencode-adapter.test.ts and
+   apps/cli/src/opencode-registration.test.ts, which currently assert
+   structuredOutput === true.
+3. apps/cli/src/index.ts: the existing `--lead` check
+   (`errors.push("Team mode requires --lead 'claude', 'codex', or
+   'opencode'")`) hardcodes opencode into a lead-name list. This is the exact
+   thing S1-T3 said not to do ("rejected by the existing capability contract,
+   not by a name check"). Fix it: keep a coarse "is this a known agent id"
+   check with the general agentIds set (typo protection only, no per-provider
+   enumeration in the message), then add a separate capability check — after
+   `registry` is constructed, `await registry.get(leadId)!.getCapabilities()`
+   and require `planning && structuredOutput` — with an error naming the
+   missing capability. `--worker` is untouched.
+4. scripts/provider-smoke.ts: narrow `type LeadId` to "claude" | "codex" and
+   fix the `--lead` argument parsing and its error message to match. `AgentId`
+   and `--agent`/`--worker` parsing keep accepting opencode.
+5. Confirm `grep -rn '"claude", "codex", "opencode"' apps/ scripts/` finds no
+   remaining lead-context match.
+
+Verify: `bremio run --mode team --lead opencode --repo <path> "..."` is
+rejected with a message naming the missing capability. `--worker opencode`
+still works. `pnpm smoke:providers --lead opencode` throws while parsing
+arguments, before any process spawns. `bremio doctor` shows OpenCode
+lead-eligible: no.
+
+Commit:
+fix(opencode): stop treating opencode as lead-eligible
+```
+
 **Sprint 1R gate:** `corepack pnpm release:check`
 
 ---

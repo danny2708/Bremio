@@ -33,7 +33,7 @@ describe("OpenCodeAdapter", () => {
   it("reports capabilities matching the S1-T1 findings", async () => {
     const caps = await adapter().getCapabilities();
     expect(caps.planning).toBe(true);
-    expect(caps.structuredOutput).toBe(true);
+    expect(caps.structuredOutput).toBe(false);
     expect(caps.repositoryRead).toBe(true);
     expect(caps.repositoryWrite).toBe(true);
     expect(caps.shell).toBe(true);

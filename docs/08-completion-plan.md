@@ -199,8 +199,11 @@ verified section in the same shape as the Antigravity one), `docs/06-roadmap.md`
 
 Sprint 1 shipped working code and found a genuinely hard bug (the Windows
 stdin-pipe hang). Review found three defects it could not have caught, fixed in
-`fix(adapter-opencode): stop damaging prompts, cancels and model ids`, plus three
-that need real work. Those three are here.
+`fix(adapter-opencode): stop damaging prompts, cancels and model ids`, plus
+three that needed real work (S1-R1 through S1-R3). Their execution surfaced a
+fourth: S1-R3 quietly changed the `structuredOutput` mechanism without moving
+the boolean, which S1-R4 resolves by deciding OpenCode is a worker, not a lead
+candidate. All four are here.
 
 ## S1-R1 — Replace the hand-written provider fake with recorded reality
 
@@ -286,6 +289,79 @@ Codex's review behaviour to fix a third provider's problem.
   it. Do not leave a cross-provider change resting on one provider's evidence.
 
 **Commit.** `test(orchestrator): pin the review prompt to the parser's contract`
+
+## S1-R4 — Make OpenCode worker-only, for real, everywhere
+
+**Goal.** `structuredOutput: false` for OpenCode, and every surface that
+currently accepts `--lead opencode` rejects it through the capability
+contract — not because its name was removed from a list, because it never
+belonged on that list next to a name check in the first place.
+
+**Why.** S1-R2 offered two honest options — earn the `structuredOutput: true`
+claim, or drop it — and S1-R3 landed a third, undocumented one: it removed the
+`format: json_schema` attempt entirely and simplified validation to "is this
+parseable JSON," while leaving the boolean at `true`. Decision (2026-07-22):
+drop it. OpenCode's mechanism has no schema enforcement and no repair loop the
+way `lead-manager.ts` gives Claude/Codex two attempts at a plan; S1-R3 also
+found the default provider returns **200 OK with an empty response** instead of
+an error when it rejects a schema constraint, which is a bad property to build
+lead trust on regardless of how the fallback is wired. Claude and Codex already
+cover the lead role with a schema constraint their own provider enforces.
+OpenCode stays a fully capable **worker** — this changes nothing about
+implementer, test, or review task assignment.
+
+Separately, `apps/cli/src/index.ts`'s `--lead` validation
+(`errors.push("Team mode requires --lead 'claude', 'codex', or 'opencode'")`)
+and `scripts/provider-smoke.ts`'s `LeadId` type both hardcode `opencode` into
+a lead-name list. This is exactly what S1-T3 committed to not doing
+("`--lead opencode` is rejected by the existing capability contract, **not**
+by a name check") — the commit that added OpenCode broadly merged "known
+agent id" with "lead-eligible agent id" into one set. Fix the mechanism, not
+just the boolean, or the next capability-only provider hits the same bug.
+
+**Files.**
+- `packages/adapter-opencode/src/opencode-adapter.ts` — flip
+  `structuredOutput` to `false`; comment states the mechanism gap, not just
+  the value.
+- `packages/adapter-opencode/src/opencode-adapter.test.ts` — capabilities test
+  now expects `structuredOutput === false`.
+- `apps/cli/src/opencode-registration.test.ts` — rename/update the
+  "lead-eligible capabilities" test to assert the opposite.
+- `apps/cli/src/index.ts` — the `--lead` id check stays a coarse "is this a
+  known agent" guard using the general `agentIds` set (typo protection,
+  message no longer enumerates providers by name); add a **separate**
+  capability-driven check after `registry` is built (`registry.get(leadId)!
+  .getCapabilities()`, requiring `planning && structuredOutput`) that produces
+  a clear error naming which capability is missing. `--worker opencode` is
+  untouched — workers aren't capability-gated at the CLI layer.
+- `scripts/provider-smoke.ts` — narrow `type LeadId` to `"claude" | "codex"`;
+  update `--lead` parsing and its error message; `AgentId`/`--agent`/`--worker`
+  parsing keep accepting `opencode`.
+- `docs/04-adapters.md`, `docs/06-roadmap.md`, `docs/09-opencode-adapter.md` —
+  already corrected directly (2026-07-22, this task's doc half). Confirm the
+  code matches what they now say; do not re-word them.
+
+**Success criteria.**
+- `caps.structuredOutput` is `false` for OpenCode; `caps.planning` stays `true`.
+- `bremio run --mode team --lead opencode ...` is rejected with a message that
+  names the missing capability, not "unknown agent."
+- `bremio run --mode team --worker opencode ...` still works.
+- `pnpm smoke:providers --lead opencode` fails to parse its arguments (typed
+  out of `LeadId`) rather than attempting a run.
+- `grep -rn '"claude", "codex", "opencode"' apps/ scripts/` finds no
+  lead-context match (worker/agent-listing matches are fine).
+- `corepack pnpm doctor` (or the CLI's doctor output) shows OpenCode
+  `lead-eligible: no`.
+
+**Tests.**
+1. Capability test asserts `structuredOutput: false`.
+2. CLI test: `--mode team --lead opencode` produces the capability error, not
+   a silent pass-through.
+3. CLI test: `--mode team --worker opencode --lead codex` still validates.
+4. `provider-smoke.ts` type-level: confirm (via a quick manual invocation, not
+   a new unit test) that `--lead opencode` throws before any process spawns.
+
+**Commit.** `fix(opencode): stop treating opencode as lead-eligible`
 
 ---
 

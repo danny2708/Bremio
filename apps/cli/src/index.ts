@@ -209,7 +209,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     errors.push("Single mode requires --agent 'claude', 'codex', 'antigravity', or 'opencode'");
   }
   if (mode === "team" && !agentIds.has(values.lead ?? "")) {
-    errors.push("Team mode requires --lead 'claude', 'codex', or 'opencode'");
+    errors.push(`--lead must be a known agent id: ${[...agentIds].sort().join(", ")}`);
   }
   if (mode === "single" && values.lead) {
     errors.push("--lead is only valid in Team mode; use --agent for Single mode");
@@ -278,6 +278,24 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     new AntigravityAdapter(),
     new OpenCodeAdapter(),
   ]);
+
+  // Capability gate for lead role — not a name check, so the next
+  // capability-only provider won't hit the same bug S1-R4 fixed.
+  if (mode === "team" && values.lead) {
+    const leadAdapter = registry.get(values.lead);
+    if (leadAdapter) {
+      const caps = await leadAdapter.getCapabilities();
+      const missing: string[] = [];
+      if (!caps.planning) missing.push("planning");
+      if (!caps.structuredOutput) missing.push("structuredOutput");
+      if (missing.length > 0) {
+        console.error(c.red(`error: --lead '${values.lead}' lacks required capability: ${missing.join(", ")}`));
+        process.exitCode = 2;
+        return;
+      }
+    }
+  }
+
   const capacitySnapshots = mode === "team" && values["capacity-routing"]
     ? readRoutingCapacity(values, capacityTiming)
     : undefined;

@@ -56,9 +56,14 @@ export interface OpenCodeAdapterOptions {
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
+// structuredOutput:false — the default provider returns 200 OK with empty
+// parts when given a json_schema constraint, and the adapter has no repair
+// loop (unlike lead-manager.ts's two-attempt retry). Until either the
+// provider supports schema enforcement or the adapter adds a retry,
+// opencode is worker-only. See S1-R4 in SPRINT-LOG.md.
 const CAPABILITIES: AgentCapabilities = {
   planning: true,
-  structuredOutput: true,
+  structuredOutput: false,
   repositoryRead: true,
   repositoryWrite: true,
   shell: true,

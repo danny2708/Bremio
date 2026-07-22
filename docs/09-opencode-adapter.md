@@ -160,31 +160,41 @@ events plus structured output. Events are also available via SSE at
 `text` → text events, `step_finish` with `reason: "stop"` → terminal event,
 `tokens` → usage event.
 
-### Structured output → lead eligibility (updated S1-R2)
+### Structured output → lead eligibility (updated S1-R4, 2026-07-22)
 
 The **one-shot CLI** (`opencode run --format json`) cannot constrain the output
 to a schema — it only controls the serialization format of the event stream.
 
-The **HTTP server** (`opencode serve`) accepts `format: { type: "json_schema",
-schema: {...} }` in `POST /session/:id/message`. The adapter tries this path
-first; if the provider rejects it (the default Console/deepseek provider does),
-it falls back to a plain text prompt with JSON format instructions embedded.
+The **HTTP server** (`opencode serve`) accepted `format: { type: "json_schema",
+schema: {...} }` in `POST /session/:id/message` in an earlier revision. That
+was removed in S1-R3: the default Console/deepseek provider returns **200 OK
+with an empty `parts` array** when it rejects the field — not an exception the
+adapter can catch — so the attempt was pure added latency before the same
+plain-text fallback always fired anyway. The request is plain text with JSON
+instructions embedded, unconditionally, on every call.
 
-Regardless of which path was taken, the adapter validates the final output
-against `req.outputSchema`:
-1. Parses the response text as JSON — if parsing fails, the run fails.
-2. Checks the result is a JSON object, not an array or primitive.
-3. Checks every field in `schema.required` is present.
+The adapter validates the response before yielding `completed`: strips code
+fences and leading prose, parses the remainder as JSON, and checks the result
+is an object. That is the whole check — it does **not** verify
+`schema.required` fields. Field-level correctness is left to the caller: the
+lead-planning path already has a one-shot repair retry
+(`lead-manager.ts::createPlan`) that re-prompts on a schema mismatch, and
+duplicating that check at the adapter layer was found to short-circuit it
+(S1-R3). The review-task path (`quality-gate.ts::parseReviewOutput`) has no
+such retry — a malformed review fails the task outright.
 
-Any failure yields a `failed` outcome. A completed run guarantees
-schema-conforming output.
-
-**Verdict: Yes, OpenCode is lead-eligible.** The adapter provides structured
-output by post-hoc validation backed by adapter-level checks. The lead smoke
-test (S1-T4) confirmed the lead planner produces valid PlanSchema JSON through
-the server path. The adapter uses the server path for lead planning (needed for
-session/workspace isolation) and the one-shot CLI for implementer/test/review
-tasks.
+**Verdict: OpenCode is NOT lead-eligible** (`structuredOutput: false`).
+A Team run with OpenCode as lead did pass on 2026-07-21 (S1-T4) — the model
+produced valid `PlanSchema` JSON through the server path. That is evidence the
+mechanism can work on one model on one day, not a guarantee the router can act
+on: nothing in the adapter constrains the output, the empty-response failure
+mode above was found by live debugging rather than by design, and the whole
+mechanism has no repair loop for the lead's own plan format the way
+`lead-manager.ts` provides for its two attempts. Claude and Codex already give
+the lead role a schema constraint enforced by the provider itself
+(`docs/10` §6c: a capability boolean tracks its mechanism, not one good run).
+OpenCode remains a fully capable **worker** — analysis, implementation, test
+and review tasks all use the CLI or server path as before.
 
 ### Cancellation
 
@@ -245,7 +255,7 @@ handling the `.cmd` shim on Windows. Same pattern as `BREMIO_AGY_BIN`.
 | Workspace targeting | Respects process cwd by default. Explicit `--dir <path>` flag overrides. Server has per-session workspace. NOT like Antigravity — safe for worktree orchestration. | `opencode run "create PROOF.txt" --dir "$env:TEMP\opencode-workspace-test" --format json --auto` from different cwd → file landed at `--dir` path. Same without `--dir` → file landed in cwd. |
 | Permission mapping | Granular tool-level permissions (`read`, `edit`, `bash`, etc.) with `allow`/`ask`/`deny`. Built-in "plan" agent has `edit: deny`. Custom agents via config or `opencode agent create`. Read-only is enforceable. | `opencode agent list`, `opencode agent create --help`, docs/agents and docs/permissions |
 | Streaming shape | Structured JSON events per line: `step_start`, `step_finish`, `text`, `tool_use`. Token usage + cost on every `step_finish`. Clear terminal event (`reason: "stop"`). File paths in tool metadata. | `opencode run --format json --auto "create PROOF.txt"` |
-| Structured output | **Lead-eligible: YES** via HTTP server path with post-hoc schema validation. The adapter validates JSON, verifies object type, and checks all required fields from `outputSchema`. Non-conforming output yields `failed`. Format hint sent to server as `format: json_schema`; falls back to plain text if rejected. One-shot CLI cannot constrain output. | S1-R2 implementation: `validateStructuredOutput()` in `opencode-adapter.ts` |
+| Structured output | **Lead-eligible: NO** (S1-R4). The adapter only checks the response parses as JSON and is an object — it does not enforce `outputSchema.required`, and the earlier `format: json_schema` attempt was removed after the default provider returned empty responses instead of errors. Good enough for a worker's review-task JSON; not a guarantee the router can hand plan authorship to. One-shot CLI cannot constrain output at all. | S1-R3/R4 findings: `validateStructuredOutput()` in `opencode-adapter.ts` |
 | Cancellation | Two paths: (1) subprocess kill via `ProcessSupervisor`, (2) `POST /session/:id/abort` on server for cooperative cancellation with confirmed stop. | `opencode serve` API docs: `POST /session/:id/abort` |
 | Models | Rich model catalogue: `opencode models --verbose`. Each model has cost, limits, capabilities, variants (reasoning effort). Format: `<provider>/<model>`. | `opencode models --verbose` (full output shows 50+ models with detailed metadata) |
 | Binary resolution | npm global install: `.cmd` shim → `node_modules/opencode-ai/bin/opencode.exe`. Resolution: `BREMIO_OPENCODE_BIN` → PATH → default npm location. Reuse cli-launcher pattern for `.cmd` shim. | `(Get-Command opencode).Source`, `Get-Content npm/opencode.cmd`, `Get-Content npm/opencode.ps1` |
@@ -254,8 +264,8 @@ handling the `.cmd` shim on Windows. Same pattern as `BREMIO_AGY_BIN`.
 
 ```ts
 {
-  planning: true,              // server/SDK path can produce structured plans
-  structuredOutput: true,      // adapter validates output against outputSchema; fails if non-conforming
+  planning: true,              // full CLI capability supports analysis-kind worker tasks
+  structuredOutput: false,     // no schema enforcement, no repair loop — see verdict above (S1-R4)
   repositoryRead: true,        // reads/writes in cwd or --dir; permission system restricts
   repositoryWrite: true,       // tool_use events show file writes with filepath
   shell: true,                 // tool_use with tool:"bash" observed
@@ -271,38 +281,18 @@ handling the `.cmd` shim on Windows. Same pattern as `BREMIO_AGY_BIN`.
 test-evidence requirement (exit-code-backed) is satisfied — this is not an
 Antigravity-like prose-only surface.
 
-`structuredOutput` is `true` because the adapter validates the final output
-against `req.outputSchema`: it parses the response as JSON, checks that it is
-a JSON object (not an array or primitive), and verifies every field listed in
-`schema.required` is present. A run whose output fails any of these checks
-yields a `failed` outcome rather than `completed`, so a caller that receives
-a completed run is guaranteed schema-conforming output. The adapter also
-attempts the `format: { type: "json_schema", schema }` native structured-output
-path on the ACP request; if the provider rejects it, it falls back to a text
-prompt with JSON instructions and relies on post-hoc validation.
+`planning` stays `true` — it gates worker eligibility for `analysis`-kind
+tasks (`router.ts`'s `capabilities.planning && capabilities.repositoryRead`),
+which is independent of the lead role and unaffected by this decision. Only
+`structuredOutput` changed, because lead eligibility is specifically
+`planning && structuredOutput` (`capabilities.ts`) and the mechanism behind the
+second flag never matched what the boolean promised. See the verdict above for
+the full reasoning.
 
 `vision` is `false` because the `AgentRunRequest` interface defines no
 mechanism for passing images or attachments to the adapter's `startRun`
 method. The underlying model may support vision, but the adapter has no path
 to exercise it.
-
-## Structured output → lead eligibility (updated S1-R2)
-
-The adapter validates JSON output against `req.outputSchema` before yielding
-`completed`. A non-conforming response (prose, array, missing required fields)
-produces a `failed` outcome. This is what backs `structuredOutput: true`:
-the guarantee is adapter-level validation, not model-level enforcement.
-
-The server path (`startServerRun`) first tries passing `format: {
-type: "json_schema", schema: ... }` in the ACP prompt body. If the provider
-rejects it (the default Console/deepseek provider does), the adapter catches
-the error and re-sends without the format field. Either way, the response is
-validated against `req.outputSchema` after receipt — post-hoc validation is
-the mechanism, and native format support is a best-effort optimisation.
-
-**Verdict: OpenCode is lead-eligible.** The adapter guarantees structured
-output by post-hoc validation, and the lead smoke test (S1-T4) confirmed that
-the lead planner produces valid PlanSchema JSON through the server path.
 
 ## Quota
 
