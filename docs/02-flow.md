@@ -88,7 +88,7 @@ Claude quota high        → Claude does TASK-001 and possibly TASK-002 too
 Claude low, Codex high   → Claude only leads; Codex takes TASK-002
 Codex nearly exhausted    → Antigravity Flash takes the simple task; Claude
                             handles the important part
-All cloud agents low      → local (Jan) reads code / builds a test skeleton
+All quota data unknown    → apply only a soft penalty; preserve capable agents
 ```
 
 ## Invariant rules of the flow

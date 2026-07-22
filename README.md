@@ -12,24 +12,27 @@ provider-agnostic orchestrator assigns isolated worktree tasks and aggregates
 the results. ROI goal: **get the most out of the models with the least quota.**
 
 ## Status
-**Bremio v0.1 CLI is release-ready as a local npm artifact.** Phase 1
-(vertical slice) is implemented, plus the Phase-2 quality gate and
-early Phase-4 measurement/quota slices — explicit Single/Team modes, Claude
-(Agent SDK) + Codex (`codex exec --json`) as swappable lead/workers, an
-Antigravity worker on the `agy` CLI, an interactive TUI, a validator, a
-dependency-aware parallel scheduler, git-worktree isolation, independent review,
-exit-code-backed test evidence, review-gated merge, and the CLI. Full design
-lives in [`docs/`](docs/); start at [`docs/README.md`](docs/README.md). Still out
-of scope (see [`docs/06`](docs/06-roadmap.md)): Antigravity lead/test-gate
-roles, automatically enabled/calibrated quota optimization, parallelism,
-dashboard.
+**Bremio `0.1.0-alpha.1` is a locally packaged alpha.** It ships explicit
+Single/Team modes, Claude and Codex as lead-capable adapters, Antigravity
+(`agy`) and OpenCode as workers, an interactive Ink TUI, a durable loopback
+daemon, a VS Code panel, dependency-aware parallel scheduling, isolated git
+worktrees, independent review, exit-code-backed tests, review-gated manual
+merge, diagnostics, and AQT-backed Capacity surfaces. Full design lives in
+[`docs/`](docs/); start at [`docs/README.md`](docs/README.md).
+
+Still open: measured net-gain and the orchestration-cost kill-switch,
+calibration-gated Auto/escalation, a Job Object-strength Windows process-tree
+guarantee, light-theme/capacity-card polish in the VS Code panel, and registry
+publication.
 
 The release gate typechecks, runs the full automated suite, builds the bundled
 CLI, packs it, installs that tarball into a clean temporary project, and checks
-`--version`, `--help`, and all three `doctor` entries. Real-provider smoke is a
+`--version`, `--help`, and all four `doctor` entries. `e2e:fresh` additionally
+proves daemon startup, persistence, restart, authentication, and diagnostics
+from a scratch profile. Real-provider smoke is a
 separate explicit gate because it consumes quota.
 
-## Build and install the v0.1 artifact
+## Build and install the alpha artifact
 
 From a source checkout:
 
@@ -37,13 +40,13 @@ From a source checkout:
 corepack pnpm install
 corepack pnpm release:check
 npm pack
-npm install --global .\bremio-0.1.0.tgz
+npm install --global .\bremio-0.1.0-alpha.1.tgz
 bremio --version
 bremio doctor
 ```
 
 `npm pack` runs the build again. The tarball contains the CLI bundle and its
-source map. This v0.1 cut is intentionally a local tarball release
+source map. This alpha is intentionally a local tarball release
 (`private: true`), not an npm registry publication.
 
 For the VS Code extension, updating between versions, uninstalling cleanly, and
@@ -69,6 +72,11 @@ also probes the default install location directly, and `BREMIO_AGY_BIN`
 overrides it. `bremio doctor` reports Antigravity as `unavailable` when `agy`
 is missing, `degraded` until sign-in completes, and `ok` once authenticated.
 
+OpenCode is optional. Install and configure its provider credentials through
+OpenCode itself; Bremio resolves `opencode` from `BREMIO_OPENCODE_BIN`, `PATH`,
+or the standard npm shim location. `bremio doctor` reports its actual binary
+and provider readiness.
+
 Antigravity is a Single implementer and Team worker only: `agy --print` emits
 prose with no JSON mode, so it reports `structuredOutput: false` and can never
 be selected as lead or as the test gate.
@@ -93,6 +101,7 @@ corepack pnpm bremio daemon
 corepack pnpm bremio run --mode single --agent codex --timeout 600 --repo /path/to/repo "fix the failing test"
 corepack pnpm bremio run --mode single --agent claude --repo /path/to/repo "add a health endpoint"
 corepack pnpm bremio run --mode single --agent antigravity --repo /path/to/repo "update the docs"
+corepack pnpm bremio run --mode single --agent opencode --repo /path/to/repo "add parser tests"
 
 # Team: lead plans -> orchestrator hands a task to the OTHER agent,
 # which edits code in its own git worktree; results aggregate into one report.
@@ -101,6 +110,7 @@ corepack pnpm bremio run --mode team --lead codex --timeout 600 --repo /path/to/
 corepack pnpm bremio run --mode team --lead claude --concurrency 3 --repo /path/to/repo "refactor the parser"
 corepack pnpm bremio run --mode team --lead claude --repo /path/to/repo "fix the failing test"
 corepack pnpm bremio run --mode team --lead claude --worker antigravity --repo /path/to/repo "add a health endpoint"
+corepack pnpm bremio run --mode team --lead codex --worker opencode --repo /path/to/repo "add parser tests"
 # --lead without --mode remains a backward-compatible alias for Team
 corepack pnpm bremio run --lead codex --model gpt-5.6-terra --reasoning high --repo /path/to/repo "review this change"
 
@@ -121,8 +131,9 @@ corepack pnpm bremio run --mode team --capacity-routing --lead codex --repo /pat
 
 # explicit real-provider smoke (consumes quota; default = Team, both leads)
 corepack pnpm smoke:providers --mode team --lead both --timeout 600
-corepack pnpm smoke:providers --mode single --agent both --timeout 600
+corepack pnpm smoke:providers --mode single --agent all --timeout 600
 corepack pnpm smoke:providers --mode team --lead claude --worker antigravity --timeout 600
+corepack pnpm smoke:providers --mode team --lead codex --worker opencode --timeout 600
 ```
 
 In Single mode the selected agent uses the current workspace directly. Bremio
@@ -176,6 +187,7 @@ This remains opt-in until ledger calibration supports automatic optimization.
 ## Packages
 `protocol` (Zod contracts) · `adapter-sdk` (the `AgentAdapter` interface) ·
 `adapter-claude` · `adapter-codex` · `adapter-antigravity` (`agy` CLI) ·
+`adapter-opencode` (worker-only CLI/HTTP paths) ·
 `orchestrator` (direct Single runner plus Team lead-manager, validator, router,
 parallel scheduler, aggregator) · `quota` (AQT consumer: SQLite reader plus
 loopback refresh client) · `workspace` (worktrees + logs) · `apps/daemon`
@@ -194,7 +206,7 @@ loopback refresh client) · `workspace` (worktrees + logs) · `apps/daemon`
 Claude (lead) + Codex (worker), sequential. See
 [`docs/06-roadmap.md`](docs/06-roadmap.md).
 
-## Stack (planned)
+## Current stack
 Node 22 · TypeScript · pnpm workspaces · Zod · SQLite · simple-git · Pino · Vitest.
 Adapters: Claude Agent SDK · Codex app-server/exec · Antigravity `agy` CLI
 (print mode, subscription auth). TUI: Ink + React.

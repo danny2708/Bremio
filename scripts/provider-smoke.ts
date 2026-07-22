@@ -35,7 +35,7 @@ current repository, run npm.cmd test, and fix any failure.`;
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.includes("--help")) {
-    console.log("Usage: pnpm smoke:providers [--mode single|team|both] [--lead claude|codex|opencode|both]");
+    console.log("Usage: pnpm smoke:providers [--mode single|team|both] [--lead claude|codex|both]");
     console.log("       [--agent claude|codex|antigravity|opencode|both|all] [--worker <agent>]");
     console.log("       [--timeout seconds] [--keep]");
     console.log("Runs real providers and consumes quota. Defaults: --mode team --lead both --timeout 600.");

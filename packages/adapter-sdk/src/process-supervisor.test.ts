@@ -182,7 +182,10 @@ describe("process supervisor", () => {
 
     const results = await s.terminateAll({ graceMs: 1_000, forceMs: 3_000 });
 
-    expect([...results.values()].every((outcome) => outcome.stopped)).toBe(true);
+    expect(
+      [...results.values()].every((outcome) => outcome.stopped),
+      JSON.stringify([...results.entries()]),
+    ).toBe(true);
     for (const pid of pids) expect(pidAlive(pid)).toBe(false);
   }, 20_000);
 

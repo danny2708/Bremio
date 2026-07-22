@@ -220,11 +220,14 @@ export class ProcessSupervisor {
     options: TerminateOptions = {},
   ): Promise<Map<string, TerminationOutcome>> {
     const results = new Map<string, TerminationOutcome>();
-    await Promise.all(
-      [...this.#runs.keys()].map(async (runId) => {
-        results.set(runId, await this.terminate(runId, options));
-      }),
-    );
+    // Windows termination performs process-tree discovery followed by
+    // taskkill /T. Running several of those sequences concurrently contends
+    // on WMI/taskkill and intermittently leaves one otherwise-owned process
+    // alive past the verification window. Shutdown is a correctness boundary,
+    // not a throughput path, so terminate each owned run deterministically.
+    for (const runId of [...this.#runs.keys()]) {
+      results.set(runId, await this.terminate(runId, options));
+    }
     return results;
   }
 }

@@ -11,6 +11,7 @@
  * neither read nor disturbed.
  */
 import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -65,13 +66,12 @@ async function main() {
     }
 
     step("build and install the packed artifact");
-    await execFileAsync("npm", ["pack"], { cwd: repoRoot, shell: true });
     const pkg = JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8"));
-    const tarball = path.join(repoRoot, `bremio-${pkg.version}.tgz`);
-    await execFileAsync(
-      "npm",
+    const tarball = path.join(scratch, `bremio-${pkg.version}.tgz`);
+    await runPackageManager(["pack", "--pack-destination", scratch], { cwd: repoRoot });
+    await runPackageManager(
       ["install", "--global", "--prefix", binDir, tarball],
-      { cwd: repoRoot, shell: true, env: { ...process.env, HOME: home, USERPROFILE: home } },
+      { cwd: repoRoot, env: { ...process.env, HOME: home, USERPROFILE: home } },
     );
     record(true, "installed from tarball", `bremio-${pkg.version}.tgz`);
 
@@ -209,6 +209,34 @@ async function main() {
     process.exit(1);
   }
   console.log("\x1b[32m  fresh install works end to end\x1b[0m");
+}
+
+function locateNpmCli() {
+  const npmExecPath = process.env.npm_execpath;
+  const candidates = [
+    npmExecPath && path.basename(npmExecPath) === "npm-cli.js" ? npmExecPath : undefined,
+    path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
+    path.resolve(
+      path.dirname(process.execPath),
+      "..",
+      "lib",
+      "node_modules",
+      "npm",
+      "bin",
+      "npm-cli.js",
+    ),
+  ].filter(Boolean);
+  const npmCli = candidates.find((candidate) => existsSync(candidate));
+  if (!npmCli) throw new Error("could not locate npm-cli.js next to the active Node installation");
+  return npmCli;
+}
+
+function runPackageManager(args, options) {
+  return execFileAsync(process.execPath, [locateNpmCli(), ...args], {
+    ...options,
+    shell: false,
+    windowsHide: true,
+  });
 }
 
 async function api(endpoint, route, init = {}) {

@@ -82,6 +82,18 @@ takes: no `~/.bremio`, no database, no daemon. It installs the tarball, starts
 the daemon from nothing, runs something, restarts, and confirms the history
 survived. Your real profile is neither read nor modified.
 
+The complete pre-release evidence set is:
+
+```powershell
+corepack pnpm release:check   # typecheck + 351 tests + build + packed install
+corepack pnpm e2e:fresh       # 21 fresh-profile daemon/install checks
+corepack pnpm posix:verify    # run from Linux or a configured WSL distribution
+```
+
+`posix:verify` is not emulated through Windows Node. If `/bin/bash` is absent,
+record the gate as environment-blocked and run it on a real Linux/WSL host;
+never convert that into a pass.
+
 ---
 
 ## Update
@@ -215,9 +227,10 @@ keep everything else.
 - **Windows process trees** are terminated with `taskkill /T /F`, not a Job
   Object. A Job Object would guarantee that a grandchild cannot outlive its
   parent; `taskkill` walks the tree it can see at that moment. Verified against
-  a real process tree, but it is a weaker guarantee.
-- **No registry publication.** `npm i -g bremio` will not work until v0.1.0 is
-  published; install from the artifact you built.
+  a real process tree, with daemon-wide shutdown serialized to avoid concurrent
+  WMI/taskkill races, but it is still a weaker guarantee.
+- **No registry publication.** `npm i -g bremio` does not work for this alpha;
+  install `bremio-0.1.0-alpha.1.tgz` from the artifact you built.
 - **Quota freshness depends on the provider.** Bremio reads AI-Quota-Tray's
   database, which only advances when the provider's own tooling runs. Stale
   readings are labelled with their age rather than presented as current.

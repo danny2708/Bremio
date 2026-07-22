@@ -8,11 +8,16 @@ merge only after the quality gate passes.
 
 ## Requirements
 
-The Bremio CLI must be installed and on your `PATH`:
+The Bremio CLI must be installed from the matching local alpha artifact and on
+your `PATH`:
 
 ```
-npm i -g bremio
+npm install --global ./bremio-0.1.0-alpha.1.tgz
 ```
+
+There is no npm registry publication for this alpha. The CLI/daemon and VSIX
+must carry compatible protocol versions; see `docs/07-operations.md` for the
+build, update, and mismatch workflow.
 
 The extension talks to a local daemon over loopback HTTP and starts one for you
 if none is running. It never runs provider adapters inside the extension host,
