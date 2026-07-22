@@ -16,6 +16,9 @@ scoring:
   speedWeight: 5
   preferenceWeight: 5
 
+efficiency:
+  maxOrchestrationCostShare: 0.4
+
 tiers:
   trivial:
     claude: claude-sonnet-4-20250514

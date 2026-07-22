@@ -117,6 +117,10 @@ export function RunScreen({
               setStatus(`executing ${plan.tasks.length} task(s), up to ${DEFAULT_MAX_CONCURRENCY} at a time`);
               push(`✓ plan: ${plan.summary}`);
             },
+            onFallback: (reason, id) => {
+              setStatus(`falling back to Single Agent ${AGENT_LABELS[id] ?? id}`);
+              push(`⚠ ${reason}`);
+            },
             onTaskStart: (task, id) => push(`▶ ${task.id} ${task.title} → ${id}`),
             // Independent tasks run concurrently, so each line names its task.
             onEvent: (task, _id, event) => push(`[${task.id}] ${describeEvent(event)}`),
@@ -242,6 +246,9 @@ export function RunScreen({
           </Box>
           {report.mode === "single" ? (
             <>
+              {report.fallback ? (
+                <Text color={theme.warning}>{`  Team fallback: ${report.fallback.reason}`}</Text>
+              ) : null}
               <Text color={theme.muted}>
                 {`  files: ${report.result.filesChanged.length}  ·  verification: ${report.verification.status}`}
               </Text>

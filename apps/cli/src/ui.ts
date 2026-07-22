@@ -141,6 +141,13 @@ function printSingleReport(report: SingleRunReport): void {
       `  repo: ${c.dim(report.repoPath)}`,
   );
   console.log(line);
+  if (report.fallback) {
+    console.log(` ${c.yellow("Team fallback")}: ${report.fallback.reason}`);
+    console.log(
+      ` ${c.dim(`planning run ${report.fallback.teamRunId}; baseline ${report.fallback.baselineRunId}`)}`,
+    );
+    console.log(line);
+  }
   console.log(` status: ${statusGlyph(result.status)}   files: ${result.filesChanged.length}`);
   const verificationText = verification.status === "passed"
     ? c.green("passed")

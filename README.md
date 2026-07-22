@@ -20,10 +20,12 @@ worktrees, independent review, exit-code-backed tests, review-gated manual
 merge, diagnostics, and AQT-backed Capacity surfaces. Full design lives in
 [`docs/`](docs/); start at [`docs/README.md`](docs/README.md).
 
-Still open: measured net-gain and the orchestration-cost kill-switch,
+Still open: net-gain reporting and controlled pair collection,
 calibration-gated Auto/escalation, a Job Object-strength Windows process-tree
 guarantee, light-theme/capacity-card polish in the VS Code panel, and registry
-publication.
+publication. The ledger now computes measured net gain, and calibrated Team
+runs can fall back before task execution when planning overhead is already too
+high.
 
 The release gate typechecks, runs the full automated suite, builds the bundled
 CLI, packs it, installs that tarball into a clean temporary project, and checks

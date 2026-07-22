@@ -594,3 +594,41 @@ baseline rather than an average. Focused tests passed 4/4. Full
 packed installation.
 
 **Deviations:** None.
+
+---
+
+## S3-T2 — Fall back to Single when coordination costs too much
+
+**Done:** Added `efficiency.maxOrchestrationCostShare` to
+`config/routing.yaml` and the validated routing schema, with a documented
+default of 0.25. `runBremio` evaluates the switch after a valid plan and after
+its coordination ledger write, but before assignment, task worktrees, or any
+worker run. It never re-evaluates after `runPlan` begins, so completed work is
+not discarded or paid for twice.
+
+The decision reads the same shared `findBestSingleAgentBaseline` logic as
+S3-T1. It requires the global calibration gate to be ready, every candidate
+Single baseline and current coordination entry to carry provider-reported
+`costUsd`, and the winning baseline provider to remain registered and capable
+of workspace writes. Missing or ambiguous evidence makes the switch inert. If
+measured coordination cost exceeds the configured share of the cheapest
+verified Single baseline, Bremio runs the original prompt through that baseline
+provider's direct Single path.
+
+**Visibility:** The returned Single report carries `fallback` metadata with the
+Team planning run id, baseline run/cost, coordination cost, threshold, and exact
+reason. The reason is persisted in `report.json`, printed by the CLI, shown in
+the TUI, and emitted as a daemon status event. Team callers now handle the
+honest `BremioRunReport` union instead of assuming every `runBremio` call ends
+as a Team report.
+
+**Tests:** Added the four required integration cases using real ledger files
+and git workspaces: above-threshold fallback before any Team worker call;
+incomplete planning cost remains Team; below-threshold cost remains Team; and
+the exact reason reaches both the hook and persisted report. The fixtures carry
+five fully measured paired groups so the real calibration gate, not a mock,
+authorizes the positive cases. Focused S3/config tests passed 12/12. Full
+`corepack pnpm release:check` passed typecheck, 359/359 tests, build, and clean
+packed installation.
+
+**Deviations:** None.

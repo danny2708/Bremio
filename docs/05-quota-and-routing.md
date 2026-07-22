@@ -266,8 +266,14 @@ to the run) to make the multi-vs-single comparison honest. Once there are
 enough samples, the ledger yields an empirical task→model map.
 
 ## Guardrail & calibration gate
-- **Kill-switch**: if a run's orchestration overhead > X% of task cost →
-  auto fall back to single-agent. Stops the system from going net-negative.
+- **Kill-switch (implemented):** after a valid Team plan but before assignment,
+  worktree creation, or worker execution, compare provider-reported coordination
+  cost with the cheapest objectively verified Single task cost for the same
+  `comparisonId`. The documented default in `config/routing.yaml` is 25%. If
+  overhead exceeds that share, run the original prompt directly with the
+  baseline provider and preserve the reason in the report. The check is inert
+  unless calibration is ready and every included entry reports `costUsd`; it is
+  never revisited after worker execution starts.
 - **Calibration gate** (matches Kian-Brain's human-gate philosophy): the
   router is **not** allowed to trust cheap-first until the ledger has enough
   samples proving it doesn't create escalation waste.
@@ -283,9 +289,10 @@ recommendation is
 optimization. Policy thresholds are programmatically configurable.
 
 This deliberately does not claim subjective quality equivalence or convert
-tokens into subscription quota. The automatic kill-switch remains open because
-provider-reported cost coverage is currently partial. The CLI can now collect
-explicit Single baselines, but automatic mode selection remains disabled.
+tokens into subscription quota. The kill-switch therefore fires only for a
+calibrated, fully measured comparison; partial real-world cost coverage leaves
+it inert. The CLI can collect explicit Single baselines, but automatic initial
+mode selection remains disabled.
 
 ## Router scoring (Phase 4, once the ledger exists)
 The lead only describes the **need**, never picks a model name:
@@ -413,16 +420,18 @@ ledger has enough evidence to enable optimization automatically.
       blockers, and a fail-closed single-agent recommendation in `bremio stats`.
 - [x] Add an explicit direct CLI Single baseline execution mode for Claude
       and Codex.
-- [ ] Enforce an automatic orchestration-cost kill-switch only after reported
-      cost coverage meets the calibration gate.
+- [x] Enforce an automatic orchestration-cost kill-switch only after reported
+      cost coverage meets the calibration gate. The decision is made after
+      planning and before the first task; missing cost keeps it inert.
 
 ## Build order for this section
 1. Ledger first (log the cost of every run, even before smart routing exists).
 2. Consume quota from AI-Quota-Tray (Codex + Claude official; Antigravity per
    current AQT coverage). **Read-only observation slice shipped; router wiring
    waits for fresh-data calibration.**
-3. Single-agent-vs-multi evidence gate. **Readiness reporting and direct
-   baseline execution shipped; automatic selection and kill-switch remain open.**
+3. Single-agent-vs-multi evidence gate. **Readiness reporting, direct baseline
+   execution, net-gain arithmetic, and the calibrated pre-task kill-switch have
+   shipped; automatic initial mode selection remains open.**
 4. Scoring router + calibration gate. **The weighted, capability-aware router
    is implemented behind opt-in capacity routing; automatic/cheap-first mode
    remains disabled until paired evidence passes the gate.**

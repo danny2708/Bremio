@@ -33,7 +33,7 @@ correct stage, never raise both reasoning and model tier at once.
 
 **R6 — Scope creep (alpha turning into v1.0).** Four adapters, routing,
 worktrees, daemon, TUI, quota and an extension now exist. → keep Auto,
-kill-switch, panel polish and publication behind the evidence/tasks in
+kill-switch activation, panel polish and publication behind the evidence/tasks in
 `08-completion-plan.md`; do not rename the alpha to v1 because the surface is
 large.
 

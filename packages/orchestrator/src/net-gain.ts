@@ -24,6 +24,20 @@ export interface UnknownNetGain {
 
 export type NetGainResult = KnownNetGain | UnknownNetGain;
 
+export interface KnownSingleBaseline {
+  status: "known";
+  runId: string;
+  agentId: string;
+  costUsd: number;
+}
+
+export interface UnknownSingleBaseline {
+  status: "unknown";
+  reason: string;
+}
+
+export type SingleBaselineResult = KnownSingleBaseline | UnknownSingleBaseline;
+
 interface CostResult {
   status: "known";
   costUsd: number;
@@ -63,35 +77,14 @@ export function computeNetGain(
     );
   }
 
-  const singleSummaries = uniqueRuns(
-    summaries.filter((entry) => entry.flowMode === "single-agent"),
-  );
-  if (singleSummaries.length === 0) {
+  const baseline = findBestSingleAgentBaseline(entries, comparisonId);
+  if (baseline.status === "unknown") {
     return unknown(
       comparisonId,
-      `comparison "${comparisonId}" has no single-agent baseline`,
+      baseline.reason,
       multiSummary.summary.runId,
     );
   }
-  const verifiedSingles = singleSummaries.filter(isOutcomeVerified);
-  if (verifiedSingles.length === 0) {
-    return unknown(
-      comparisonId,
-      `comparison "${comparisonId}" has no objectively verified single-agent baseline`,
-      multiSummary.summary.runId,
-    );
-  }
-
-  const baselineCosts: Array<{ runId: string; costUsd: number }> = [];
-  for (const summary of verifiedSingles) {
-    const cost = executionCost(entries, summary.runId, "task");
-    if (cost.status === "unknown") {
-      return unknown(comparisonId, cost.reason, multiSummary.summary.runId);
-    }
-    baselineCosts.push({ runId: summary.runId, costUsd: cost.costUsd });
-  }
-  const baseline = baselineCosts.reduce((best, candidate) =>
-    candidate.costUsd < best.costUsd ? candidate : best);
 
   const taskCost = executionCost(entries, multiSummary.summary.runId, "task");
   if (taskCost.status === "unknown") {
@@ -118,6 +111,54 @@ export function computeNetGain(
     orchestrationCostUsd: orchestrationCost.costUsd,
     netGainUsd: quotaSavedVsBaselineUsd - orchestrationCost.costUsd,
   };
+}
+
+/** Select the cheapest fully measured, objectively verified direct Single run. */
+export function findBestSingleAgentBaseline(
+  entries: readonly LedgerEntry[],
+  comparisonId: string,
+): SingleBaselineResult {
+  const singleSummaries = uniqueRuns(entries.filter((entry) =>
+    entry.scope === "run" &&
+    entry.flowMode === "single-agent" &&
+    entry.comparisonId === comparisonId));
+  if (singleSummaries.length === 0) {
+    return {
+      status: "unknown",
+      reason: `comparison "${comparisonId}" has no single-agent baseline`,
+    };
+  }
+  const verifiedSingles = singleSummaries.filter(isOutcomeVerified);
+  if (verifiedSingles.length === 0) {
+    return {
+      status: "unknown",
+      reason: `comparison "${comparisonId}" has no objectively verified single-agent baseline`,
+    };
+  }
+
+  const baselines: KnownSingleBaseline[] = [];
+  for (const summary of verifiedSingles) {
+    const taskEntries = entries.filter((entry) =>
+      entry.runId === summary.runId && (entry.scope ?? "task") === "task");
+    const cost = executionCost(entries, summary.runId, "task");
+    if (cost.status === "unknown") return cost;
+    const providers = [...new Set(taskEntries.map((entry) => entry.provider))];
+    const agentId = providers[0];
+    if (providers.length !== 1 || !agentId) {
+      return {
+        status: "unknown",
+        reason: `single-agent baseline "${summary.runId}" has no unambiguous provider`,
+      };
+    }
+    baselines.push({
+      status: "known",
+      runId: summary.runId,
+      agentId,
+      costUsd: cost.costUsd,
+    });
+  }
+  return baselines.reduce((best, candidate) =>
+    candidate.costUsd < best.costUsd ? candidate : best);
 }
 
 function resolveMultiSummary(

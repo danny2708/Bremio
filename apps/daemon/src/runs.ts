@@ -373,6 +373,12 @@ export class RunRegistry {
                   message: plan.summary,
                   data: { plan, assign: Object.fromEntries(assign) },
                 }),
+              onFallback: (reason, agentId) =>
+                this.#emit(runId, {
+                  kind: "status",
+                  message: reason,
+                  agentId,
+                }),
               onTaskStart: (task, agentId) =>
                 this.#emit(runId, {
                   kind: "task-start",

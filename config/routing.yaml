@@ -21,6 +21,12 @@ scoring:
   speedWeight: 5
   preferenceWeight: 5
 
+# Stop Team before any worker task starts when provider-reported coordination
+# cost already exceeds this share of the best verified Single baseline. The
+# switch is inert when either side lacks provider-reported cost.
+efficiency:
+  maxOrchestrationCostShare: 0.25
+
 # Tiers map a reasoning requirement to a per-adapter model id. Each adapter
 # maps its own model independently — a tier never names one provider's model
 # globally. Unknown adapters or reasoningRequirements are rejected at load time.

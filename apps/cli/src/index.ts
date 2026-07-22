@@ -325,6 +325,8 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
           if (l) console.log(l);
         },
         onPlan: (plan, assign) => printPlan(plan, assign),
+        onFallback: (reason, agentId) =>
+          console.log(c.yellow(`\n⚠ ${reason}; continuing directly with ${agentId}`)),
         onTaskStart: (task, agentId) =>
           console.log(`\n${c.bold("▶")} ${c.cyan(task.id)} ${task.title} ${c.bold(`→ ${agentId}`)}`),
         // Tasks run concurrently by default, so every streamed line and every
@@ -413,10 +415,11 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     if (json) console.log(JSON.stringify(report, null, 2));
     else printReport(report);
 
-    process.exitCode =
-      report.summary.failed > 0 ||
-      report.tasks.length === 0 ||
-      report.qualityGate.status !== "passed"
+    process.exitCode = report.mode === "single"
+      ? report.result.status === "completed" ? 0 : 1
+      : report.summary.failed > 0 ||
+          report.tasks.length === 0 ||
+          report.qualityGate.status !== "passed"
         ? 1
         : 0;
   } catch (err) {

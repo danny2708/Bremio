@@ -10,6 +10,7 @@ export {
   type SingleAgentResult,
   type SingleRunHooks,
   type SingleRunReport,
+  type SingleRunFallback,
   type SingleRunVerification,
 } from "./single-run";
 export { createRegistry, type AgentRegistry } from "./registry";
@@ -91,9 +92,13 @@ export {
 
 export {
   computeNetGain,
+  findBestSingleAgentBaseline,
   type KnownNetGain,
   type UnknownNetGain,
   type NetGainResult,
+  type KnownSingleBaseline,
+  type UnknownSingleBaseline,
+  type SingleBaselineResult,
 } from "./net-gain";
 
 export {

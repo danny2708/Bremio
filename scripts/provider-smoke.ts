@@ -120,6 +120,11 @@ async function smokeLead(leadId: LeadId, options: Options): Promise<void> {
         onTaskComplete: (result) => console.log(`task finished: ${result.taskId} ${result.status}`),
       },
     });
+    if (report.mode !== "team") {
+      throw new Error(
+        `provider Team smoke unexpectedly fell back to Single: ${report.fallback?.reason ?? "unknown reason"}`,
+      );
+    }
 
     const delegated = report.tasks.some((task) => task.agentId !== leadId);
     if (!delegated) throw new Error("smoke run did not delegate any task away from the lead");
