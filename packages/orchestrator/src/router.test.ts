@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { PlanSchema, type Plan } from "@bremio/protocol";
 import type { AgentCapacitySnapshot } from "@bremio/quota";
-import { assignAgents, topologicalOrder } from "./router";
+import { assignAgents, topologicalOrder, type ScoringConfig } from "./router";
+
+const DEFAULT_SCORING: ScoringConfig = {
+  capabilityWeight: 30,
+  quotaWeight: 25,
+  taskFitWeight: 20,
+  qualityWeight: 15,
+  speedWeight: 5,
+  preferenceWeight: 5,
+};
 
 const LEAD_CAPS = {
   planning: true,
@@ -163,6 +172,100 @@ describe("assignAgents (lead ≠ worker)", () => {
 
     expect(assign.get("T1")).toBe("antigravity");
     expect(assign.get("T2")).toBe("claude");
+  });
+});
+
+describe("assignAgents with weighted scoring", () => {
+  it("scores by capability, quota, task-fit, and preference — analysis stays on the lead", () => {
+    const p = plan([
+      { id: "T1", title: "analyze", kind: "analysis", risk: "low" },
+      { id: "T2", title: "impl", kind: "implementation", risk: "low", dependencies: ["T1"] },
+    ]);
+    const assign = assignAgents(p, "claude", "codex", { scoring: DEFAULT_SCORING });
+    expect(assign.get("T1")).toBe("claude");
+    expect(assign.get("T2")).toBe("codex");
+  });
+
+  it("applies -100 self-review penalty when candidate authored the dependency", () => {
+    const p = plan([
+      { id: "T1", title: "impl", kind: "implementation", risk: "low" },
+      { id: "T2", title: "review", kind: "review", risk: "low", dependencies: ["T1"] },
+    ]);
+    const assign = assignAgents(p, "claude", "codex", {
+      scoring: DEFAULT_SCORING,
+      capacityByAgent: new Map([
+        ["claude", capacity("claude", 100)],
+        ["codex", capacity("codex", 100)],
+      ]),
+    });
+    expect(assign.get("T1")).toBe("codex");
+    expect(assign.get("T2")).not.toBe("codex");
+    expect(assign.get("T2")).toBe("claude");
+  });
+
+  it("applies -40 critical quota penalty and favours the healthy agent", () => {
+    const p = plan([{ id: "T1", title: "impl", kind: "implementation", risk: "low" }]);
+    const assign = assignAgents(p, "claude", "codex", {
+      scoring: DEFAULT_SCORING,
+      capacityByAgent: new Map([
+        ["claude", capacity("claude", 100)],
+        ["codex", capacity("codex", 6, "fresh")], // critical band
+      ]),
+    });
+    expect(assign.get("T1")).toBe("claude");
+  });
+
+  it("excludes an agent that lacks repositoryWrite from write tasks", () => {
+    const noWriteCaps = { ...LEAD_CAPS, repositoryWrite: false };
+    const p = plan([{ id: "T1", title: "impl", kind: "implementation", risk: "low" }]);
+    const assign = assignAgents(p, "claude", "codex", {
+      scoring: DEFAULT_SCORING,
+      capabilitiesByAgent: new Map([
+        ["claude", noWriteCaps],
+        ["codex", LEAD_CAPS],
+      ]),
+    });
+    expect(assign.get("T1")).toBe("codex");
+  });
+
+  it("never hard-excludes on stale exhaustion — only a soft penalty applies", () => {
+    const p = plan([{ id: "T1", title: "impl", kind: "implementation", risk: "low" }]);
+    const assign = assignAgents(p, "claude", "codex", {
+      scoring: DEFAULT_SCORING,
+      capacityByAgent: new Map([
+        ["claude", capacity("claude", 100)],
+        ["codex", capacity("codex", 0, "stale")],
+      ]),
+    });
+    expect(assign.get("T1")).toBe("codex");
+  });
+
+  it("respects the lead capacity reserve — worker wins over reserve-blocked lead", () => {
+    const p = plan([{ id: "T1", title: "impl", kind: "implementation", risk: "low" }]);
+    const assign = assignAgents(p, "claude", "codex", {
+      scoring: DEFAULT_SCORING,
+      capacityByAgent: new Map([
+        ["claude", capacity("claude", 10)],
+        ["codex", capacity("codex", 100)],
+      ]),
+    });
+    expect(assign.get("T1")).toBe("codex");
+  });
+
+  it("guarantees delegation — at least one task reaches a different agent", () => {
+    const p = plan([{ id: "T1", title: "analyze", kind: "analysis", risk: "low" }]);
+    const assign = assignAgents(p, "claude", "codex", { scoring: DEFAULT_SCORING });
+    expect([...assign.values()].some((a) => a !== "claude")).toBe(true);
+  });
+
+  it("is byte-identical to the deterministic path when scoring is absent", () => {
+    const p = plan([
+      { id: "T1", title: "analyze", kind: "analysis", risk: "low" },
+      { id: "T2", title: "impl", kind: "implementation", risk: "low", dependencies: ["T1"] },
+    ]);
+    const without = assignAgents(p, "claude", "codex");
+    const explicitlyAbsent = assignAgents(p, "claude", "codex", {});
+    expect([...without.entries()]).toEqual([...explicitlyAbsent.entries()]);
   });
 });
 

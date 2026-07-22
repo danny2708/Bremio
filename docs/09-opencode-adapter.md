@@ -1,15 +1,12 @@
 # 09 — OpenCode adapter
 
-> **Status: unverified design.** Every claim below marked `❓` is a *hypothesis*
-> to be confirmed against the installed binary before any adapter code is
-> written. Task **S1-T1** in `docs/08-completion-plan.md` does that verification
-> and rewrites this file with observed facts.
->
-> This follows the standing rule in `docs/04`: the provider surfaces move faster
-> than the docs, so verify, then code.
+> **Status: verified against opencode 1.18.4.** S1-T1 completed. Every claim
+> below is an *observed fact*, not a hypothesis. See the Findings table for the
+> exact commands run and what was observed. Anything that could not be determined
+> is recorded as "not available".
 
-Installed locally: **opencode 1.18.4**, resolved at
-`C:\Users\Acer\AppData\Roaming\npm\opencode`.
+Installed locally: **opencode 1.18.4**, resolved as an npm global install at
+`%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe` via the `.cmd` shim.
 
 ## Why OpenCode
 
@@ -19,9 +16,10 @@ instead of driving the TUI". Two things make it worth doing first among the
 remaining work:
 
 1. **It is a different integration shape.** Claude is an in-process SDK, Codex is
-   a JSONL subprocess, Antigravity is a prose-only CLI. If OpenCode is an HTTP
-   server with sessions, it exercises a fourth shape and proves `AgentAdapter`
-   is genuinely provider-agnostic rather than accidentally fitted to three.
+   a JSONL subprocess, Antigravity is a prose-only CLI. OpenCode is an HTTP
+   server with an official JS SDK (`@opencode-ai/sdk`), exercising a fourth
+   shape and proving `AgentAdapter` is genuinely provider-agnostic rather than
+   accidentally fitted to three.
 2. **It is the tool building this milestone.** Bremio integrating the agent that
    writes it produces first-hand knowledge of the surface that no amount of
    reading docs would.
@@ -29,144 +27,272 @@ remaining work:
 ## What the adapter must answer
 
 Every provider in `docs/04` answers the same questions. These are the ones
-S1-T1 must close, each with the probe that closes it.
+S1-T1 closed, each with the probe that closed it.
 
-### Surface ❓
+### Surface
 
-Hypothesis: two usable surfaces exist — a one-shot `opencode run "<prompt>"` and
-a headless `opencode serve` HTTP server with an official client SDK.
+Three surfaces exist:
+
+| Surface | Command | Key flags |
+|---|---|---|
+| One-shot CLI | `opencode run "<message>"` | `--format json`, `--dir <path>`, `--auto`, `--agent`, `--model` |
+| HTTP server | `opencode serve` | `--port`, `--hostname`, OpenAPI 3.1 at `/doc`, SSE at `/event` |
+| ACP server | `opencode acp` | nd-JSON over stdio, `--cwd`, JSON-RPC |
+
+**Decision:** Two paths — one-shot CLI (`opencode run --format json`) for
+single-agent implementer/test/review tasks, and HTTP server (`opencode serve`)
+for lead planning. The adapter spawns the process per run; the server is
+started per-session and killed when done.
+
+**Important findings during verification (S1-T4, 2026-07-21):**
+
+1. **Windows stdin hang.** `opencode.exe` hangs indefinitely when its stdin is
+   a pipe. Fixed by spawning with `stdin: "ignore"` (NUL device on Windows).
+   Without this fix, every run (single or team) would timeout at 600s.
+
+2. **ACP response shape.** `POST /session/:id/message` returns:
+   ```json
+   { "info": { ... }, "parts": [ { "type": "text", "text": "..." }, ... ] }
+   ```
+   The model response text is in `parts[{type:"text"}].text`, **not** in
+   `info.text` or `data.info.structured_output` as initially documented.
+
+3. **JSON Schema format unsupported.** The server's `format: { type:
+   "json_schema", schema: {...} }` option causes the default provider
+   (Console/deepseek-v4-flash-free) to return an error:
+   `"Error from provider (Console): Upstream request failed"`. Structured
+   output is only available through the `@opencode-ai/sdk` npm package, not
+   through the raw HTTP ACP endpoint with the default provider. The adapter
+   therefore sends the lead prompt as plain text with JSON format instructions
+   in the prompt itself — the model reliably produces valid plan JSON.
+
+### Auth
+
+Auth is per-provider, managed through OpenCode's credential system:
 
 ```powershell
-opencode --help
-opencode run --help
-opencode serve --help
+opencode providers login        # interactive
+opencode providers list          # list configured credentials
 ```
 
-**Decide:** one-shot or server. Prefer the one that gives structured streaming
-and clean cancellation. `docs/04` predicts HTTP; confirm rather than assume. A
-server surface also raises a question the CLI ones do not: **who owns the server
-process** — Bremio spawning one per run, or attaching to a user-run instance.
+Credentials are stored in `~/.local/share/opencode/auth.json`. The `opencode
+providers list` command shows configured providers and their auth method.
 
-### Auth ❓
+For the HTTP server, `OPENCODE_SERVER_PASSWORD` enables basic auth (username
+defaults to `opencode`, override via `OPENCODE_SERVER_USERNAME`).
 
-Hypothesis: `opencode auth login` stores credentials for a chosen provider, so
-work bills to the user's existing subscription/key rather than anything Bremio
-supplies.
+**healthCheck:** probe by running `opencode providers list` and checking the
+exit code + output. If it lists at least one credential or environment-variable
+provider, report `ok`. If the binary is missing, `unavailable`. If running but
+no providers configured, `degraded` — matching Antigravity's pattern.
 
-**Decide:** what `healthCheck` can honestly assert. Antigravity's precedent
-(`docs/04`) is instructive: there was no auth-status command, so the adapter
-reads an onboarding state file as an explicit *heuristic* and says so. Never
-report `ok` on a guess.
+### Workspace targeting
 
-### Workspace targeting ❗
-
-The single most important check. Antigravity **ignores the spawned process cwd**
-and writes into its own scratch workspace — a trap that would have silently
-corrupted every worktree run had it not been caught.
+Tested in a throwaway git repo at `$env:TEMP\opencode-workspace-test`, invoked
+from `D:\Work\Side-Projects\Bremio` (a **different** working directory):
 
 ```powershell
-# in a scratch git repo, from a DIFFERENT cwd
-opencode run "create a file called PROOF.txt containing the absolute path of your working directory"
+# From bremio dir, with --dir:
+opencode run "create a file called PROOF.txt containing workspace-targeting-test" --dir "$env:TEMP\opencode-workspace-test" --format json --auto
+# → File created at $env:TEMP\opencode-workspace-test\PROOF.txt ✓
+
+# From the test dir, without --dir:
+cd $env:TEMP\opencode-workspace-test
+opencode run "create a file called CWD_TEST.txt containing from-native-cwd" --format json --auto
+# → File created at $env:TEMP\opencode-workspace-test\CWD_TEST.txt ✓
 ```
 
-**Decide:** does the process cwd control where files land, or is an explicit
-directory flag / server-side path required? A worktree-isolated orchestrator
-cannot use a provider that writes wherever it likes.
+**Verdict:** OpenCode respects both the process cwd AND the explicit `--dir`
+flag. Without `--dir`, files land in the process cwd. With `--dir`, files land
+in the specified directory. The server path also has per-session workspace
+control. This is **not** like Antigravity — a worktree-isolated orchestrator
+can safely control where files land by spawning in the correct cwd or passing
+`--dir` / session project path.
 
-### Permission mapping ❓
+### Permission mapping
 
-Bremio has exactly two permissions (`docs/03`): `read-only` for reviewers and
-test gates, `workspace-write` for implementers.
+OpenCode has a rich permission system with granular tool-level controls:
 
-**Decide:** what enforces read-only. A config key, a flag, an agent profile, or
-nothing. If nothing enforces it, OpenCode cannot hold review or test-gate roles
-— the same conclusion `docs/04` reached for Antigravity, reached the same way.
+```powershell
+opencode agent list              # list all agents (build, plan, explore, etc.)
+opencode agent create            # create custom agent with permission profile
+```
 
-### Streaming shape ❓
+Key permissions: `read`, `edit`, `bash`, `glob`, `grep`, `webfetch`, `task`,
+etc. Each can be `allow`, `ask`, or `deny`. The `--auto` flag auto-approves
+non-denied requests.
 
-Hypothesis: structured events (JSON or SSE) rather than Antigravity's prose.
+Built-in agents demonstrate read-only enforcement:
+- **build** (default): all tools allowed
+- **plan**: `edit: deny`, `bash: deny` — read-only by permission
+- **explore** (subagent): read-only, cannot modify files
 
-**Decide:** the mapping onto `AgentEvent` in `@bremio/protocol`. What is
-available matters more than what is pretty: tool calls, token usage, model
-identity, and a single unambiguous terminal event. If usage is reported, it
-feeds the ledger; if the model id is confirmed, it fills `actualModel` — and if
-neither is, both stay `unknown` rather than being inferred (`docs/05`).
+**Verdict:** Read-only is enforceable through agent permissions (`edit: deny`,
+`bash: deny`). Both review and test-gate roles can be implemented using a custom
+agent with restricted permissions. The adapter can create or configure an agent
+profile via the server API or config file.
 
-### Structured output → lead eligibility ❗
+### Streaming shape
 
-An adapter is lead-eligible only when `planning === true` **and**
-`structuredOutput === true` (`packages/adapter-sdk/src/capabilities.ts`). The
-lead must return JSON matching `PlanSchema`.
+`opencode run --format json` produces one JSON object per line:
 
-**Decide:** can OpenCode be constrained to emit schema-valid JSON as its final
-output? If yes it joins Claude and Codex in the lead pool, which is a genuine
-capability increase. If only prompt-level coaxing is available, then
-`structuredOutput = false` and it is a worker — the capability contract excludes
-it from lead automatically, with no provider-specific branch anywhere in core.
+```json
+{"type":"step_start","timestamp":...,"sessionID":"...","part":{...}}
+{"type":"tool_use","timestamp":...,"sessionID":"...","part":{"type":"tool","tool":"write","callID":"...","state":{"status":"completed","input":{...},"output":"...","metadata":{"filepath":"...","exists":false,"truncated":false}}}}
+{"type":"step_finish","timestamp":...,"sessionID":"...","part":{"reason":"tool-calls","tokens":{"total":...,"input":...,"output":...,"reasoning":...,"cache":{"write":0,"read":0}},"cost":0}}
+{"type":"text","timestamp":...,"sessionID":"...","part":{"type":"text","text":"..."}}
+{"type":"step_finish","timestamp":...,"sessionID":"...","part":{"reason":"stop","tokens":{...},"cost":...}}
+```
 
-### Cancellation ❓
+Available event types:
+- `step_start` / `step_finish` — lifecycle, with `reason` field (`"stop"` = terminal)
+- `text` — text content with `time.start`/`time.end`
+- `tool_use` — tool calls with `tool` name, `callID`, `state.status` (`"completed"`/`"failed"`), `input`, `output`, `metadata.filepath`
 
-**Decide:** does killing the process (or aborting the HTTP request) actually
-stop the work, and does it leave orphans? This matters more than usual here: the
-`ProcessSupervisor` contract is that `cancelled` is only reported once execution
-is *confirmed* stopped, otherwise `cancellation_failed`. An HTTP surface may
-need a cooperative settle handle, exactly like the Claude SDK path.
+Token usage: reported on every `step_finish` with `tokens.total`, `input`,
+`output`, `reasoning`, `cache` hit/miss, and `cost`.
 
-### Models ❓
+**SDK/server path:** the `@opencode-ai/sdk` provides typed access to the same
+events plus structured output. Events are also available via SSE at
+`GET /event`.
 
-Hypothesis: OpenCode is multi-provider and can list available models.
+**Mapping to `AgentEvent`:** straightforward — `tool_use` → tool call events,
+`text` → text events, `step_finish` with `reason: "stop"` → terminal event,
+`tokens` → usage event.
 
-**Decide:** what `listModels()` returns, and how `reasoningLevel` maps. Per
-`docs/05`, the adapter owns that mapping — core never names a model.
+### Structured output → lead eligibility (updated S1-R4, 2026-07-22)
 
-### Binary resolution ❓
+The **one-shot CLI** (`opencode run --format json`) cannot constrain the output
+to a schema — it only controls the serialization format of the event stream.
 
-Precedent: `BREMIO_AGY_BIN` overrides Antigravity's path. Do the same with
-`BREMIO_OPENCODE_BIN`, resolving through PATH first. On Windows, npm global
-installs produce a `.cmd` shim and no `.exe` — the extension shipped a bug over
-exactly this (`apps/vscode-extension/src/cli-launcher.ts` has the fix and the
-explanation). Reuse that approach; do not re-derive it.
+The **HTTP server** (`opencode serve`) accepted `format: { type: "json_schema",
+schema: {...} }` in `POST /session/:id/message` in an earlier revision. That
+was removed in S1-R3: the default Console/deepseek provider returns **200 OK
+with an empty `parts` array** when it rejects the field — not an exception the
+adapter can catch — so the attempt was pure added latency before the same
+plain-text fallback always fired anyway. The request is plain text with JSON
+instructions embedded, unconditionally, on every call.
+
+The adapter validates the response before yielding `completed`: strips code
+fences and leading prose, parses the remainder as JSON, and checks the result
+is an object. That is the whole check — it does **not** verify
+`schema.required` fields. Field-level correctness is left to the caller: the
+lead-planning path already has a one-shot repair retry
+(`lead-manager.ts::createPlan`) that re-prompts on a schema mismatch, and
+duplicating that check at the adapter layer was found to short-circuit it
+(S1-R3). The review-task path (`quality-gate.ts::parseReviewOutput`) has no
+such retry — a malformed review fails the task outright.
+
+**Verdict: OpenCode is NOT lead-eligible** (`structuredOutput: false`).
+A Team run with OpenCode as lead did pass on 2026-07-21 (S1-T4) — the model
+produced valid `PlanSchema` JSON through the server path. That is evidence the
+mechanism can work on one model on one day, not a guarantee the router can act
+on: nothing in the adapter constrains the output, the empty-response failure
+mode above was found by live debugging rather than by design, and the whole
+mechanism has no repair loop for the lead's own plan format the way
+`lead-manager.ts` provides for its two attempts. Claude and Codex already give
+the lead role a schema constraint enforced by the provider itself
+(`docs/10` §6c: a capability boolean tracks its mechanism, not one good run).
+OpenCode remains a fully capable **worker** — analysis, implementation, test
+and review tasks all use the CLI or server path as before.
+
+### Cancellation
+
+Two paths:
+1. **One-shot CLI:** killing the subprocess stops work. The `ProcessSupervisor`
+   handles this (Windows: `taskkill /T`, POSIX: process group signal).
+2. **HTTP server:** `POST /session/:id/abort` explicitly aborts a running
+   session. The SDK exposes this as `client.session.abort({ path: { id } })`.
+
+The HTTP server path provides cooperative cancellation with confirmed stop — the
+abort endpoint returns a boolean and the server owns the session lifecycle.
+
+### Models
+
+```powershell
+opencode models --verbose        # full model list with metadata
+opencode models <provider>       # filter by provider
+opencode models --refresh        # refresh from models.dev
+```
+
+Each model entry includes:
+- `id`, `providerID`, `name`, `family`
+- `cost`: `input`, `output`, `cache` (with tier pricing)
+- `limit`: `context`, `input`, `output` sizes
+- `capabilities`: `reasoning`, `toolcall`, `attachment`, `temperature`, etc.
+- `variants`: reasoning effort levels (`none`, `low`, `medium`, `high`, `xhigh`, `max`)
+- `status`: `active` or retired
+
+Model ID format: `<provider>/<model>` (e.g. `openai/gpt-5.6-terra`).
+
+**`listModels()`:** returns the full model catalogue. Each model carries its
+own capabilities and variant definitions. The adapter maps `reasoningLevel` to
+`variants` — each model declares which reasoning efforts it supports.
+
+### Binary resolution
+
+```powershell
+(Get-Command opencode).Source  # → C:\...\npm\opencode.ps1
+# npm global install produces three shims:
+#   opencode         (Unix shell script — not used on Windows)
+#   opencode.cmd     (calls %dp0%\node_modules\opencode-ai\bin\opencode.exe)
+#   opencode.ps1     (same)
+```
+
+The `.cmd` shim forwards to:
+`%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe`
+
+**Resolution order:** `BREMIO_OPENCODE_BIN` env var → PATH → default npm
+location. Reuse the `apps/vscode-extension/src/cli-launcher.ts` approach for
+handling the `.cmd` shim on Windows. Same pattern as `BREMIO_AGY_BIN`.
 
 ## Findings
 
-> **S1-T1 fills this in.** One row per question above, each with the command
-> run and what was observed. Anything that could not be determined is recorded
-> as "not available", never as an assumption.
-
 | Question | Verdict | Evidence |
 |---|---|---|
-| Surface | *pending* | |
-| Auth | *pending* | |
-| Workspace targeting | *pending* | |
-| Permission mapping | *pending* | |
-| Streaming shape | *pending* | |
-| Structured output | *pending* | |
-| Cancellation | *pending* | |
-| Models | *pending* | |
-| Binary resolution | *pending* | |
+| Surface | Three surfaces: one-shot `opencode run`, HTTP server `opencode serve`, ACP server `opencode acp`. Adapter uses HTTP server + `@opencode-ai/sdk`. | `opencode --help`, `opencode run --help`, `opencode serve --help`, `opencode acp --help` |
+| Auth | Per-provider credentials stored in `~/.local/share/opencode/auth.json`. Server option: `OPENCODE_SERVER_PASSWORD`. healthCheck: `opencode providers list` exit code. | `opencode providers list`, `opencode providers --help` |
+| Workspace targeting | Respects process cwd by default. Explicit `--dir <path>` flag overrides. Server has per-session workspace. NOT like Antigravity — safe for worktree orchestration. | `opencode run "create PROOF.txt" --dir "$env:TEMP\opencode-workspace-test" --format json --auto` from different cwd → file landed at `--dir` path. Same without `--dir` → file landed in cwd. |
+| Permission mapping | Granular tool-level permissions (`read`, `edit`, `bash`, etc.) with `allow`/`ask`/`deny`. Built-in "plan" agent has `edit: deny`. Custom agents via config or `opencode agent create`. Read-only is enforceable. | `opencode agent list`, `opencode agent create --help`, docs/agents and docs/permissions |
+| Streaming shape | Structured JSON events per line: `step_start`, `step_finish`, `text`, `tool_use`. Token usage + cost on every `step_finish`. Clear terminal event (`reason: "stop"`). File paths in tool metadata. | `opencode run --format json --auto "create PROOF.txt"` |
+| Structured output | **Lead-eligible: NO** (S1-R4). The adapter only checks the response parses as JSON and is an object — it does not enforce `outputSchema.required`, and the earlier `format: json_schema` attempt was removed after the default provider returned empty responses instead of errors. Good enough for a worker's review-task JSON; not a guarantee the router can hand plan authorship to. One-shot CLI cannot constrain output at all. | S1-R3/R4 findings: `validateStructuredOutput()` in `opencode-adapter.ts` |
+| Cancellation | Two paths: (1) subprocess kill via `ProcessSupervisor`, (2) `POST /session/:id/abort` on server for cooperative cancellation with confirmed stop. | `opencode serve` API docs: `POST /session/:id/abort` |
+| Models | Rich model catalogue: `opencode models --verbose`. Each model has cost, limits, capabilities, variants (reasoning effort). Format: `<provider>/<model>`. | `opencode models --verbose` (full output shows 50+ models with detailed metadata) |
+| Binary resolution | npm global install: `.cmd` shim → `node_modules/opencode-ai/bin/opencode.exe`. Resolution: `BREMIO_OPENCODE_BIN` → PATH → default npm location. Reuse cli-launcher pattern for `.cmd` shim. | `(Get-Command opencode).Source`, `Get-Content npm/opencode.cmd`, `Get-Content npm/opencode.ps1` |
 
 ## Resulting capability declaration
 
-Fill in from the findings. Each boolean needs evidence, not optimism — an
-overstated capability sends the router a task the provider cannot do.
-
 ```ts
 {
-  planning: /* ? */,           // lead-eligible only with structuredOutput
-  structuredOutput: /* ? */,
-  repositoryRead: /* ? */,
-  repositoryWrite: /* ? */,
-  shell: /* ? */,
-  testing: /* ? */,            // needs reliable command exit codes
-  browser: /* ? */,
-  vision: /* ? */,
-  resumableSessions: /* ? */,
+  planning: true,              // full CLI capability supports analysis-kind worker tasks
+  structuredOutput: false,     // no schema enforcement, no repair loop — see verdict above (S1-R4)
+  repositoryRead: true,        // reads/writes in cwd or --dir; permission system restricts
+  repositoryWrite: true,       // tool_use events show file writes with filepath
+  shell: true,                 // tool_use with tool:"bash" observed
+  testing: true,               // shell commands return real exit codes
+  browser: false,              // no evidence of browser control
+  vision: false,               // adapter has no interface for image/attachment input
+  resumableSessions: false,    // no session resume API exposed; abort replaces resume
 }
 ```
 
-`testing` deserves the same scrutiny Antigravity got: a test-gate agent must
-surface **real shell exit codes**, because the quality gate is fail-closed on
-them. Prose claiming "tests passed" is not evidence.
+`testing` is `true` because OpenCode executes shell commands through the
+`bash` permission/tool and returns real exit codes. The quality gate's
+test-evidence requirement (exit-code-backed) is satisfied — this is not an
+Antigravity-like prose-only surface.
+
+`planning` stays `true` — it gates worker eligibility for `analysis`-kind
+tasks (`router.ts`'s `capabilities.planning && capabilities.repositoryRead`),
+which is independent of the lead role and unaffected by this decision. Only
+`structuredOutput` changed, because lead eligibility is specifically
+`planning && structuredOutput` (`capabilities.ts`) and the mechanism behind the
+second flag never matched what the boolean promised. See the verdict above for
+the full reasoning.
+
+`vision` is `false` because the `AgentRunRequest` interface defines no
+mechanism for passing images or attachments to the adapter's `startRun`
+method. The underlying model may support vision, but the adapter has no path
+to exercise it.
 
 ## Quota
 

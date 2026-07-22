@@ -132,7 +132,15 @@ export function buildTaskPrompt(plan: Plan, task: Task): string {
     lines.push(
       "This is a READ-ONLY INDEPENDENT REVIEW. Do NOT modify files.",
       "Review the inherited implementation against the acceptance criteria and report every finding.",
-      "Return the structured review object required by the output schema.",
+      "",
+      "Return your review as a JSON object with exactly this structure:",
+      "{",
+      '  "summary": "concise overall assessment of the changes",',
+      '  "findings": [',
+      '    { "severity": "info|warning|blocker", "message": "description", "status": "open|fixed" }',
+      "  ]",
+      "}",
+      "Include the JSON object in a ```json code block so it can be parsed.",
     );
   } else if (readOnly) {
     lines.push(

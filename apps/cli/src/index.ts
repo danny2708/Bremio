@@ -5,6 +5,7 @@ import { pino } from "pino";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
+import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import {
   LeadPlanError,
   PlanValidationError,
@@ -45,12 +46,12 @@ const USAGE = `${c.bold("bremio")} — provider-agnostic orchestrator for AI cod
 ${c.bold("Usage")}
   bremio                                  launch the interactive TUI (needs a terminal)
   bremio tui [--repo <path>]              same, explicitly
-  bremio run --mode single --agent <claude|codex|antigravity> --repo <path> "<prompt>"
-  bremio run --mode team --lead <claude|codex> [--worker <agent>] --repo <path> "<prompt>"
+  bremio run --mode single --agent <agent> --repo <path> "<prompt>"
+  bremio run --mode team --lead <agent> [--worker <agent>] --repo <path> "<prompt>"
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
-  bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
-  bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>]
+  bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
+  bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
   bremio daemon [start|status|stop|restart]   manage the local daemon (HTTP + SSE, loopback)
   bremio update                           how to update the CLI, daemon and extension
   bremio doctor [--json]                  adapter health; --json for a support bundle
@@ -60,9 +61,9 @@ ${c.bold("Usage")}
 
 ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --mode <single|team>    Explicit execution mode. Required for new commands.
-  --agent <agent>         Agent for Single mode: claude, codex, or antigravity.
-  --lead <claude|codex>   Lead for Team mode. Without --mode, implies Team.
-  --worker <agent>        Explicit Team worker (including antigravity).
+  --agent <agent>         Agent for Single mode: claude, codex, antigravity, or opencode.
+  --lead <agent>          Lead for Team mode (capability-gated). Without --mode, implies Team.
+  --worker <agent>        Explicit Team worker (including antigravity and opencode).
   --repo <path>           Target git repository. Required.
   --model <id>            Model for the Single agent or Team lead (optional).
   --reasoning <level>     Single-agent or Team-lead reasoning level.
@@ -91,7 +92,8 @@ ${c.bold("quota")}    backward-compatible alias for capacity
   --db <path>             Override the default AI-Quota-Tray database path.
   --no-refresh            Read last-known data without asking AQT to fetch.
   --aging-after <minutes> Degrade source confidence after this age (default: 15).
-  --stale-after <minutes> Treat older snapshots as unknown (default: 30).`;
+  --stale-after <minutes> Treat older snapshots as unknown (default: 30).
+  --open-usage <agent>    Open the agent's native usage page (codex, claude).`;
 
 function parseCli() {
   return parseArgs({
@@ -117,6 +119,7 @@ function parseCli() {
       "capacity-routing": { type: "boolean", default: false },
       // parseArgs has no `--no-x` negation, so the opt-out is its own flag.
       "no-refresh": { type: "boolean", default: false },
+      "open-usage": { type: "string" },
       out: { type: "string" },
       comparison: { type: "string" },
       json: { type: "boolean", default: false },
@@ -203,12 +206,12 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   if (!parsedMode.success) {
     errors.push("--mode must be 'single' or 'team'");
   }
-  const agentIds = new Set(["claude", "codex", "antigravity"]);
+  const agentIds = new Set(["claude", "codex", "antigravity", "opencode"]);
   if (mode === "single" && !agentIds.has(values.agent ?? "")) {
-    errors.push("Single mode requires --agent 'claude', 'codex', or 'antigravity'");
+    errors.push("Single mode requires --agent 'claude', 'codex', 'antigravity', or 'opencode'");
   }
-  if (mode === "team" && values.lead !== "claude" && values.lead !== "codex") {
-    errors.push("Team mode requires --lead 'claude' or 'codex'");
+  if (mode === "team" && !agentIds.has(values.lead ?? "")) {
+    errors.push(`--lead must be a known agent id: ${[...agentIds].sort().join(", ")}`);
   }
   if (mode === "single" && values.lead) {
     errors.push("--lead is only valid in Team mode; use --agent for Single mode");
@@ -217,7 +220,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     errors.push("--worker is only valid in Team mode");
   }
   if (mode === "team" && values.worker && !agentIds.has(values.worker)) {
-    errors.push("--worker must be 'claude', 'codex', or 'antigravity'");
+    errors.push("--worker must be 'claude', 'codex', 'antigravity', or 'opencode'");
   }
   if (mode === "team" && values.worker === values.lead) {
     errors.push("--worker must be different from --lead");
@@ -275,7 +278,26 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     new ClaudeAdapter(),
     new CodexAdapter(),
     new AntigravityAdapter(),
+    new OpenCodeAdapter(),
   ]);
+
+  // Capability gate for lead role — not a name check, so the next
+  // capability-only provider won't hit the same bug S1-R4 fixed.
+  if (mode === "team" && values.lead) {
+    const leadAdapter = registry.get(values.lead);
+    if (leadAdapter) {
+      const caps = await leadAdapter.getCapabilities();
+      const missing: string[] = [];
+      if (!caps.planning) missing.push("planning");
+      if (!caps.structuredOutput) missing.push("structuredOutput");
+      if (missing.length > 0) {
+        console.error(c.red(`error: --lead '${values.lead}' lacks required capability: ${missing.join(", ")}`));
+        process.exitCode = 2;
+        return;
+      }
+    }
+  }
+
   const capacitySnapshots = mode === "team" && values["capacity-routing"]
     ? readRoutingCapacity(values, capacityTiming)
     : undefined;
@@ -370,7 +392,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     }
 
     const report = await runBremio({
-      leadId: values.lead as "claude" | "codex",
+      leadId: values.lead as string,
       ...(values.worker ? { workerId: values.worker } : {}),
       repoPath,
       prompt,
@@ -472,6 +494,7 @@ async function quotaCommandFromCli(values: Values): Promise<number> {
     ...(timing.agingAfterSeconds !== undefined
       ? { agingAfterSeconds: timing.agingAfterSeconds }
       : {}),
+    ...(values["open-usage"] ? { openUsage: values["open-usage"] } : {}),
   });
 }
 
@@ -677,6 +700,7 @@ async function doctor(): Promise<void> {
     new ClaudeAdapter(),
     new CodexAdapter(),
     new AntigravityAdapter(),
+    new OpenCodeAdapter(),
   ]) {
     const health = await adapter.healthCheck();
     const caps = await adapter.getCapabilities();

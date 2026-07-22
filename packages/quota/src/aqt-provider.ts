@@ -6,12 +6,14 @@ import type {
   QuotaWindow,
 } from "./capacity";
 import { AgentCapacitySnapshotSchema } from "./capacity";
+import { openNativeUsageFor } from "./open-native-usage";
 import {
   readAqtQuota,
   type AqtQuotaSnapshot,
   type ProviderQuota,
   type ReadAqtQuotaOptions,
 } from "./aqt-reader";
+import { ANTIGRAVITY_MODEL_MAP } from "./antigravity-models";
 
 export const AQT_AGENT_IDS = ["claude", "codex", "antigravity"] as const;
 export type AqtAgentId = (typeof AQT_AGENT_IDS)[number];
@@ -30,10 +32,12 @@ export interface CapacityFreshnessOptions {
 export class AqtQuotaProvider implements QuotaProvider {
   readonly id: string;
   readonly #options: AqtQuotaProviderOptions;
+  readonly openNativeUsage: (() => Promise<void>) | undefined;
 
   constructor(options: AqtQuotaProviderOptions) {
     this.id = `aqt:${options.agentId}`;
     this.#options = options;
+    this.openNativeUsage = openNativeUsageFor(options.agentId);
   }
 
   async readSnapshot(): Promise<AgentCapacitySnapshot> {
@@ -68,10 +72,12 @@ export function toAgentCapacitySnapshot(
       agingAfterSeconds,
       source.staleAfterSeconds,
     );
+    const modelId = agentId === "antigravity" ? ANTIGRAVITY_MODEL_MAP[bucket.bucketId] : undefined;
     return {
       id: bucket.bucketId,
       label: bucket.bucketName,
       scope: agentId === "antigravity" ? "model" : "account",
+      ...(modelId ? { modelId } : {}),
       ...(bucket.usedPercent !== undefined ? { usedPercent: bucket.usedPercent } : {}),
       ...(bucket.remainingPercent !== undefined
         ? { remainingPercent: bucket.remainingPercent }

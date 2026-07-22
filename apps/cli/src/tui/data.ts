@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
+import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import type { AgentAdapter, AgentCapabilities, AgentHealth } from "@bremio/adapter-sdk";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
@@ -17,11 +18,12 @@ export const AGENT_LABELS: Record<string, string> = {
   claude: "Claude",
   codex: "Codex",
   antigravity: "Antigravity",
+  opencode: "OpenCode",
 };
 
 /** Fresh adapter instances. Cheap to construct; health work happens on demand. */
 export function createAdapters(): AgentAdapter[] {
-  return [new ClaudeAdapter(), new CodexAdapter(), new AntigravityAdapter()];
+  return [new ClaudeAdapter(), new CodexAdapter(), new AntigravityAdapter(), new OpenCodeAdapter()];
 }
 
 export interface AgentDiagnostic {

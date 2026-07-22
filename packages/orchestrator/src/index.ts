@@ -31,8 +31,17 @@ export {
   topologicalOrder,
   roleForKind,
   permissionForKind,
+  routingInputFromConfig,
+  scoringFromConfig,
   type AssignAgentsOptions,
+  type ScoringConfig,
 } from "./router";
+
+export {
+  loadRoutingConfig,
+  getDefaultRoutingConfig,
+  type RoutingConfig,
+} from "./routing-config";
 
 export {
   DEFAULT_MAX_CONCURRENCY,

@@ -394,9 +394,9 @@ telemetry and are never converted into quota percentage.
 - [x] Apply soft penalties to unknown/low-confidence/stale data. The default
       10-point penalty cannot erase the established 25-point task-role
       preference; trusted critical capacity can trigger a healthy fallback.
-- [ ] Select Antigravity capacity by candidate model and Codex capacity by all
+- [x] Select Antigravity capacity by candidate model and Codex capacity by all
       applicable rate-limit windows. The evaluator implements both rules and
-      Codex is wired; Antigravity remains blocked on verified model-id mapping.
+      Codex is wired; Antigravity is now mapped through `antigravity-models.ts`.
 
 The safety router is opt-in through `bremio run --capacity-routing`. This is a
 calibration guard: normal runs retain the proven deterministic router until the

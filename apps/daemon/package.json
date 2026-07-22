@@ -12,6 +12,7 @@
     "@bremio/adapter-antigravity": "workspace:*",
     "@bremio/adapter-claude": "workspace:*",
     "@bremio/adapter-codex": "workspace:*",
+    "@bremio/adapter-opencode": "workspace:*",
     "@bremio/adapter-sdk": "workspace:*",
     "@bremio/orchestrator": "workspace:*",
     "@bremio/protocol": "workspace:*",

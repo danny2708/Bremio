@@ -9,6 +9,16 @@ import {
   type CapacityRoutingPolicyInput,
 } from "@bremio/quota";
 import { capabilityHolds } from "./validator";
+import type { RoutingConfig } from "./routing-config";
+
+export interface ScoringConfig {
+  capabilityWeight: number;
+  quotaWeight: number;
+  taskFitWeight: number;
+  qualityWeight: number;
+  speedWeight: number;
+  preferenceWeight: number;
+}
 
 export interface AssignAgentsOptions {
   capabilitiesByAgent?: ReadonlyMap<string, AgentCapabilities>;
@@ -16,6 +26,8 @@ export interface AssignAgentsOptions {
   capacityPolicy?: CapacityRoutingPolicyInput;
   /** Provider-confirmed model id selected for each candidate agent. */
   modelByAgent?: ReadonlyMap<string, string>;
+  /** When present, enables weighted scoring instead of the deterministic path. */
+  scoring?: ScoringConfig;
 }
 
 export class CapacityRoutingError extends Error {
@@ -37,8 +49,9 @@ const TASK_ROLE_PREFERENCE_STEP = 25;
  * every executable task (implementation/test/review/documentation/other) goes
  * to the other registered provider — the "worker". A delegation guarantee then
  * ensures at least one task runs on the worker, so the "hand off ≥1 task to a
- * DIFFERENT agent" criterion holds for any plan shape. Scoring/quota-aware
- * routing is Phase 4.
+ * DIFFERENT agent" criterion holds for any plan shape.
+ *
+ * When `options.scoring` is set, the weighted scoring path is used instead.
  */
 export function assignAgents(
   plan: Plan,
@@ -47,6 +60,11 @@ export function assignAgents(
   options: AssignAgentsOptions = {},
 ): Map<string, string> {
   const policy = resolveCapacityRoutingPolicy(options.capacityPolicy);
+
+  if (options.scoring) {
+    return assignScored(plan, leadId, workerId, options, policy);
+  }
+
   const assign = new Map<string, string>();
   for (const t of plan.tasks) {
     if (t.kind === "analysis") {
@@ -89,6 +107,161 @@ export function assignAgents(
     }
   }
   return assign;
+}
+
+function assignScored(
+  plan: Plan,
+  leadId: string,
+  workerId: string,
+  options: AssignAgentsOptions,
+  policy: CapacityRoutingPolicy,
+): Map<string, string> {
+  const scoring = options.scoring!;
+  const agentIds = [leadId, workerId];
+  const assign = new Map<string, string>();
+
+  for (const task of plan.tasks) {
+    const best = pickBest(task, assign, agentIds, leadId, options, policy, scoring);
+    assign.set(task.id, best.agentId);
+  }
+
+  const someDelegated = [...assign.values()].some((a) => a !== leadId);
+  if (!someDelegated && workerId !== leadId) {
+    const last = plan.tasks[plan.tasks.length - 1];
+    const workerAssessment = assessmentFor(workerId, options, policy);
+    const trustedCapacityAvoidance = workerAssessment?.trusted === true &&
+      workerAssessment.scoreAdjustment < 0;
+    if (
+      last &&
+      !trustedCapacityAvoidance &&
+      isCapacityEligible(workerId, last, leadId, options, policy)
+    ) {
+      assign.set(last.id, workerId);
+    }
+  }
+
+  return assign;
+}
+
+interface AgentScore {
+  agentId: string;
+  score: number;
+  hardExcluded: boolean;
+  reserveBlocked: boolean;
+  reason: string;
+}
+
+function pickBest(
+  task: Task,
+  assign: ReadonlyMap<string, string>,
+  agentIds: readonly string[],
+  leadId: string,
+  options: AssignAgentsOptions,
+  policy: CapacityRoutingPolicy,
+  scoring: ScoringConfig,
+): AgentScore {
+  const totalWeight =
+    scoring.capabilityWeight +
+    scoring.quotaWeight +
+    scoring.taskFitWeight +
+    scoring.qualityWeight +
+    scoring.speedWeight +
+    scoring.preferenceWeight;
+
+  const candidates = agentIds.map((agentId) => {
+    const assessment = assessmentFor(agentId, options, policy);
+    const caps = options.capabilitiesByAgent?.get(agentId);
+    const reserveBlocked = isLeadReserveBlocked(agentId, task, leadId, assessment, policy);
+
+    if (caps && !supportsTask(agentId, task, options)) {
+      return { agentId, score: Number.NEGATIVE_INFINITY, hardExcluded: true, reserveBlocked, reason: "lacks required capability" };
+    }
+    if (assessment?.hardExcluded) {
+      return { agentId, score: Number.NEGATIVE_INFINITY, hardExcluded: true, reserveBlocked, reason: assessment.reason };
+    }
+
+    // Quota enters scoring as a coarse status band, not the graduated
+    // `assessment.scoreAdjustment` the deterministic path uses. That means the
+    // `unknownQuotaPenalty` / `criticalQuotaPenalty` knobs in config/routing.yaml
+    // are NOT yet consumed here — the two literals below (self-review -100,
+    // critical -40) are the hard rules from docs/08 §S2-T3. Wiring the graduated
+    // penalty through belongs to the sprint that first turns scoring on; until
+    // then a stale exhausted agent scores 0 rather than a soft penalty, which is
+    // harsher than the deterministic path but still never a hard exclusion.
+    const quotaScore = scoreQuota(assessment);
+    const capabilityScore = 100;
+    const taskFitScore = scoreTaskFit(agentId, task, leadId);
+    const qualityScore = 50;
+    const speedScore = 50;
+    const preferenceScore = scorePreference(agentId, task);
+
+    let score =
+      (capabilityScore * scoring.capabilityWeight +
+        quotaScore * scoring.quotaWeight +
+        taskFitScore * scoring.taskFitWeight +
+        qualityScore * scoring.qualityWeight +
+        speedScore * scoring.speedWeight +
+        preferenceScore * scoring.preferenceWeight) /
+      totalWeight;
+
+    if (task.kind === "review") {
+      for (const dep of task.dependencies) {
+        if (assign.get(dep) === agentId) {
+          score -= 100;
+          break;
+        }
+      }
+    }
+
+    if (assessment?.status === "critical") {
+      score -= 40;
+    }
+
+    return { agentId, score, hardExcluded: false, reserveBlocked, reason: assessment?.reason ?? "unknown" };
+  });
+
+  const eligible = candidates
+    .filter((c) => !c.hardExcluded && !c.reserveBlocked)
+    .sort((a, b) => b.score - a.score);
+
+  if (eligible.length > 0) return eligible[0]!;
+
+  const detail = candidates
+    .map((c) => {
+      if (c.reserveBlocked) return `${c.agentId} is held for the ${policy.reserveLeadCapacityPercent}% lead reserve`;
+      if (c.hardExcluded) return `${c.agentId}: ${c.reason}`;
+      return `${c.agentId}: ${c.reason}`;
+    })
+    .join("; ");
+  throw new CapacityRoutingError(task.id, detail);
+}
+
+function scoreQuota(assessment: CapacityAssessment | undefined): number {
+  if (!assessment) return 50;
+  switch (assessment.status) {
+    case "healthy": return 100;
+    case "limited": return 60;
+    case "critical": return 40;
+    case "exhausted": return 0;
+    case "unknown": return 50;
+  }
+}
+
+function scoreTaskFit(agentId: string, task: Task, leadId: string): number {
+  const isLead = agentId === leadId;
+  switch (task.kind) {
+    case "analysis": return isLead ? 100 : 30;
+    case "implementation": return isLead ? 50 : 100;
+    case "test": return isLead ? 60 : 80;
+    case "documentation": return isLead ? 40 : 80;
+    case "other": return isLead ? 40 : 80;
+    case "review": return 70;
+  }
+}
+
+function scorePreference(agentId: string, task: Task): number {
+  if (task.preferredAgents.length === 0) return 50;
+  return task.preferredAgents.includes(agentId) ? 100 : 0;
 }
 
 function chooseAgent(
@@ -243,6 +416,14 @@ export function roleForKind(kind: TaskKind): AgentRole {
     case "other":
       return "implementer";
   }
+}
+
+export function routingInputFromConfig(config: RoutingConfig): CapacityRoutingPolicyInput {
+  return { ...config.capacityPolicy };
+}
+
+export function scoringFromConfig(config: RoutingConfig): ScoringConfig {
+  return { ...config.scoring };
 }
 
 export function permissionForKind(kind: TaskKind): Permission {

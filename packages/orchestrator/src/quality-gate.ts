@@ -3,7 +3,7 @@ import type { Finding, Plan, Task, TaskResult } from "@bremio/protocol";
 import { extractJsonObject } from "./lead-manager";
 import type { CollectedRun } from "./stream";
 
-const ReviewOutputSchema = z.object({
+export const ReviewOutputSchema = z.object({
   summary: z.string().min(1),
   findings: z.array(
     z.object({

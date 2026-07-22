@@ -32,6 +32,7 @@ export {
   type CapacityFreshnessOptions,
   type AqtQuotaProviderOptions,
 } from "./aqt-provider";
+export { openNativeUsageFor } from "./open-native-usage";
 export {
   defaultAqtEndpointPath,
   describeAqtService,

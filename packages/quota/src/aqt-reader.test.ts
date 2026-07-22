@@ -105,6 +105,27 @@ describe("readAqtQuota", () => {
     expect(codex?.status).toBe("healthy");
   });
 
+  it("drops a retired Antigravity bucket so its model key never routes", async () => {
+    const databasePath = await fixture();
+    const db = new DatabaseSync(databasePath);
+    db.exec(`
+      INSERT INTO providers VALUES
+        ('antigravity', 'Antigravity', 1, 'ok', 'local_official', 'Antigravity language server', 1990, NULL);
+      INSERT INTO quota_snapshots VALUES
+        ('ag-active', 'antigravity', 'gemini-pro-high', 'Gemini Pro High', NULL, 82, NULL, NULL, NULL, 1980,
+         'Antigravity language server', 'local_official', 'normal'),
+        ('ag-retired', 'antigravity', 'gemini-flash-high', 'Gemini Flash High', NULL, NULL, NULL, NULL, NULL, 1990,
+         'Antigravity language server', 'local_official', 'retired');
+    `);
+    db.close();
+
+    const snapshot = readAqtQuota({ databasePath, staleAfterSeconds: 300, now: 2000 });
+    const antigravity = snapshot.providers.find((provider) => provider.providerId === "antigravity");
+    expect(antigravity?.buckets.map((bucket) => bucket.bucketId)).toEqual(["gemini-pro-high"]);
+    // The retired bucket is gone — its modelId would never be populated.
+    expect(antigravity?.buckets.find((bucket) => bucket.bucketId === "gemini-flash-high")).toBeUndefined();
+  });
+
   it("still fails a provider closed once contact itself goes stale", async () => {
     const databasePath = await fixture();
     const db = new DatabaseSync(databasePath);

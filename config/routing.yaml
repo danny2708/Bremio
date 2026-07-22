@@ -1,0 +1,52 @@
+# Capacity thresholds determine the boundary between healthy / limited / critical
+# based on the agent's effective remaining percentage across applicable quota
+# windows. These match the defaults in packages/quota/src/routing-policy.ts.
+capacityPolicy:
+  healthyRemainingPercentMin: 50
+  limitedRemainingPercentMin: 20
+  criticalRemainingPercentMin: 5
+  avoidCriticalAgents: true
+  prohibitExhaustedAgents: true
+  reserveLeadCapacityPercent: 15
+  unknownQuotaPenalty: 10
+  criticalQuotaPenalty: 40
+
+# Scoring weights for the weighted router (S2-T3). Each weight is a percentage
+# point contribution to the final score; the sum should be 100.
+scoring:
+  capabilityWeight: 30
+  quotaWeight: 25
+  taskFitWeight: 20
+  qualityWeight: 15
+  speedWeight: 5
+  preferenceWeight: 5
+
+# Tiers map a reasoning requirement to a per-adapter model id. Each adapter
+# maps its own model independently — a tier never names one provider's model
+# globally. Unknown adapters or reasoningRequirements are rejected at load time.
+tiers:
+  trivial:
+    claude: claude-sonnet-4-20250514
+    codex: gpt-5.6-terra
+    antigravity: claude-sonnet-4-20250514
+    opencode: deepseek-chat
+  low:
+    claude: claude-sonnet-4-20250514
+    codex: gpt-5.6-terra
+    antigravity: claude-sonnet-4-20250514
+    opencode: deepseek-chat
+  medium:
+    claude: claude-opus-4-20250514
+    codex: gpt-5.6-zeus
+    antigravity: claude-opus-4-20250514
+    opencode: deepseek-chat
+  high:
+    claude: claude-opus-4-20250514
+    codex: gpt-5.6-zeus
+    antigravity: claude-opus-4-20250514
+    opencode: deepseek-reasoner
+  critical:
+    claude: claude-opus-4-20250514
+    codex: gpt-5.6-zeus
+    antigravity: claude-opus-4-20250514
+    opencode: deepseek-reasoner

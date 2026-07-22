@@ -53,6 +53,7 @@ describe("agent identity", () => {
     expect(colorForAgent("claude")).toBe("#c9864a");
     expect(colorForAgent("codex")).toBe("#34a77b");
     expect(colorForAgent("antigravity")).toBe("#7c83f6");
+    expect(colorForAgent("opencode")).toBe("#a071d1");
   });
 
   it("never reuses the brand blue for a provider", () => {

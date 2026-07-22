@@ -195,6 +195,176 @@ verified section in the same shape as the Antigravity one), `docs/06-roadmap.md`
 
 ---
 
+# Sprint 1R — Remediation (added 2026-07-21 after review)
+
+Sprint 1 shipped working code and found a genuinely hard bug (the Windows
+stdin-pipe hang). Review found three defects it could not have caught, fixed in
+`fix(adapter-opencode): stop damaging prompts, cancels and model ids`, plus
+three that needed real work (S1-R1 through S1-R3). Their execution surfaced a
+fourth: S1-R3 quietly changed the `structuredOutput` mechanism without moving
+the boolean, which S1-R4 resolves by deciding OpenCode is a worker, not a lead
+candidate. All four are here.
+
+## S1-R1 — Replace the hand-written provider fake with recorded reality
+
+**Goal.** Tests that fail when OpenCode's actual response shape changes.
+
+**Why.** `test-fixtures/fake-opencode.mjs` is hand-written, so it asserts the
+adapter's own assumptions. The whole suite stayed green through three rounds of
+live debugging in which the adapter could not parse a single real response —
+first `data.info.structured_output`, then `info.text`, and only then the real
+`parts[].text`. A fixture that cannot be wrong cannot catch a bug.
+
+**Files.** `packages/adapter-opencode/test-fixtures/`,
+`packages/adapter-opencode/src/opencode-adapter.test.ts`, and a small recording
+script if that helps.
+
+**Success criteria.**
+- Real captured output is committed as fixture data: one `--format json` CLI
+  stream, and one `POST /session/:id/message` response body from a live
+  `opencode serve`. Redact anything user-specific; keep the shape byte-exact.
+- The event mapper and the server-response parser are tested **against those
+  recorded bytes**, not against the fake.
+- The **server/lead path has tests at all** — today it has none, which is why
+  the path that broke three times was the one nothing covered.
+- The existing fake may stay for spawn mechanics, exit codes and cancellation.
+  It must no longer be the only source of truth about a response shape.
+- Verify each new test can fail: change the parser to read the wrong field and
+  confirm it goes red. Note this in `SPRINT-LOG.md`.
+
+**Commit.** `test(adapter-opencode): parse recorded provider output, not a guess`
+
+## S1-R2 — Make the structured-output claim true or drop it
+
+**Goal.** `structuredOutput` describes a guarantee the adapter actually provides.
+
+**Why.** The adapter declares `structuredOutput: true` and `planning: true`,
+which makes OpenCode lead-eligible. But S1-T4 **removed** the `format:
+json_schema` request after the default provider rejected it, so nothing
+constrains the output any more — the lead returns valid plan JSON because a
+particular free model happened to comply when asked in prose. That is an
+observation about one model, not a property of the adapter, and `docs/10` §6c
+says the boolean moves with its mechanism.
+
+**Files.** `packages/adapter-opencode/src/opencode-adapter.ts`, its tests,
+`docs/04-adapters.md`, `docs/09-opencode-adapter.md`.
+
+**Success criteria.** Pick **one** and say in `SPRINT-LOG.md` which and why:
+
+- **(a) Earn the claim.** The adapter validates the final output against
+  `req.outputSchema` and fails the run when it does not match, so a caller that
+  gets a completed run is guaranteed schema-valid output. If the
+  `@opencode-ai/sdk` structured-output path works where the raw HTTP `format`
+  field did not, use it. `structuredOutput` stays `true`, and a test proves a
+  non-conforming response produces a **failed** outcome, not a completed one.
+- **(b) Drop the claim.** `structuredOutput: false`, OpenCode becomes a worker
+  like Antigravity, and the capability contract excludes it from lead with no
+  name check anywhere. `docs/04` and `docs/09` say so plainly.
+
+Either way: `vision: true` currently has no probe behind it — verify it or set
+it `false`. And `docs/09`'s "Eligible to be the lead" must match the outcome.
+
+**Commit.** `fix(adapter-opencode): make the structured-output claim honest`
+
+## S1-R3 — Settle the shared review-prompt change
+
+**Goal.** Decide whether the `buildTaskPrompt` change stays, on evidence.
+
+**Why.** S1-T4 was a docs-only task. It edited
+`packages/orchestrator/src/plan-schema.ts`, changing the **review prompt for
+every provider** so that OpenCode's model would emit parseable findings. It may
+well be an improvement — the old text referenced an "output schema" it never
+showed. But it was untested, unrecorded, and it silently changed Claude's and
+Codex's review behaviour to fix a third provider's problem.
+
+**Files.** `packages/orchestrator/src/plan-schema.ts` and its test.
+
+**Success criteria.**
+- A test asserts the review prompt states the required JSON shape, so the
+  contract between `buildTaskPrompt` and `parseReviewOutput` in
+  `quality-gate.ts` is pinned rather than incidental.
+- The change is verified against **Claude and Codex** reviews, not only
+  OpenCode — one real Team run each, gate passing, evidence in `SPRINT-LOG.md`.
+- If either regresses, make the extra instruction provider-conditional or revert
+  it. Do not leave a cross-provider change resting on one provider's evidence.
+
+**Commit.** `test(orchestrator): pin the review prompt to the parser's contract`
+
+## S1-R4 — Make OpenCode worker-only, for real, everywhere
+
+**Goal.** `structuredOutput: false` for OpenCode, and every surface that
+currently accepts `--lead opencode` rejects it through the capability
+contract — not because its name was removed from a list, because it never
+belonged on that list next to a name check in the first place.
+
+**Why.** S1-R2 offered two honest options — earn the `structuredOutput: true`
+claim, or drop it — and S1-R3 landed a third, undocumented one: it removed the
+`format: json_schema` attempt entirely and simplified validation to "is this
+parseable JSON," while leaving the boolean at `true`. Decision (2026-07-22):
+drop it. OpenCode's mechanism has no schema enforcement and no repair loop the
+way `lead-manager.ts` gives Claude/Codex two attempts at a plan; S1-R3 also
+found the default provider returns **200 OK with an empty response** instead of
+an error when it rejects a schema constraint, which is a bad property to build
+lead trust on regardless of how the fallback is wired. Claude and Codex already
+cover the lead role with a schema constraint their own provider enforces.
+OpenCode stays a fully capable **worker** — this changes nothing about
+implementer, test, or review task assignment.
+
+Separately, `apps/cli/src/index.ts`'s `--lead` validation
+(`errors.push("Team mode requires --lead 'claude', 'codex', or 'opencode'")`)
+and `scripts/provider-smoke.ts`'s `LeadId` type both hardcode `opencode` into
+a lead-name list. This is exactly what S1-T3 committed to not doing
+("`--lead opencode` is rejected by the existing capability contract, **not**
+by a name check") — the commit that added OpenCode broadly merged "known
+agent id" with "lead-eligible agent id" into one set. Fix the mechanism, not
+just the boolean, or the next capability-only provider hits the same bug.
+
+**Files.**
+- `packages/adapter-opencode/src/opencode-adapter.ts` — flip
+  `structuredOutput` to `false`; comment states the mechanism gap, not just
+  the value.
+- `packages/adapter-opencode/src/opencode-adapter.test.ts` — capabilities test
+  now expects `structuredOutput === false`.
+- `apps/cli/src/opencode-registration.test.ts` — rename/update the
+  "lead-eligible capabilities" test to assert the opposite.
+- `apps/cli/src/index.ts` — the `--lead` id check stays a coarse "is this a
+  known agent" guard using the general `agentIds` set (typo protection,
+  message no longer enumerates providers by name); add a **separate**
+  capability-driven check after `registry` is built (`registry.get(leadId)!
+  .getCapabilities()`, requiring `planning && structuredOutput`) that produces
+  a clear error naming which capability is missing. `--worker opencode` is
+  untouched — workers aren't capability-gated at the CLI layer.
+- `scripts/provider-smoke.ts` — narrow `type LeadId` to `"claude" | "codex"`;
+  update `--lead` parsing and its error message; `AgentId`/`--agent`/`--worker`
+  parsing keep accepting `opencode`.
+- `docs/04-adapters.md`, `docs/06-roadmap.md`, `docs/09-opencode-adapter.md` —
+  already corrected directly (2026-07-22, this task's doc half). Confirm the
+  code matches what they now say; do not re-word them.
+
+**Success criteria.**
+- `caps.structuredOutput` is `false` for OpenCode; `caps.planning` stays `true`.
+- `bremio run --mode team --lead opencode ...` is rejected with a message that
+  names the missing capability, not "unknown agent."
+- `bremio run --mode team --worker opencode ...` still works.
+- `pnpm smoke:providers --lead opencode` fails to parse its arguments (typed
+  out of `LeadId`) rather than attempting a run.
+- `grep -rn '"claude", "codex", "opencode"' apps/ scripts/` finds no
+  lead-context match (worker/agent-listing matches are fine).
+- `corepack pnpm doctor` (or the CLI's doctor output) shows OpenCode
+  `lead-eligible: no`.
+
+**Tests.**
+1. Capability test asserts `structuredOutput: false`.
+2. CLI test: `--mode team --lead opencode` produces the capability error, not
+   a silent pass-through.
+3. CLI test: `--mode team --worker opencode --lead codex` still validates.
+4. `provider-smoke.ts` type-level: confirm (via a quick manual invocation, not
+   a new unit test) that `--lead opencode` throws before any process spawns.
+
+**Commit.** `fix(opencode): stop treating opencode as lead-eligible`
+
+---
+
 # Sprint 2 — Routing completion
 
 Closes `docs/05` §4A residue and §4C. The router today is the Phase-1
