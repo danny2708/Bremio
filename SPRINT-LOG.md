@@ -561,3 +561,36 @@ adapters, worker-only Antigravity/OpenCode, TUI, daemon, extension, parallel
 scheduler, completed Sprint 2 capacity/routing work, current process-tree
 guarantee, local-artifact installation, dropped Jan direction, and remaining
 Sprint 3–5 work.
+
+---
+
+## S3-T1 — Compute net gain against the single-agent baseline
+
+**Done:** Added `packages/orchestrator/src/net-gain.ts` and exported
+`computeNetGain` from `@bremio/orchestrator`. It joins run summaries to task
+and coordination ledger entries by `runId`, compares one objectively verified
+Team run with every objectively verified Single run carrying the same
+`comparisonId`, and chooses the cheapest fully measured Single run as the
+baseline. The measured equation is provider-reported USD only:
+
+`netGainUsd = (baselineCostUsd - multiAgentTaskCostUsd) - orchestrationCostUsd`.
+
+Every `scope:"coordination"` entry is included regardless of kind, so planning,
+aggregation, handoff, and escalation retry costs cannot disappear from the
+calculation when recorded. Multiple Team runs are never silently averaged or
+ranked; the caller must identify `multiRunId`.
+
+**Honesty boundary:** Any absent task/coordination entry, missing `costUsd`,
+missing or unverified Single baseline, unverified Team outcome, or ambiguous
+Team selection returns `status:"unknown"` with a blocker naming the exact run
+or ledger entry. Token counts and subscription percentages are never converted
+to cost, and a partially measured comparison never produces a number.
+
+**Tests:** Added the four required cases: complete data computes the expected
+value; one missing coordination cost returns a specific unknown; no Single
+baseline returns unknown; and multiple Single runs select the cheapest verified
+baseline rather than an average. Focused tests passed 4/4. Full
+`corepack pnpm release:check` passed typecheck, 355/355 tests, build, and clean
+packed installation.
+
+**Deviations:** None.

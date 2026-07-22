@@ -90,6 +90,13 @@ export {
 } from "./ledger";
 
 export {
+  computeNetGain,
+  type KnownNetGain,
+  type UnknownNetGain,
+  type NetGainResult,
+} from "./net-gain";
+
+export {
   DEFAULT_CALIBRATION_POLICY,
   evaluateCalibrationReadiness,
   resolveCalibrationPolicy,
