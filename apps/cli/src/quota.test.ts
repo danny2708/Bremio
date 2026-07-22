@@ -100,20 +100,51 @@ describe("Capacity alerts", () => {
   });
 });
 
-describe("quotaCommand", () => {
-  it("returns last-known data when called with a not-live service", async () => {
-    const databasePath = await fixtureDatabase();
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+// Strip ANSI colour so assertions match the words, not the escape codes.
+const stripAnsi = (s: string): string => s.replace(/\[[0-9;]*m/g, "");
 
-    try {
-      const code = quotaCommand(
-        { databasePath },
-        { state: "not-published", error: "process not running" },
-      );
-      expect(code).toBe(0);
-      expect(logSpy).toHaveBeenCalled();
-    } finally {
-      logSpy.mockRestore();
-    }
+/** Run quotaCommand, capturing everything it prints as one plain-text blob. */
+function captureQuota(
+  options: Parameters<typeof quotaCommand>[0],
+  service?: Parameters<typeof quotaCommand>[1],
+): { code: number; output: string } {
+  const lines: string[] = [];
+  const logSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  });
+  try {
+    const code = quotaCommand(options, service);
+    return { code, output: stripAnsi(lines.join("\n")) };
+  } finally {
+    logSpy.mockRestore();
+  }
+}
+
+describe("quotaCommand", () => {
+  it("renders the unavailable state with its reason, never a blank row", async () => {
+    // The fixture only has a codex provider row, so claude and antigravity come
+    // back unavailable — exactly the state that must look unavailable, not blank.
+    const databasePath = await fixtureDatabase();
+    const { code, output } = captureQuota({ databasePath });
+
+    expect(code).toBe(0);
+    // Both unavailable providers are named and explicitly flagged, not omitted.
+    expect(output).toContain("Claude");
+    expect(output).toContain("Antigravity");
+    expect(output).toContain("SOURCE UNAVAILABLE");
+    // No window means an explicit "none" line, not a fabricated percentage.
+    expect(output).toContain("no quota windows available");
+  });
+
+  it("labels the numbers as last-known when the source is not live", async () => {
+    const databasePath = await fixtureDatabase();
+    const { code, output } = captureQuota(
+      { databasePath },
+      { state: "not-published", error: "process not running" },
+    );
+
+    expect(code).toBe(0);
+    expect(output).toContain("NOT LIVE");
+    expect(output).toContain("last-known");
   });
 });

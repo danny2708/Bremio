@@ -499,3 +499,35 @@ surface in both CLI and TUI:
 timeout — worktree dependency bases). No regressions.
 
 **Deviations:** None.
+
+---
+
+## Sprint 2 audit (Claude, 2026-07-22)
+
+Independent review of S2-T1..T4 before merge to `main`. Machine gate: typecheck
+clean; full suite green except one pre-existing Windows flaky timeout
+(`process-supervisor` "terminates a single spawned process") that passes in
+isolation — not a Sprint 2 regression. Three fixes applied:
+
+- **S2-T4 tests did not cover two of the three required criteria.** The
+  committed `quotaCommand` test asserted only `code === 0` and
+  `logSpy.toHaveBeenCalled()` — it never checked that an unavailable provider
+  renders its unavailable state (criterion 1) or that last-known data is
+  labelled as such (criterion 3). The production code was correct; the tests
+  were self-confirming. Replaced with two assertions on captured output
+  (`SOURCE UNAVAILABLE` + named providers + explicit no-windows line; `NOT LIVE`
+  + `last-known`), both verified red when the corresponding strings are broken.
+  The S2-T4 "Deviations: None" above was therefore inaccurate — required test 1
+  was missing and test 3 was under-asserted.
+- **S2-T3 left a dead `loadRoutingConfig` import** in `router.ts` (only the
+  `RoutingConfig` type was used). Removed.
+- **S2-T3 scoring path does not consume the config quota penalties.**
+  `pickBest` scores quota by a coarse status band and hardcodes the two docs/08
+  hard rules (-100 self-review, -40 critical); it does not read
+  `unknownQuotaPenalty` / `criticalQuotaPenalty` from `config/routing.yaml`, nor
+  the graduated `assessment.scoreAdjustment` the deterministic path uses. The
+  S2-T3 note above ("applies regular scoreAdjustment (the unknownQuotaPenalty
+  from capacity policy)") does not match the code. The safety property holds
+  (stale/unknown never hard-excludes), and the path is dormant (opt-in, no live
+  caller), so no formula change — added a comment marking the knobs as unwired
+  for the sprint that turns scoring on.

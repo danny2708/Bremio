@@ -9,7 +9,7 @@ import {
   type CapacityRoutingPolicyInput,
 } from "@bremio/quota";
 import { capabilityHolds } from "./validator";
-import { loadRoutingConfig, type RoutingConfig } from "./routing-config";
+import type { RoutingConfig } from "./routing-config";
 
 export interface ScoringConfig {
   capabilityWeight: number;
@@ -180,6 +180,14 @@ function pickBest(
       return { agentId, score: Number.NEGATIVE_INFINITY, hardExcluded: true, reserveBlocked, reason: assessment.reason };
     }
 
+    // Quota enters scoring as a coarse status band, not the graduated
+    // `assessment.scoreAdjustment` the deterministic path uses. That means the
+    // `unknownQuotaPenalty` / `criticalQuotaPenalty` knobs in config/routing.yaml
+    // are NOT yet consumed here — the two literals below (self-review -100,
+    // critical -40) are the hard rules from docs/08 §S2-T3. Wiring the graduated
+    // penalty through belongs to the sprint that first turns scoring on; until
+    // then a stale exhausted agent scores 0 rather than a soft penalty, which is
+    // harsher than the deterministic path but still never a hard exclusion.
     const quotaScore = scoreQuota(assessment);
     const capabilityScore = 100;
     const taskFitScore = scoreTaskFit(agentId, task, leadId);
