@@ -358,13 +358,20 @@ describe("runBremio end-to-end (mock adapters)", () => {
 
     const after = await readLedger(ledgerPathFor(repo));
     const added = after.slice(before.length);
-    expect(added).toHaveLength(1);
+    expect(added).toHaveLength(2);
     expect(added[0]).toMatchObject({
       scope: "coordination",
       provider: "claude",
       kind: "planning",
       status: "failed",
       usage: { inputTokens: 7, outputTokens: 1 },
+    });
+    expect(added[1]).toMatchObject({
+      scope: "run",
+      flowMode: "multi-agent",
+      status: "failed",
+      qualityGatePassed: false,
+      outcomeVerified: false,
     });
   });
 });

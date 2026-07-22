@@ -663,3 +663,43 @@ outside-sandbox `corepack pnpm release:check` passed typecheck, 362/362 tests,
 build, and clean packed installation.
 
 **Deviations:** None.
+
+---
+
+## S3-T4 — Collect paired evidence in one command
+
+**Done:** Added `bremio compare --repo <path> "<prompt>"` with optional
+`--agent`, `--lead`, and `--worker` selection. The command generates one shared
+`comparisonId`, refuses a dirty target before either provider starts, and
+executes the existing `runSingleAgent` and `runBremio` flows rather than
+duplicating either path.
+
+The Single baseline runs first in a disposable detached worktree at the
+captured target `HEAD`; its code changes are intentionally discarded because
+this command collects evidence, not a merge candidate. Its ledger stays local
+until Team has started from the same unchanged target commit, preventing the
+S3-T2 kill-switch from consuming the new baseline and replacing the Team side
+with a second Single run. The Single ledger is then imported into the target
+ledger, producing two run summaries with the shared comparison id and their
+mode-appropriate objective outcomes. A second target snapshot blocks Team if
+the base tree drifted while Single was running.
+
+**Visibility and cancellation:** The CLI prints Single and Team side by side,
+including measured net gain or an explicit unknown reason. Each side has its
+own abort controller; cancelling Single does not pre-cancel Team. Team planning
+failures and cancellations now also persist an objective negative run summary,
+so interrupted comparisons cannot silently lose one side of their evidence.
+
+**Tests:** Added exactly the three required integration cases through the real
+orchestrator functions: both summaries share the generated id and objective
+outcome; a dirty tree is rejected before any adapter request or Bremio state is
+created; and cancelling Single leaves an honest cancelled summary while Team
+finishes coherently. Focused compare/run suites passed 11/11. The Sprint 3
+`corepack pnpm release:check` passed outside the managed sandbox: typecheck,
+365/365 tests across 42 files (including 13/13 Windows process-supervisor
+tests), build, and clean packed installation.
+
+**Deviations:** `runBremio` gained a run-scope negative summary for planning
+failure/cancellation. This is required by the stated cancellation-coherence
+criterion and fixes a pre-existing evidence gap; it does not change execution
+or retry behavior.

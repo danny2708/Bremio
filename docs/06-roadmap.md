@@ -9,17 +9,18 @@ dashboard/quota/parallelism before the core loop runs.
 distributable npm tarball contains the bundled CLI/TUI and daemon; the VS Code
 extension ships as a local VSIX. Four adapters are registered: lead-capable
 Claude/Codex plus worker-only Antigravity/OpenCode. `pnpm release:check`
-typechecks, runs 362 tests, builds, packs, installs into a clean temporary
+typechecks, runs 365 tests, builds, packs, installs into a clean temporary
 project, and exercises the installed version/help/doctor commands. A separate
 fresh-profile E2E verifies daemon startup, authentication, persistence,
 restart, and diagnostics. Real-provider smoke remains explicit because it
 consumes quota.
 
-The next product milestone is evidence, not more surface area: net gain is now
-computed and reported fail-closed, so the next step is collecting matched
-Single/Team comparisons before deciding whether Auto routing has positive ROI.
-Parallel execution, TUI, daemon, and editor integration have already shipped
-in the alpha; light-theme panel polish and automatic decisions remain open.
+The next product milestone is evidence, not more surface area: net gain is
+computed and reported fail-closed, and `bremio compare` now collects matched
+Single/Team samples from one clean commit. The next step is running enough real
+pairs to satisfy calibration before Auto routing may make decisions. Parallel
+execution, TUI, daemon, and editor integration have already shipped in the
+alpha; light-theme panel polish and automatic decisions remain open.
 
 ## Execution modes — manual before automatic
 
@@ -174,8 +175,8 @@ controlled runs. `bremio stats` evaluates configurable minimum paired
 evidence, non-inferiority, actual-model coverage, provider-reported cost
 coverage, and Team-only coordination coverage. It recommends Single while
 evidence is insufficient. Net-gain computation, fail-closed stats presentation,
-and the calibrated pre-task cost kill-switch are implemented; controlled pair
-collection and automatic initial flow selection remain open. No token-to-quota
+controlled pair collection, and the calibrated pre-task cost kill-switch are
+implemented; automatic initial flow selection remains open. No token-to-quota
 or missing-price estimate is introduced.
 
 ## Phase 5 — Parallel + VS Code extension

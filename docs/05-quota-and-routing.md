@@ -260,6 +260,15 @@ inferred. A group cannot produce numeric `net_gain` until it has a verified
 single-agent baseline and complete provider-reported task and coordination
 costs.
 
+`bremio compare --repo <path> "<prompt>"` creates the paired evidence without
+manual `comparisonId` bookkeeping. It refuses before provider execution when
+the target tree is dirty, captures one `HEAD`, runs the Single side in a
+disposable detached worktree, and starts Team from that same clean commit. The
+Single ledger is imported only after Team finishes so the pre-task kill-switch
+cannot turn the controlled Team side into another Single run. Cancelling one
+side does not reuse its abort signal for the other, and cancelled/failed run
+summaries remain explicit negative evidence rather than disappearing.
+
 ```json
 { "provider":"codex", "model":"gpt-5.6-terra", "effort":"medium",
   "taskType":"backend-crud", "durationSeconds":284, "filesChanged":4,

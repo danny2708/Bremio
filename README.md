@@ -20,12 +20,12 @@ worktrees, independent review, exit-code-backed tests, review-gated manual
 merge, diagnostics, and AQT-backed Capacity surfaces. Full design lives in
 [`docs/`](docs/); start at [`docs/README.md`](docs/README.md).
 
-Still open: controlled pair collection, calibration-gated Auto/escalation, a
-Job Object-strength Windows process-tree guarantee, light-theme/capacity-card
-polish in the VS Code panel, and registry publication. The ledger computes
-measured net gain, `bremio stats` reports it without hiding unknown inputs, and
-calibrated Team runs can fall back before task execution when planning overhead
-is already too high.
+Still open: calibration-gated Auto/escalation, a Job Object-strength Windows
+process-tree guarantee, light-theme/capacity-card polish in the VS Code panel,
+and registry publication. The ledger computes measured net gain, `bremio
+stats` reports it without hiding unknown inputs, `bremio compare` collects
+controlled Single/Team pairs, and calibrated Team runs can fall back before
+task execution when planning overhead is already too high.
 
 The release gate typechecks, runs the full automated suite, builds the bundled
 CLI, packs it, installs that tarball into a clean temporary project, and checks
@@ -123,6 +123,9 @@ corepack pnpm bremio merge --run <runId> --strategy cherry-pick --repo /path/to/
 
 # summarize the usage ledger and fail-closed calibration readiness
 corepack pnpm bremio stats --repo /path/to/repo
+
+# collect one controlled pair from the same clean commit (runs both flows)
+corepack pnpm bremio compare --agent codex --lead claude --repo /path/to/repo "fix the failing test"
 
 # ask AI-Quota-Tray to fetch now, then show normalized capacity with freshness
 corepack pnpm bremio capacity --aging-after 15 --stale-after 30

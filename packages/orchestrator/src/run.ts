@@ -155,11 +155,12 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
       onEvent: onLeadEvent,
     }));
   } catch (err) {
+    const status = err instanceof LeadPlanError ? err.status : "failed";
     await recordPlanningLedger({
       ledgerPath: ledgerPathFor(repoPath),
       runId,
       leadId,
-      status: err instanceof LeadPlanError ? err.status : "failed",
+      status,
       durationMs: Date.now() - planningStarted,
       ...(opts.model ? { requestedModel: opts.model } : {}),
       ...observedIdentity(observedLeadModels, observedLeadReasoningLevels),
@@ -167,6 +168,12 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
         ? { requestedReasoningLevel: opts.reasoningLevel }
         : {}),
       ...(leadUsage ? { usage: leadUsage } : {}),
+    });
+    await recordInterruptedTeamSummary({
+      ledgerPath: ledgerPathFor(repoPath),
+      runId,
+      status,
+      ...(opts.comparisonId ? { comparisonId: opts.comparisonId } : {}),
     });
     throw err;
   }
@@ -352,6 +359,13 @@ interface RunSummaryLedgerInput {
   comparisonId?: string;
 }
 
+interface InterruptedTeamSummaryInput {
+  ledgerPath: string;
+  runId: string;
+  status: "failed" | "cancelled";
+  comparisonId?: string;
+}
+
 /** Record orchestration overhead without ever masking the actual run outcome. */
 async function recordPlanningLedger(input: PlanningLedgerInput): Promise<void> {
   try {
@@ -408,6 +422,31 @@ async function recordRunSummary(input: RunSummaryLedgerInput): Promise<void> {
     });
   } catch {
     // calibration measurement is best-effort; it must never replace the run result
+  }
+}
+
+/** Preserve an objective negative outcome when Team stops during planning. */
+async function recordInterruptedTeamSummary(
+  input: InterruptedTeamSummaryInput,
+): Promise<void> {
+  try {
+    await appendLedgerEntry(input.ledgerPath, {
+      ts: new Date().toISOString(),
+      runId: input.runId,
+      taskId: `${input.runId}::summary`,
+      scope: "run",
+      provider: "bremio",
+      role: "orchestrator",
+      kind: "run-summary",
+      status: input.status,
+      filesChanged: 0,
+      flowMode: "multi-agent",
+      ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
+      qualityGatePassed: false,
+      outcomeVerified: false,
+    });
+  } catch {
+    // calibration measurement is best-effort; never replace the planning error
   }
 }
 
