@@ -32,7 +32,9 @@ export {
   roleForKind,
   permissionForKind,
   routingInputFromConfig,
+  scoringFromConfig,
   type AssignAgentsOptions,
+  type ScoringConfig,
 } from "./router";
 
 export {

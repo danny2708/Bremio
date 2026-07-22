@@ -410,3 +410,60 @@ tests unchanged. Existing retired-bucket test unchanged.
 timeouts — process-supervisor and worktree — pass individually).
 
 **Deviations:** None.
+
+## S2-T3 — Score agents instead of assigning them positionally
+
+**Done:**
+- Added `ScoringConfig` type (6 weights matching `config/routing.yaml`) and
+  `scoring` field to `AssignAgentsOptions`. When present, the weighted scoring
+  path `assignScored()` replaces the deterministic path.
+- `pickBest()` computes the weighted score per candidate per task:
+  `(capability * weight + quota * weight + taskFit * weight + quality * weight +
+   speed * weight + preference * weight) / totalWeight`
+- Six score components:
+  - **capabilityScore**: 100 (already passed `supportsTask`)
+  - **quotaScore**: 100/60/40/0 mapped from healthy/limited/critical/exhausted;
+    defaults to 50 when no capacity data
+  - **taskFitScore**: lead=100/worker=30 for analysis, lead=50/worker=100 for
+    implementation, lead=60/worker=80 for test, lead=40/worker=80 for
+    doc/other, 70 for review
+  - **qualityScore**, **speedScore**: 50 (placeholders — no data sources yet)
+  - **preferenceScore**: 100 if agent is in `preferredAgents`, 0 if someone
+    else is preferred, 50 when no preference expressed
+- Hard rules applied after weighting:
+  - `-100` self-review penalty when candidate authored a dependency the review
+    task depends on
+  - `-40` when quota status is critical
+  - `-Infinity` when agent lacks required capability or fresh exhaustion
+- Load-bearing property: **stale/unknown/low-confidence quota is never a hard
+  exclusion** — it applies regular `scoreAdjustment` (the `unknownQuotaPenalty`
+  from capacity policy) and the weighted score still makes the agent eligible.
+- Lead capacity reserve preserved: `isLeadReserveBlocked` runs before filtering
+  eligible candidates.
+- Delegation guarantee preserved: same logic as deterministic path — forces
+  last task to worker when nothing delegated and worker is eligible.
+- Scoring is **opt-in**: the entire existing `assignAgents` body is untouched
+  when `options.scoring` is absent. A test asserts byte-identical output.
+- Exported `ScoringConfig` type and `scoringFromConfig()` helper from
+  `@bremio/orchestrator`.
+
+**Tests (347 total, +8):**
+1. Basic: analysis→lead, implementation→worker with scoring enabled.
+2. Self-review: -100 penalty prevents author from reviewing their own work.
+3. Critical quota: -40 penalty routes work to the healthy alternative.
+4. No `repositoryWrite`: excluded from write tasks.
+5. Stale exhaustion: never hard-excludes — worker still wins despite 0%.
+6. Lead reserve: lead at 10% reserve-blocked → worker gets the task.
+7. Delegation guarantee: analysis-only plan still reaches the worker.
+8. Scoring absent: byte-identical to deterministic path.
+
+**Red/green verified:** Mutated the self-review penalty to `-1` → review went
+to the wrong agent (red). Mutated the critical penalty to `-1` → critical
+agent still won (red). Restored both → green. All 10 existing deterministic
+tests pass unchanged.
+
+**Typecheck:** clean. **Test:** 347/347 pass (4 pre-existing Windows flaky
+timeouts — process-supervisor, worktree, and 2 in run.integration — all pass
+individually).
+
+**Deviations:** None.
