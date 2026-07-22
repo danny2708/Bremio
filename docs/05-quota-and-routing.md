@@ -249,12 +249,16 @@ and lead planning/repair. Planning entries use `scope:"coordination"`, remain
 separate from task completion metrics, and are recorded best-effort even when
 planning fails. Both paths add `scope:"run"` entries with explicit `flowMode`,
 a mode-appropriate `outcomeVerified`, and optional user-supplied
-`comparisonId`. `bremio stats` reports coverage and calibration blockers;
-missing dimensions remain unknown and Bremio never estimates a price.
+`comparisonId`. `bremio stats` reports provider-cost net gain per comparison
+group and in aggregate, plus coverage and calibration blockers. Any incomplete
+comparison remains `unknown` with its exact reason; aggregate net gain remains
+unknown if even one group is incomplete. Calibration blockers name the missing
+dimension and its sample deficit. Bremio never estimates a price.
 Provider-confirmed model ids are recorded when exposed (including Claude's
 system event), while an unreported Codex default remains unknown rather than
-inferred. This data is still insufficient to calculate `net_gain` until paired
-single-agent baselines and provider-reported cost coverage exist.
+inferred. A group cannot produce numeric `net_gain` until it has a verified
+single-agent baseline and complete provider-reported task and coordination
+costs.
 
 ```json
 { "provider":"codex", "model":"gpt-5.6-terra", "effort":"medium",

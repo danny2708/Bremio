@@ -632,3 +632,34 @@ authorizes the positive cases. Focused S3/config tests passed 12/12. Full
 packed installation.
 
 **Deviations:** None.
+
+---
+
+## S3-T3 — Report net gain and name every calibration blocker
+
+**Done:** `bremio stats` now reports measured net gain for every
+`comparisonId` and across all comparison groups. Each Team run is measured
+through the S3-T1 provider-reported cost calculation. A group with multiple
+Team runs is numeric only when every run is known; the global aggregate is
+numeric only when every group is known. A measured zero is printed as
+`$0.0000`, while incomplete evidence is printed as `unknown` with the exact
+run or ledger-entry reason.
+
+Calibration blockers now include the observed count, required threshold, and
+the number of additional fully observed samples needed for the specific
+dimension: evaluable pairs, non-inferior Team outcomes, actual-model entries,
+provider-reported cost entries, or Team runs with coordination evidence. The
+existing fail-closed rule remains unchanged: any blocker keeps the
+recommendation at `single-agent`.
+
+**Tests:** Added the three required CLI cases: mixed known-zero and unknown net
+gain preserves their distinction; empty evidence names every missing dimension
+and sample deficit; and one failed cost-coverage threshold keeps the
+recommendation at Single. Focused S3-T1/T3 and calibration tests passed 14/14.
+The full in-sandbox run reached 358/362 before four Windows process-tree tests
+failed because the sandbox could not inspect or terminate spawned PIDs. The
+same supervisor file passed 13/13 outside the sandbox, then the complete
+outside-sandbox `corepack pnpm release:check` passed typecheck, 362/362 tests,
+build, and clean packed installation.
+
+**Deviations:** None.

@@ -41,10 +41,10 @@ results back into one place.
 - Capacity can ask AQT to refresh through its authenticated loopback API, then
   reads AQT's schema-v1 SQLite source. CLI/TUI surfaces preserve windows,
   freshness, confidence, unavailable/last-known states, and native usage links.
-  Scored capacity routing is opt-in. Net-gain arithmetic and the calibrated
-  pre-task cost kill-switch are implemented; stats presentation, controlled
-  pair collection, and Auto mode remain deferred.
-- The local release gate passes typecheck, 359 tests, bundle build, clean packed
+  Scored capacity routing is opt-in. Net-gain arithmetic, fail-closed stats
+  presentation, and the calibrated pre-task cost kill-switch are implemented;
+  controlled pair collection and Auto mode remain deferred.
+- The local release gate passes typecheck, 362 tests, bundle build, clean packed
   install, and a 21-check fresh-profile daemon E2E on Windows. The current
   machine has no WSL distribution, so the separate POSIX verification command
   is environment-blocked in the latest audit rather than marked passed.
