@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderEvent } from "./index";
+import { formatTaskExecution, renderEvent } from "./index";
 
 describe("renderEvent", () => {
   it("renders started", () => {
@@ -93,9 +93,9 @@ describe("renderEvent", () => {
     expect(view.summary).toBe("claude-sonnet-4");
   });
 
-  it("renders usage without model as 'unknown model'", () => {
+  it("renders usage without model as 'not reported'", () => {
     const view = renderEvent({ type: "usage" });
-    expect(view.summary).toBe("unknown model");
+    expect(view.summary).toBe("not reported");
   });
 
   it("renders error", () => {
@@ -120,3 +120,37 @@ describe("renderEvent", () => {
     expect(view.severity).toBe("info");
   });
 });
+
+describe("formatTaskExecution", () => {
+  it("renders confirmed model and reasoning for a task", () => {
+    const text = formatTaskExecution({
+      agentId: "claude",
+      confirmedModel: "claude-3-7-sonnet",
+      confirmedReasoningLevel: "high",
+      requestedModel: "claude-3-7-sonnet",
+      requestedReasoningLevel: "high",
+    });
+    expect(text).toBe("agent: claude | model: claude-3-7-sonnet | reasoning: high");
+  });
+
+  it("renders an unreported model as 'not reported', not as the requested value", () => {
+    const text = formatTaskExecution({
+      agentId: "codex",
+      requestedModel: "gpt-4o",
+      requestedReasoningLevel: "medium",
+    });
+    expect(text).toBe("agent: codex | model: not reported (requested: gpt-4o) | reasoning: not reported (requested: medium)");
+  });
+
+  it("renders both when requested ≠ confirmed", () => {
+    const text = formatTaskExecution({
+      agentId: "opencode",
+      confirmedModel: "deepseek-v3",
+      requestedModel: "claude-3-7-sonnet",
+      confirmedReasoningLevel: "medium",
+      requestedReasoningLevel: "high",
+    });
+    expect(text).toBe("agent: opencode | model: deepseek-v3 (requested: claude-3-7-sonnet) | reasoning: medium (requested: high)");
+  });
+});
+

@@ -249,7 +249,7 @@ export function renderEvent(event: {
       return { kind: "log", summary: event.message ?? "", severity: sev };
     }
     case "usage": {
-      const model = event.model ?? "unknown model";
+      const model = event.model ?? "not reported";
       const reason = event.reasoningLevel ? " [" + event.reasoningLevel + "]" : "";
       return { kind: "usage", summary: model + reason, severity: "info" };
     }
@@ -263,6 +263,57 @@ export function renderEvent(event: {
     }
   }
 }
+
+/**
+ * Self-contained (no module-scope references) because `panelHtml` inlines its
+ * source into the webview script via .toString(), matching `renderEvent`.
+ * Canonical source: packages/event-view/src/index.ts.
+ */
+export function formatTaskExecution(input: {
+  agentId?: string;
+  confirmedModel?: string;
+  requestedModel?: string;
+  confirmedReasoningLevel?: string;
+  requestedReasoningLevel?: string;
+}): string {
+  const parts: string[] = [];
+  if (input.agentId) parts.push("agent: " + input.agentId);
+
+  const confirmedModel = input.confirmedModel;
+  const requestedModel = input.requestedModel;
+  if (confirmedModel) {
+    if (requestedModel && requestedModel !== confirmedModel) {
+      parts.push("model: " + confirmedModel + " (requested: " + requestedModel + ")");
+    } else {
+      parts.push("model: " + confirmedModel);
+    }
+  } else {
+    if (requestedModel) {
+      parts.push("model: not reported (requested: " + requestedModel + ")");
+    } else {
+      parts.push("model: not reported");
+    }
+  }
+
+  const confirmedReasoning = input.confirmedReasoningLevel;
+  const requestedReasoning = input.requestedReasoningLevel;
+  if (confirmedReasoning) {
+    if (requestedReasoning && requestedReasoning !== confirmedReasoning) {
+      parts.push("reasoning: " + confirmedReasoning + " (requested: " + requestedReasoning + ")");
+    } else {
+      parts.push("reasoning: " + confirmedReasoning);
+    }
+  } else {
+    if (requestedReasoning) {
+      parts.push("reasoning: not reported (requested: " + requestedReasoning + ")");
+    } else {
+      parts.push("reasoning: not reported");
+    }
+  }
+
+  return parts.join(" | ");
+}
+
 
 export function panelHtml(nonce: string, cspSource: string, iconUri = ""): string {
   return `<!DOCTYPE html>
@@ -786,6 +837,7 @@ const renderDecisionReasons = ${renderDecisionReasons.toString()};
 // Inlined from webview.ts so the panel and the unit test share one renderer.
 // Canonical source: packages/event-view/src/index.ts.
 const renderEvent = ${renderEvent.toString()};
+const formatTaskExecution = ${formatTaskExecution.toString()};
 
 function renderRuns(payload) {
   const runs = payload.runs ?? [];

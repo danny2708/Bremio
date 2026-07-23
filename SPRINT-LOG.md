@@ -1259,3 +1259,31 @@ Every event variant + unknown catch-all covered. Red/green verified for each var
 **Deviations:** The VS Code extension deliberately depends on no `@bremio/*` packages
 (build.mjs line 5), so `webview.ts` carries its own copy of `renderEvent` with the
 same body — same pattern as `renderCapacityCards` in S5-T2.
+
+---
+
+## A2-T2 — Name the model and reasoning behind every task
+
+**Done:** Added `formatTaskExecution` to `@bremio/event-view` (and inlined in `apps/vscode-extension/src/webview.ts`) to format the execution details for the lead and every worker. Displays: agent ID, provider-confirmed model, and provider-confirmed reasoning level.
+
+Rules enforced across CLI, TUI, and VS Code panel:
+1. When provider did not report a model/reasoning level, says `"not reported"` — never falls back to the requested value silently and never guesses.
+2. Where requested and confirmed differ (or confirmed is `"not reported"` while requested was specified), shows both: `model: <confirmed> (requested: <requested>)`.
+3. The lead's planning run gets the exact same treatment as worker tasks (storing lead requested/actual model and reasoning level in `RunReport`).
+
+Consumers:
+- **`packages/event-view/src/index.ts`**: Exports `formatTaskExecution(input: TaskExecutionInput): string`. Updated `usage` event rendering to say `"not reported"` when model is missing.
+- **`apps/cli/src/ui.ts`**: `printTeamReport` and `printSingleReport` use `formatTaskExecution` for lead and worker tasks.
+- **`apps/vscode-extension/src/webview.ts`**: Inlines `formatTaskExecution` and updates usage event rendering.
+
+**Tests (3 new, 451 total):**
+1. confirmed model and reasoning render for a task (`agent: claude | model: claude-3-7-sonnet | reasoning: high`);
+2. an unreported model renders as `"not reported"`, not as the requested value (`agent: codex | model: not reported (requested: gpt-4o) | reasoning: not reported (requested: medium)`);
+3. requested ≠ confirmed renders both (`agent: opencode | model: deepseek-v3 (requested: claude-3-7-sonnet) | reasoning: medium (requested: high)`).
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 451/451 pass.
+
+**Deviations:** None.
+

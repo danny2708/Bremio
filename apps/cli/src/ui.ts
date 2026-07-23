@@ -1,10 +1,10 @@
 import path from "node:path";
 import type { BremioRunReport, RunReport, SingleRunReport } from "@bremio/orchestrator";
-import type { EventView } from "@bremio/event-view";
+import { formatTaskExecution, type EventView } from "@bremio/event-view";
 import type { Plan, TaskStatus } from "@bremio/protocol";
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
-const wrap = (code: string) => (s: string) => (useColor ? `[${code}m${s}[0m` : s);
+const wrap = (code: string) => (s: string) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
 
 export const c = {
   bold: wrap("1"),
@@ -68,7 +68,14 @@ function printTeamReport(report: RunReport): void {
   const line = "─".repeat(60);
   console.log(`\n${line}`);
   console.log(` ${c.bold("Bremio report")}  ${c.dim(report.runId)}`);
-  console.log(` lead: ${c.cyan(report.leadAgentId)}   repo: ${c.dim(report.repoPath)}`);
+  const leadExec = formatTaskExecution({
+    agentId: report.leadAgentId,
+    requestedModel: report.leadRequestedModel,
+    confirmedModel: report.leadActualModel,
+    requestedReasoningLevel: report.leadRequestedReasoningLevel,
+    confirmedReasoningLevel: report.leadActualReasoningLevel,
+  });
+  console.log(` lead: ${c.cyan(report.leadAgentId)} (${c.dim(leadExec)})   repo: ${c.dim(report.repoPath)}`);
   if (report.autoModeReason) console.log(` mode: ${c.cyan("auto")}  ${c.dim(report.autoModeReason)}`);
   console.log(line);
 
@@ -80,18 +87,15 @@ function printTeamReport(report: RunReport): void {
     console.log(
       `  agent: ${c.bold(agentId)}${reasonText}   status: ${statusGlyph(result.status)}   files: ${result.filesChanged.length}`,
     );
-    const execution = [
-      result.durationMs !== undefined ? `duration=${(result.durationMs / 1000).toFixed(1)}s` : undefined,
-      result.requestedModel ? `model requested=${result.requestedModel}` : undefined,
-      result.actualModel ? `model actual=${result.actualModel}` : undefined,
-      result.requestedReasoningLevel
-        ? `reasoning requested=${result.requestedReasoningLevel}`
-        : undefined,
-      result.actualReasoningLevel
-        ? `reasoning actual=${result.actualReasoningLevel}`
-        : undefined,
-    ].filter((value): value is string => Boolean(value));
-    if (execution.length > 0) console.log(`  execution: ${c.dim(execution.join(" | "))}`);
+    const execInfo = formatTaskExecution({
+      agentId,
+      requestedModel: result.requestedModel,
+      confirmedModel: result.actualModel,
+      requestedReasoningLevel: result.requestedReasoningLevel,
+      confirmedReasoningLevel: result.actualReasoningLevel,
+    });
+    const duration = result.durationMs !== undefined ? `duration=${(result.durationMs / 1000).toFixed(1)}s` : undefined;
+    console.log(`  execution: ${c.dim([execInfo, duration].filter(Boolean).join(" | "))}`);
     if (result.filesChanged.length) {
       console.log(`  changed: ${c.dim(result.filesChanged.join(", "))}`);
     }
@@ -153,18 +157,15 @@ function printSingleReport(report: SingleRunReport): void {
       : c.yellow("unverified");
   console.log(` verification: ${verificationText}`);
   for (const reason of verification.reasons) console.log(`   ${c.dim(`- ${reason}`)}`);
-  const execution = [
-    `duration=${(result.durationMs / 1000).toFixed(1)}s`,
-    result.requestedModel ? `model requested=${result.requestedModel}` : undefined,
-    result.actualModel ? `model actual=${result.actualModel}` : undefined,
-    result.requestedReasoningLevel
-      ? `reasoning requested=${result.requestedReasoningLevel}`
-      : undefined,
-    result.actualReasoningLevel
-      ? `reasoning actual=${result.actualReasoningLevel}`
-      : undefined,
-  ].filter((value): value is string => Boolean(value));
-  console.log(` execution: ${c.dim(execution.join(" | "))}`);
+  const singleExec = formatTaskExecution({
+    agentId: report.primaryAgentId,
+    requestedModel: result.requestedModel,
+    confirmedModel: result.actualModel,
+    requestedReasoningLevel: result.requestedReasoningLevel,
+    confirmedReasoningLevel: result.actualReasoningLevel,
+  });
+  const duration = result.durationMs !== undefined ? `duration=${(result.durationMs / 1000).toFixed(1)}s` : undefined;
+  console.log(` execution: ${c.dim([singleExec, duration].filter(Boolean).join(" | "))}`);
   if (result.filesChanged.length > 0) {
     console.log(` changed/dirty: ${c.dim(result.filesChanged.join(", "))}`);
   }

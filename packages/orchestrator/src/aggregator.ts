@@ -14,6 +14,10 @@ export interface RunReport {
   createdAt: string;
   prompt: string;
   leadAgentId: string;
+  leadRequestedModel?: string;
+  leadActualModel?: string;
+  leadRequestedReasoningLevel?: import("@bremio/protocol").ReasoningLevel;
+  leadActualReasoningLevel?: import("@bremio/protocol").ReasoningLevel;
   repoPath: string;
   runDir: string;
   /** Branch the repo was on when the run started; merge target for tasks. */
@@ -38,6 +42,10 @@ export interface BuildReportInput {
   runId: string;
   prompt: string;
   leadAgentId: string;
+  leadRequestedModel?: string;
+  leadActualModel?: string;
+  leadRequestedReasoningLevel?: import("@bremio/protocol").ReasoningLevel;
+  leadActualReasoningLevel?: import("@bremio/protocol").ReasoningLevel;
   repoPath: string;
   runDir: string;
   baseBranch?: string;
@@ -81,6 +89,10 @@ export function buildReport(input: BuildReportInput): RunReport {
     createdAt: new Date().toISOString(),
     prompt: input.prompt,
     leadAgentId: input.leadAgentId,
+    ...(input.leadRequestedModel ? { leadRequestedModel: input.leadRequestedModel } : {}),
+    ...(input.leadActualModel ? { leadActualModel: input.leadActualModel } : {}),
+    ...(input.leadRequestedReasoningLevel ? { leadRequestedReasoningLevel: input.leadRequestedReasoningLevel } : {}),
+    ...(input.leadActualReasoningLevel ? { leadActualReasoningLevel: input.leadActualReasoningLevel } : {}),
     repoPath: input.repoPath,
     runDir: input.runDir,
     ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
