@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   MAX_PAYLOAD_BYTES,
+  normalizeRepositoryPath,
   RunStore,
   capPayload,
   isTerminal,
@@ -470,6 +471,36 @@ describe("sessions", () => {
     const sessionsB = s.listSessions("/tmp/repo-b");
     expect(sessionsB).toHaveLength(1);
     expect(sessionsB[0]?.title).toBe("second");
+  });
+
+  it("finds a repository's history however the OS spelled the path that day", async () => {
+    const s = await store();
+
+    // How the path arrived when the run was recorded.
+    s.createRun({
+      id: "cased-1",
+      mode: "single",
+      repositoryPath: "d:\\Work\\Bremio",
+      prompt: "recorded from a lowercase drive letter",
+    });
+
+    // How the same directory arrives from a different shell. Before this was
+    // fixed, both of these returned nothing and the user's own history looked
+    // as though it had been lost.
+    expect(s.listSessions("D:\\Work\\Bremio")).toHaveLength(1);
+    expect(s.listSessions("D:/Work/Bremio")).toHaveLength(1);
+    expect(s.listSessions("D:/Work/Bremio/")).toHaveLength(1);
+    expect(s.listRuns({ repositoryPath: "D:/Work/Bremio" })).toHaveLength(1);
+
+    // Still scoped: a genuinely different repository must not bleed in.
+    expect(s.listSessions("D:/Work/Bremio-test")).toHaveLength(0);
+  });
+
+  it("folds case identically in SQL and in JavaScript", () => {
+    // SQLite's LOWER() is ASCII-only. If the JS side folded more than that, a
+    // path with non-ASCII letters would normalize to something SQL never
+    // produces and the lookup would miss without any error.
+    expect(normalizeRepositoryPath("D:\\Việt\\Repo")).toBe("d:/việt/repo");
   });
 });
 

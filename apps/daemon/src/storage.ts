@@ -25,6 +25,33 @@ type Database = InstanceType<typeof DatabaseSync>;
 const SCHEMA_VERSION = 3;
 
 /**
+ * One repository can be named several ways by the OS that launched us: Windows
+ * hands back `d:\repo` or `D:\repo` depending on how the shell was entered, and
+ * either separator resolves the same directory. Comparing the raw strings made
+ * a session list come back empty for the very repository it was run in, which
+ * looks exactly like history loss.
+ *
+ * Matching is therefore done on a canonical form. It is applied at read time
+ * rather than by rewriting stored rows, so history written by older versions
+ * keeps matching without a migration touching data we cannot re-derive.
+ */
+export function normalizeRepositoryPath(repositoryPath: string): string {
+  // Only A-Z is folded: SQLite's LOWER() is ASCII-only, and JavaScript's
+  // toLowerCase() is not. On a path containing non-ASCII letters the two would
+  // disagree and the lookup would silently miss again.
+  return repositoryPath
+    .replaceAll("\\", "/")
+    .replace(/[A-Z]/g, (ch) => ch.toLowerCase())
+    .replace(/\/+$/, "");
+}
+
+/**
+ * The SQL half of {@link normalizeRepositoryPath}. The two must agree, which
+ * `storage.test.ts` pins by querying with a differently-cased path.
+ */
+const SAME_REPO_PATH = "RTRIM(LOWER(REPLACE(repository_path, '\\', '/')), '/') = ?";
+
+/**
  * Event payloads are telemetry, not archives. A runaway stdout would otherwise
  * grow the database without bound, so oversized payloads are truncated with
  * explicit metadata rather than silently dropped.
@@ -247,8 +274,10 @@ export class RunStore {
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 1000);
     const rows = options.repositoryPath
       ? this.db
-          .prepare("SELECT * FROM runs WHERE repository_path = ? ORDER BY created_at DESC LIMIT ?")
-          .all(options.repositoryPath, limit)
+          .prepare(
+            `SELECT * FROM runs WHERE ${SAME_REPO_PATH} ORDER BY created_at DESC LIMIT ?`,
+          )
+          .all(normalizeRepositoryPath(options.repositoryPath), limit)
       : this.db.prepare("SELECT * FROM runs ORDER BY created_at DESC LIMIT ?").all(limit);
     return (rows as Array<Record<string, unknown>>).map(toRun);
   }
@@ -487,11 +516,11 @@ export class RunStore {
                 (SELECT status FROM runs WHERE session_id = s.id ORDER BY turn_index DESC LIMIT 1) AS status
          FROM sessions s
          LEFT JOIN runs r ON r.session_id = s.id
-         WHERE s.repository_path = ?
+         WHERE ${SAME_REPO_PATH.replace("repository_path", "s.repository_path")}
          GROUP BY s.id
          ORDER BY MAX(r.created_at) DESC, s.created_at DESC`,
       )
-      .all(repositoryPath) as Array<Record<string, unknown>>;
+      .all(normalizeRepositoryPath(repositoryPath)) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
       id: String(row.id),
       repositoryPath: String(row.repository_path),
