@@ -1,17 +1,25 @@
+import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@bremio/protocol": path.resolve(__dirname, "packages/protocol/src/index.ts"),
+      "@bremio/adapter-sdk": path.resolve(__dirname, "packages/adapter-sdk/src/index.ts"),
+      "@bremio/workspace": path.resolve(__dirname, "packages/workspace/src/index.ts"),
+      "@bremio/quota": path.resolve(__dirname, "packages/quota/src/index.ts"),
+      "@bremio/event-view": path.resolve(__dirname, "packages/event-view/src/index.ts"),
+      "@bremio/harness": path.resolve(__dirname, "packages/harness/src/index.ts"),
+      "@bremio/adapter-claude": path.resolve(__dirname, "packages/adapter-claude/src/index.ts"),
+      "@bremio/adapter-codex": path.resolve(__dirname, "packages/adapter-codex/src/index.ts"),
+      "@bremio/adapter-opencode": path.resolve(__dirname, "packages/adapter-opencode/src/index.ts"),
+      "@bremio/adapter-antigravity": path.resolve(__dirname, "packages/adapter-antigravity/src/index.ts"),
+      "@bremio/adapter-local": path.resolve(__dirname, "packages/adapter-local/src/index.ts"),
+    },
+  },
   test: {
     include: ["packages/*/src/**/*.test.ts", "apps/*/src/**/*.test.ts"],
     environment: "node",
-    // Several suites spawn real child processes and run git (adapter runs,
-    // process-supervisor, worktrees, merge). Run in parallel across forked
-    // workers on Windows they contend for OS handles and a worker can crash
-    // (tinypool onUnexpectedExit), cascading unrelated files to red — the same
-    // suite goes 351/351 one run and reports 9 "failures" the next. Files run
-    // one at a time; tests within a file still run together, and the scheduler's
-    // own concurrency is covered inside run.integration, so nothing is lost but
-    // the flakiness. See docs/10 §5.
     fileParallelism: false,
   },
 });

@@ -68,6 +68,16 @@ export interface RunBremioOptions {
   signal?: AbortSignal;
   logger?: Logger;
   hooks?: RunBremioHooks;
+  sessionId?: string;
+  turnIndex?: number;
+  priorTurns?: Array<{
+    turnIndex: number;
+    prompt: string;
+    finalText?: string;
+    summary?: string;
+    measuredInputTokens?: number;
+  }>;
+  providerSessionId?: string;
 }
 
 /** Generate a sortable, human-readable run id: run-YYYYMMDD-HHMMSS-xxxx. */
@@ -154,6 +164,10 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
       ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
       ...(opts.taskTimeoutMs ? { timeoutMs: opts.taskTimeoutMs } : {}),
       ...(opts.signal ? { signal: opts.signal } : {}),
+      ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+      ...(opts.turnIndex !== undefined ? { turnIndex: opts.turnIndex } : {}),
+      ...(opts.priorTurns ? { priorTurns: opts.priorTurns } : {}),
+      ...(opts.providerSessionId ? { providerSessionId: opts.providerSessionId } : {}),
       validate: (candidate) => validatePlan(candidate, capabilitiesByAgent),
       onEvent: onLeadEvent,
     }));

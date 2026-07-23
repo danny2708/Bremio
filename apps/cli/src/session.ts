@@ -1,6 +1,11 @@
 import path from "node:path";
+import { AntigravityAdapter } from "@bremio/adapter-antigravity";
+import { ClaudeAdapter } from "@bremio/adapter-claude";
+import { CodexAdapter } from "@bremio/adapter-codex";
+import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import { daemonStatus, defaultDatabasePath, RunStore } from "@bremio/daemon";
 import { renderEvent } from "@bremio/event-view";
+import { createRegistry, runBremio, runSingleAgent } from "@bremio/orchestrator";
 import { c, formatEventView, statusGlyph } from "./ui";
 
 export interface SessionListOptions {
@@ -243,6 +248,92 @@ async function showSessionFromStore(id: string, dbPath?: string) {
   }
 }
 
+export async function continueSessionCommand(options: {
+  id: string;
+  prompt: string;
+  repoPath?: string;
+  databasePath?: string;
+}): Promise<number> {
+  const { id, prompt } = options;
+  if (!id) {
+    console.error(c.red("error: session id is required for 'bremio session continue <id>'"));
+    return 1;
+  }
+  if (!prompt) {
+    console.error(c.red("error: prompt is required to continue a session"));
+    return 1;
+  }
+
+  const store = await RunStore.open(options.databasePath ?? defaultDatabasePath());
+  let detail: any;
+  try {
+    detail = store.sessionDetail(id);
+  } finally {
+    store.close();
+  }
+
+  if (!detail) {
+    console.error(c.red(`error: session not found: ${id}`));
+    return 1;
+  }
+
+  const priorTurns = (detail.turns ?? []).map((t: any) => ({
+    turnIndex: t.turnIndex,
+    prompt: t.prompt,
+    finalText: t.summary,
+    summary: t.summary,
+  }));
+
+  const latestTurn = (detail.turns ?? []).at(-1);
+  const providerSessionId = latestTurn?.sessionId;
+
+  const repoPath = path.resolve(options.repoPath ?? detail.repositoryPath ?? ".");
+  const registry = createRegistry([
+    new ClaudeAdapter(),
+    new CodexAdapter(),
+    new AntigravityAdapter(),
+    new OpenCodeAdapter(),
+  ]);
+
+  const mode = detail.mode === "team" ? "team" : "single";
+  const primaryAgent = latestTurn?.model?.split("/")[0] ?? "claude";
+  const turnIndex = (detail.turns ?? []).length;
+
+  console.log(`Continuing session ${id} (turn ${turnIndex}) in ${mode} mode...`);
+
+  if (mode === "single") {
+    const report = await runSingleAgent({
+      primaryAgentId: primaryAgent,
+      repoPath,
+      prompt,
+      registry,
+      sessionId: id,
+      turnIndex,
+      priorTurns,
+      providerSessionId,
+    });
+    console.log(`Turn ${turnIndex} status: ${statusGlyph(report.result.status)}`);
+    if (report.mechanismDecision) {
+      console.log(`Mechanism used: ${report.mechanismDecision.mechanism} (${report.mechanismDecision.reason})`);
+    }
+  } else {
+    const report = await runBremio({
+      leadId: primaryAgent,
+      repoPath,
+      prompt,
+      registry,
+      sessionId: id,
+      turnIndex,
+      priorTurns,
+      providerSessionId,
+    });
+    const status = report.mode === "single" ? report.result.status : report.qualityGate.status === "passed" ? "completed" : "failed";
+    console.log(`Turn ${turnIndex} status: ${statusGlyph(status)}`);
+  }
+
+  return 0;
+}
+
 export async function sessionCommandFromCli(
   values: Record<string, unknown>,
   positionals: string[],
@@ -271,8 +362,18 @@ export async function sessionCommandFromCli(
       ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}),
     });
   }
+  if (subCommand === "continue") {
+    const id = positionals[2];
+    const prompt = positionals.slice(3).join(" ") || (values.prompt as string) || "";
+    return continueSessionCommand({
+      id: id ?? "",
+      prompt,
+      ...(values.repo ? { repoPath: path.resolve(values.repo as string) } : {}),
+      ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}),
+    });
+  }
   console.error(
-    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list' or 'show'`),
+    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', or 'continue'`),
   );
   return 2;
 }

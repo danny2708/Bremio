@@ -17,3 +17,9 @@ export {
   type TokenAccountingMethod,
 } from "./context-budget";
 
+export {
+  prepareTurnExecution,
+  type TurnRunnerOptions,
+  type TurnMechanismDecision,
+  type TurnExecution,
+} from "./turn-runner";

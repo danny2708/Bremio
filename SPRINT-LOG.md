@@ -1632,6 +1632,39 @@ Red/green verified by mutating test assertions and confirming failure.
 
 **Deviations:** None.
 
+---
+
+## B5 — Continuity, Single first
+
+**Done:** Implemented session continuation via `prepareTurnExecution` in `@bremio/harness`, integrated into `runSingleAgent`, `runBremio`, `createPlan`, and CLI `bremio session continue`.
+
+Key implementation details:
+1. **Capability-Driven Mechanism Selection**:
+   - Checks `capabilities.resumableSessions`: uses `adapter.resumeRun` when `true` and `providerSessionId` exists; uses re-injection (`assembleTurnContext` + `enforceContextBudget`) when `false`.
+   - Selection is strictly derived from capabilities, never from provider names.
+   - Mechanism choice and reason are recorded in `TurnMechanismDecision` and saved in turn reports / ledger entries.
+2. **Automatic Fallback on Session Expiration**:
+   - If `adapter.resumeRun` yields a classified `session_not_found` failure (expired or unknown provider session), automatically falls back to re-injection without crashing or creating a silent fake session.
+3. **Invariants Preserved**:
+   - Single mode follow-up turns land as turn N+1 of the same session, seeing prior turns and repository diff state.
+   - Team mode follow-up turns resume the lead while workers receive composed task prompts.
+   - Cancellation leaves session state resumable and uncorrupted.
+   - Ledger attributes each turn separately, preserving `net_gain` computability.
+
+**Tests (5 new, 503 total overall across 54 test files):**
+1. `prepareTurnExecution`: selects `resume` when capability allows and `providerSessionId` is present.
+2. `prepareTurnExecution`: selects `re-inject` when capability is false.
+3. `prepareTurnExecution`: falls back to re-injection when provider session is expired/invalid.
+4. `runSingleAgent`: executes follow-up turn in Single mode with prior turns and recorded mechanism decision.
+5. CLI: `bremio session continue` validates session and routes follow-up turn.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 503/503 pass.
+
+**Deviations:** None.
+
+
 
 
 

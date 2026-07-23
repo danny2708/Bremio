@@ -10,6 +10,7 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@bremio/adapter-sdk": "workspace:*",
+    "@bremio/harness": "workspace:*",
     "@bremio/protocol": "workspace:*",
     "@bremio/quota": "workspace:*",
     "@bremio/workspace": "workspace:*",
