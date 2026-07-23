@@ -7,21 +7,13 @@ import {
   runSingleAgent,
   type BremioRunReport,
 } from "@bremio/orchestrator";
-import { renderEvent } from "@bremio/event-view";
+import { assembleTaskLanes, renderEvent, type LaneTask } from "@bremio/event-view";
 import { ErrorBox, Header, Menu, Spinner, StatusText, TextInput } from "../components";
 import { createAdapters, AGENT_LABELS } from "../data";
 import { theme } from "../theme";
 
 type Phase = "mode" | "agent" | "prompt" | "running" | "done";
 type Mode = "single" | "team";
-
-const MAX_LINES = 12;
-
-function eventSummary(event: unknown): string {
-  // AgentEvent-shaped object — passed through the shared renderer.
-  const view = renderEvent(event as Parameters<typeof renderEvent>[0]);
-  return view.summary;
-}
 
 function reportStatus(report: BremioRunReport): string {
   if (report.mode === "single") return report.result.status;
@@ -43,15 +35,15 @@ export function RunScreen({
   const [mode, setMode] = useState<Mode>("single");
   const [agentId, setAgentId] = useState<string>("claude");
   const [prompt, setPrompt] = useState("");
-  const [lines, setLines] = useState<string[]>([]);
+  const [events, setEvents] = useState<Array<{ kind?: string; taskId?: string; agentId?: string; message?: string; data?: unknown }>>([]);
+  const [expandedLane, setExpandedLane] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState("starting");
   const [report, setReport] = useState<BremioRunReport | undefined>();
   const [error, setError] = useState<string | undefined>();
   const abortRef = useRef<AbortController | undefined>(undefined);
 
-  const push = useCallback((line: string | undefined) => {
-    if (!line) return;
-    setLines((prev) => [...prev, line].slice(-MAX_LINES));
+  const pushEv = useCallback((ev: { kind?: string; taskId?: string; agentId?: string; message?: string; data?: unknown }) => {
+    setEvents((prev) => [...prev, ev]);
   }, []);
 
   const start = useCallback(async () => {
@@ -72,10 +64,10 @@ export function RunScreen({
           signal: controller.signal,
           hooks: {
             onWorkspaceReady: (dirty) => {
-              if (dirty.length) push(`⚠ ${dirty.length} uncommitted file(s) already in the workspace`);
+              if (dirty.length) pushEv({ kind: "log", taskId: "MAIN", agentId, message: `⚠ ${dirty.length} uncommitted file(s) already in workspace` });
             },
-            onStart: (id) => push(`▶ ${id} started`),
-            onEvent: (event) => push(eventSummary(event)),
+            onStart: (id) => pushEv({ kind: "started", taskId: "MAIN", agentId: id, message: `${id} started` }),
+            onEvent: (event) => pushEv({ kind: (event as any)?.type || "log", taskId: "MAIN", agentId, data: event }),
           },
         });
       } else {
@@ -87,21 +79,20 @@ export function RunScreen({
           registry,
           signal: controller.signal,
           hooks: {
-            onLeadStart: (id) => push(`▶ lead ${id} planning…`),
-            onLeadEvent: (event) => push(eventSummary(event)),
+            onLeadStart: (id) => pushEv({ kind: "lead", taskId: "LEAD", agentId: id, message: `lead ${id} planning…` }),
+            onLeadEvent: (event) => pushEv({ kind: (event as any)?.type || "lead", taskId: "LEAD", agentId, data: event }),
             onPlan: (plan) => {
               setStatus(`executing ${plan.tasks.length} task(s), up to ${DEFAULT_MAX_CONCURRENCY} at a time`);
-              push(`✓ plan: ${plan.summary}`);
+              pushEv({ kind: "plan", taskId: "LEAD", agentId, data: { plan } });
             },
             onFallback: (reason, id) => {
               setStatus(`falling back to Single Agent ${AGENT_LABELS[id] ?? id}`);
-              push(`⚠ ${reason}`);
+              pushEv({ kind: "failed", taskId: "LEAD", agentId: id, message: `Fallback: ${reason}` });
             },
-            onTaskStart: (task, id) => push(`▶ ${task.id} ${task.title} → ${id}`),
-            // Independent tasks run concurrently, so each line names its task.
-            onEvent: (task, _id, event) => push(`[${task.id}] ${eventSummary(event)}`),
+            onTaskStart: (task, id) => pushEv({ kind: "task-start", taskId: task.id, agentId: id, message: task.title }),
+            onEvent: (task, id, event) => pushEv({ kind: (event as any)?.type || "task-event", taskId: task.id, agentId: id, data: event }),
             onTaskComplete: (taskResult) =>
-              push(`${taskResult.status === "completed" ? "✓" : "✗"} ${taskResult.taskId} ${taskResult.status}`),
+              pushEv({ kind: "task-complete", taskId: taskResult.taskId, message: taskResult.status }),
           },
         });
       }
@@ -111,17 +102,25 @@ export function RunScreen({
       setError((err as Error).message);
       setPhase("done");
     }
-  }, [agentId, mode, prompt, push, repoPath]);
+  }, [agentId, mode, prompt, pushEv, repoPath]);
 
   useInput(
-    (_input, key) => {
+    (input, key) => {
       if (key.escape) {
         if (phase === "running") abortRef.current?.abort();
         else onExit();
       }
+      if (phase === "running" && input === "e") {
+        const lanes = assembleTaskLanes(events);
+        if (lanes.length) {
+          setExpandedLane((prev) => (prev ? undefined : lanes[0].id));
+        }
+      }
     },
     { isActive: phase !== "prompt" },
   );
+
+  const lanes = assembleTaskLanes(events);
 
   if (phase === "mode") {
     return (
@@ -143,7 +142,6 @@ export function RunScreen({
   }
 
   if (phase === "agent") {
-    // Antigravity emits no structured plan, so it can implement but never lead.
     const items =
       mode === "single"
         ? [
@@ -198,14 +196,34 @@ export function RunScreen({
         <Header title="Running" subtitle={`${mode} · ${AGENT_LABELS[agentId] ?? agentId}`} />
         <Spinner label={status} />
         <Box flexDirection="column" marginTop={1}>
-          {lines.map((line, i) => (
-            <Text key={`${i}-${line.slice(0, 12)}`} color={theme.muted}>
-              {"  "}
-              {line}
-            </Text>
-          ))}
+          {lanes.map((lane) => {
+            const isExpanded = expandedLane === lane.id;
+            const statusGlyph =
+              lane.status === "completed" ? "✓" : lane.status === "failed" ? "✗" : "▶";
+            const statusColor =
+              lane.status === "completed"
+                ? theme.success
+                : lane.status === "failed"
+                  ? theme.warning
+                  : theme.accent;
+
+            return (
+              <Box key={lane.id} flexDirection="column" marginBottom={0}>
+                <Text color={statusColor}>
+                  {`  ${statusGlyph} ${lane.id} (${lane.agentId ?? "agent"}) — ${lane.title}: ${lane.lastActivity}`}
+                </Text>
+                {isExpanded
+                  ? lane.events.map((ev, idx) => (
+                      <Text key={idx} color={theme.muted}>
+                        {`    ${ev.summary}`}
+                      </Text>
+                    ))
+                  : null}
+              </Box>
+            );
+          })}
         </Box>
-        <Text color={theme.muted}>{"\n  esc to cancel"}</Text>
+        <Text color={theme.muted}>{"\n  press 'e' to toggle lane expansion  ·  esc to cancel"}</Text>
       </Box>
     );
   }

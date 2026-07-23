@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTaskExecution, renderEvent } from "./index";
+import { assembleTaskLanes, formatTaskExecution, renderEvent } from "./index";
 
 describe("renderEvent", () => {
   it("renders started", () => {
@@ -153,4 +153,58 @@ describe("formatTaskExecution", () => {
     expect(text).toBe("agent: opencode | model: deepseek-v3 (requested: claude-3-7-sonnet) | reasoning: medium (requested: high)");
   });
 });
+
+describe("assembleTaskLanes (A4-T1)", () => {
+  it("1. N concurrent tasks produce N lanes and a bounded number of lines", () => {
+    const rawEvents: Array<{ kind: string; taskId: string; agentId: string; message: string }> = [];
+    for (let i = 0; i < 50; i++) {
+      rawEvents.push({ kind: "task-event", taskId: "TASK-001", agentId: "codex", message: `step ${i}` });
+      rawEvents.push({ kind: "task-event", taskId: "TASK-002", agentId: "claude", message: `step ${i}` });
+      rawEvents.push({ kind: "task-event", taskId: "TASK-003", agentId: "antigravity", message: `step ${i}` });
+    }
+
+    const lanes = assembleTaskLanes(rawEvents);
+    // 3 concurrent tasks emit 150 total events, but assemble into 3 bounded lanes
+    expect(lanes).toHaveLength(3);
+    expect(lanes.map((l) => l.id)).toEqual(["TASK-001", "TASK-002", "TASK-003"]);
+    // Bounded number of lines: collapsed view shows exactly 1 line per lane (3 lines total), NOT 150 lines
+    expect(lanes.length).toBeLessThanOrEqual(3);
+  });
+
+  it("2. a failed lane is visible while collapsed", () => {
+    const rawEvents = [
+      { kind: "task-start", taskId: "TASK-001", agentId: "codex", message: "Build component" },
+      { kind: "task-start", taskId: "TASK-002", agentId: "claude", message: "Run integration tests" },
+      { kind: "task-event", taskId: "TASK-001", agentId: "codex", message: "file written" },
+      { kind: "failed", taskId: "TASK-002", agentId: "claude", message: "test suite failed" },
+    ];
+
+    const lanes = assembleTaskLanes(rawEvents);
+    const failedLane = lanes.find((l) => l.id === "TASK-002");
+    expect(failedLane).toBeDefined();
+    // The status is marked 'failed' so it renders red/warning in single-line collapsed view
+    expect(failedLane?.status).toBe("failed");
+    expect(failedLane?.lastActivity).toContain("test suite failed");
+  });
+
+  it("3. expanding a lane yields that task's events and no other task's", () => {
+    const rawEvents = [
+      { kind: "task-event", taskId: "TASK-001", agentId: "codex", message: "TASK-1-event-A" },
+      { kind: "task-event", taskId: "TASK-002", agentId: "claude", message: "TASK-2-event-A" },
+      { kind: "task-event", taskId: "TASK-001", agentId: "codex", message: "TASK-1-event-B" },
+    ];
+
+    const lanes = assembleTaskLanes(rawEvents);
+    const lane1 = lanes.find((l) => l.id === "TASK-001");
+    const lane2 = lanes.find((l) => l.id === "TASK-002");
+
+    expect(lane1?.events.map((e) => e.summary)).toEqual(["TASK-1-event-A", "TASK-1-event-B"]);
+    expect(lane2?.events.map((e) => e.summary)).toEqual(["TASK-2-event-A"]);
+
+    // No cross-contamination between lanes
+    expect(lane1?.events.some((e) => e.summary.includes("TASK-2"))).toBe(false);
+    expect(lane2?.events.some((e) => e.summary.includes("TASK-1"))).toBe(false);
+  });
+});
+
 

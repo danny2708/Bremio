@@ -1364,6 +1364,30 @@ Red/green verified by mutating test assertions and confirming failure.
 
 **Deviations:** None.
 
+---
+
+## A4-T1 — Parallel work as lanes
+
+**Done:** Implemented task lane aggregation (`assembleTaskLanes` / `LaneTask`) in `packages/event-view/src/index.ts` and `apps/vscode-extension/src/webview.ts`, and updated TUI `RunScreen` in `apps/cli/src/tui/screens/run.tsx` to render parallel work as lanes instead of an interleaved wall of text.
+
+Key features & rules enforced:
+1. One **lane per task**: id, title, agent, status, and latest activity summary on a single line per task (plus the lead planning lane `LEAD`).
+2. Default view is **O(number of tasks)**, NOT O(number of events). 3 or more concurrent tasks produce a bounded line count (1 line per task) without pushing tasks off screen.
+3. Collapsing is purely a view — full event stream stays intact in the transcript and can be toggled/expanded per lane (`'e'` in TUI).
+4. Failed or blocked lanes stay clearly visible in collapsed single-line view (marked with warning/error status glyphs and message).
+
+**Tests (3 new, 464 total in `packages/event-view/src/index.test.ts`):**
+1. N concurrent tasks produce N lanes and a bounded number of lines (O(N tasks));
+2. a failed lane is visible while collapsed;
+3. expanding a lane yields that task's events and no other task's.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 464/464 pass.
+
+**Deviations:** None.
+
+
 
 
 

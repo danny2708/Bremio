@@ -334,6 +334,111 @@ export function renderLogLine(event: { kind?: string; taskId?: string; message?:
   };
 }
 
+export function assembleTaskLanes(
+  rawEvents: Array<{
+    kind?: string;
+    taskId?: string;
+    agentId?: string;
+    message?: string;
+    data?: unknown;
+  }>,
+): Array<{
+  id: string;
+  title: string;
+  agentId?: string;
+  status: string;
+  lastActivity: string;
+  events: Array<{ kind: string; summary: string; detail?: string; severity: string }>;
+}> {
+  const lanesMap = new Map<string, {
+    id: string;
+    title: string;
+    agentId?: string;
+    status: string;
+    lastActivity: string;
+    events: Array<{ kind: string; summary: string; detail?: string; severity: string }>;
+  }>();
+
+  for (const rawEv of rawEvents) {
+    const taskId =
+      rawEv.taskId || (rawEv.kind === "lead" || rawEv.kind === "plan" ? "LEAD" : "MAIN");
+    const agentId = rawEv.agentId;
+
+    let lane = lanesMap.get(taskId);
+    if (!lane) {
+      lane = {
+        id: taskId,
+        title: taskId === "LEAD" ? "Lead Planning" : taskId === "MAIN" ? "Main Task" : taskId,
+        agentId,
+        status: "running",
+        lastActivity: "starting",
+        events: [],
+      };
+      lanesMap.set(taskId, lane);
+    }
+
+    if (agentId && !lane.agentId) lane.agentId = agentId;
+
+    const dataObj =
+      typeof rawEv.data === "object" && rawEv.data !== null
+        ? (rawEv.data as Record<string, unknown>)
+        : undefined;
+
+    if (rawEv.kind === "plan" && dataObj?.plan) {
+      const planObj = dataObj.plan as { summary?: string };
+      lane.lastActivity = planObj.summary ?? rawEv.message ?? "Plan created";
+      lane.status = "completed";
+    }
+
+    if (rawEv.kind === "task-start" && rawEv.message) {
+      lane.title = rawEv.message;
+      lane.status = "running";
+    }
+
+    if (rawEv.kind === "task-complete" && rawEv.message) {
+      lane.status = rawEv.message === "completed" ? "completed" : "failed";
+      lane.lastActivity = rawEv.message;
+    }
+
+    if (rawEv.kind === "failed") {
+      lane.status = "failed";
+      if (rawEv.message) lane.lastActivity = rawEv.message;
+    }
+
+    if (rawEv.kind === "finished") {
+      lane.status = "completed";
+    }
+
+    const evType =
+      rawEv.kind === "failed"
+        ? "error"
+        : rawEv.kind === "log" || rawEv.kind === "task-event" || !rawEv.kind
+          ? "message"
+          : rawEv.kind;
+    const agentEv = dataObj
+      ? Object.assign({ type: evType }, dataObj)
+      : { type: evType, text: rawEv.message, message: rawEv.message };
+    const view = renderEvent(agentEv as any);
+
+    lane.events.push({
+      kind: view.kind,
+      summary: view.summary,
+      ...(view.detail ? { detail: view.detail } : {}),
+      severity: view.severity,
+    });
+
+    if (view.summary) {
+      lane.lastActivity = view.summary;
+    }
+
+    if (view.severity === "error") {
+      lane.status = "failed";
+    }
+  }
+
+  return Array.from(lanesMap.values());
+}
+
 export function panelHtml(nonce: string, cspSource: string, iconUri = ""): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -861,6 +966,7 @@ const renderDecisionReasons = ${renderDecisionReasons.toString()};
 const renderEvent = ${renderEvent.toString()};
 const formatTaskExecution = ${formatTaskExecution.toString()};
 const renderLogLine = ${renderLogLine.toString()};
+const assembleTaskLanes = ${assembleTaskLanes.toString()};
 
 function renderRuns(payload) {
   const runs = payload.runs ?? [];
