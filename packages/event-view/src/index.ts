@@ -91,6 +91,52 @@ export function renderEvent(event: {
   }
 }
 
+/**
+ * The agent's answer for one turn, separated from the work it did to get there.
+ *
+ * Every other agent CLI shows this as the main content and the tool calls as
+ * subordinate detail. Bremio recorded it faithfully but no surface displayed
+ * it: a run whose whole value was the reply ("could you tell me which city?")
+ * rendered as `status: completed · files: 0` and nothing else.
+ *
+ * Two sources, because providers differ. `completed.outcome.finalText` is the
+ * authoritative one when present; otherwise the streamed `message` fragments
+ * are joined, since some providers only ever emit those. Fragments are
+ * preferred when they are strictly longer, because a provider that both
+ * streams and reports may truncate its summary.
+ */
+export function extractResponse(
+  events: ReadonlyArray<{
+    type?: string;
+    kind?: string;
+    text?: string;
+    role?: string;
+    outcome?: { finalText?: string };
+    // Real events carry tool names, exit codes and more. They are ignored here,
+    // but the caller must not have to strip them to pass its own events in.
+    [key: string]: unknown;
+  }>,
+): string | undefined {
+  const fragments: string[] = [];
+  let finalText: string | undefined;
+
+  for (const event of events) {
+    const type = event.type ?? event.kind;
+    if (type === "message" && typeof event.text === "string") {
+      // `role` is absent on some providers; only an explicitly non-assistant
+      // message is skipped, so a missing role is still treated as the answer.
+      if (event.role === undefined || event.role === "assistant") fragments.push(event.text);
+    }
+    if (type === "completed" && typeof event.outcome?.finalText === "string") {
+      finalText = event.outcome.finalText;
+    }
+  }
+
+  const streamed = fragments.join("\n").trim();
+  if (finalText && finalText.trim().length >= streamed.length) return finalText.trim();
+  return streamed.length > 0 ? streamed : finalText?.trim();
+}
+
 export interface TaskExecutionInput {
   agentId?: string;
   confirmedModel?: string;

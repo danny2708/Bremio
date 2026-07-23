@@ -10,7 +10,7 @@ import {
   runSingleAgent,
   type BremioRunReport,
 } from "@bremio/orchestrator";
-import { assembleTaskLanes, renderEvent, type LaneTask } from "@bremio/event-view";
+import { assembleTaskLanes, extractResponse, renderEvent, type LaneTask } from "@bremio/event-view";
 import { ErrorBox, Header, Menu, Spinner, StatusText, TextInput } from "../components";
 import { createAdapters, AGENT_LABELS } from "../data";
 import { theme } from "../theme";
@@ -219,6 +219,22 @@ export function RunScreen({
 
   const lanes = assembleTaskLanes(events);
 
+  // Prefer what was persisted, so the screen and `report.json` cannot disagree.
+  // The live event stream is the fallback for a run that ended without one.
+  const responseText =
+    report?.mode === "single"
+      ? report.result.summary?.trim() ||
+        extractResponse(
+          events.map((ev) =>
+            typeof ev.data === "object" && ev.data !== null
+              ? (ev.data as Record<string, unknown>)
+              : { text: ev.message },
+          ),
+        )
+      : report?.mode === "team"
+        ? report.plan?.summary?.trim()
+        : undefined;
+
   if (phase === "mode") {
     return (
       <Box flexDirection="column">
@@ -362,6 +378,16 @@ export function RunScreen({
       {error ? <ErrorBox message={error} /> : null}
       {report ? (
         <Box flexDirection="column">
+          {/* The agent's answer leads. A run whose entire value is the reply
+              used to render as "status: completed · files: 0" with the reply
+              itself nowhere on screen. */}
+          {responseText ? (
+            <Box flexDirection="column" marginBottom={1}>
+              {responseText.split("\n").map((line, idx) => (
+                <Text key={idx} color={theme.text}>{`  ${line}`}</Text>
+              ))}
+            </Box>
+          ) : null}
           <Box>
             <Text color={theme.muted}>{"  status: "}</Text>
             <StatusText status={reportStatus(report)} />

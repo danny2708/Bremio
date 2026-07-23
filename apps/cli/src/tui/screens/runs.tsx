@@ -153,50 +153,65 @@ export function RunsScreen({
         ) : (
           viewModel.turns.map((turn) => (
             <Box key={turn.runId} flexDirection="column" marginBottom={1}>
+              {/* The prompt reads as something the user said, so it is
+                  attributed and quoted rather than labelled "Prompt:". */}
+              <Text bold color={theme.accent}>{"  You"}</Text>
+              {turn.prompt.split("\n").map((line, idx) => (
+                <Text key={idx} color={theme.text}>{`    ${line}`}</Text>
+              ))}
+
+              <Box marginTop={1} />
               <Text bold color={theme.primary}>
-                {`  Turn ${turn.turnIndex + 1} `}
-                <Text color={theme.muted}>{`(run ${turn.runId})`}</Text>
+                {`  ${turn.model ?? "Agent"}`}
+                {turn.reasoningLevel ? (
+                  <Text color={theme.muted}>{` · ${turn.reasoningLevel}`}</Text>
+                ) : null}
               </Text>
-              <Text color={theme.textSecondary}>{`    Prompt: ${turn.prompt}`}</Text>
 
-              {turn.model || turn.reasoningLevel ? (
-                <Text color={theme.muted}>
-                  {`    Model: ${turn.model ?? "not reported"}${turn.reasoningLevel ? ` [${turn.reasoningLevel}]` : ""}`}
-                </Text>
-              ) : null}
-
+              {/* The work comes before the answer, dimmed and collapsed, the
+                  way every other agent CLI orders it. */}
               {turn.events.length > 0 ? (
-                <Box flexDirection="column" marginTop={1} marginLeft={2}>
-                  <Text color={theme.muted}>  Process:</Text>
-                  {turn.events.map((ev, idx) => {
-                    const isExpanded = expandAll;
-                    if (ev.isCollapsible && !isExpanded) {
-                      return (
-                        <Box key={`${ev.seq}-${idx}`} marginLeft={4}>
-                          <Text color={theme.muted}>
-                            {`▸ [collapsed] ${ev.summary}`}
+                <Box flexDirection="column">
+                  {turn.events
+                    .filter((ev) => ev.kind !== "message" && ev.kind !== "completed")
+                    .map((ev, idx) => {
+                      if (ev.isCollapsible && !expandAll) {
+                        return (
+                          <Text key={`${ev.seq}-${idx}`} color={theme.muted}>
+                            {`    ▸ ${ev.summary}`}
                           </Text>
+                        );
+                      }
+                      return (
+                        <Box key={`${ev.seq}-${idx}`} flexDirection="column">
+                          <Text color={ev.severity === "error" ? theme.danger : theme.muted}>
+                            {`    ${ev.isCollapsible ? "▾" : "·"} ${ev.summary}`}
+                          </Text>
+                          {ev.detail ? (
+                            <Text color={theme.muted}>{`      ${ev.detail}`}</Text>
+                          ) : null}
                         </Box>
                       );
-                    }
-                    return (
-                      <Box key={`${ev.seq}-${idx}`} flexDirection="column" marginLeft={4}>
-                        <Text color={ev.severity === "error" ? theme.danger : theme.text}>
-                          {`${ev.isCollapsible ? "▾ " : "• "}${ev.summary}`}
-                        </Text>
-                        {ev.detail ? (
-                          <Box marginLeft={2}>
-                            <Text color={theme.muted}>{ev.detail}</Text>
-                          </Box>
-                        ) : null}
-                      </Box>
-                    );
-                  })}
+                    })}
                 </Box>
               ) : null}
 
-              <Box marginTop={1} marginLeft={2}>
-                <Text bold>{`  Outcome: ${statusGlyph(turn.status as any)} ${turn.status}`}</Text>
+              {/* The answer itself, at full width and undimmed: this is the
+                  part the user came for, and it used to be invisible. */}
+              {turn.response ? (
+                <Box flexDirection="column" marginTop={turn.events.length > 0 ? 1 : 0}>
+                  {turn.response.split("\n").map((line, idx) => (
+                    <Text key={idx} color={theme.text}>{`    ${line}`}</Text>
+                  ))}
+                </Box>
+              ) : (
+                <Text color={theme.muted}>{"    (no response recorded)"}</Text>
+              )}
+
+              <Box marginTop={1}>
+                <Text color={theme.muted}>
+                  {`    ${statusGlyph(turn.status as any)} ${turn.status} · run ${turn.runId}`}
+                </Text>
               </Box>
             </Box>
           ))

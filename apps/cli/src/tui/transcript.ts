@@ -1,4 +1,4 @@
-import { renderEvent, type EventView } from "@bremio/event-view";
+import { extractResponse, renderEvent, type EventView } from "@bremio/event-view";
 
 export interface SessionTurn {
   turnIndex: number;
@@ -30,6 +30,8 @@ export interface TranscriptTurnView {
   model?: string;
   reasoningLevel?: string;
   events: TranscriptEventView[];
+  /** What the agent actually said, absent when it never answered. */
+  response?: string;
 }
 
 export interface TranscriptViewModel {
@@ -54,6 +56,15 @@ export function assembleTranscript(
 
   const turns: TranscriptTurnView[] = (session.turns ?? []).map((turn: SessionTurn) => {
     const rawEvents = eventsMap.get(turn.runId) ?? [];
+    // Persisted events keep the agent payload under `data`; the response lives
+    // there, not in the envelope the daemon wraps around it.
+    const response = extractResponse(
+      rawEvents.map((ev) =>
+        typeof ev.data === "object" && ev.data !== null
+          ? { kind: ev.kind, ...ev.data }
+          : { kind: ev.kind, text: ev.message },
+      ),
+    );
     const events: TranscriptEventView[] = rawEvents.map((ev) => {
       const seq = typeof ev.seq === "number" ? ev.seq : 0;
       const agentEv =
@@ -81,6 +92,7 @@ export function assembleTranscript(
       ...(turn.model ? { model: turn.model } : {}),
       ...(turn.reasoningLevel ? { reasoningLevel: turn.reasoningLevel } : {}),
       events,
+      ...(response ? { response } : {}),
     };
   });
 

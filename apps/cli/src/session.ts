@@ -4,7 +4,7 @@ import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
 import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import { daemonStatus, defaultDatabasePath, RunStore } from "@bremio/daemon";
-import { renderEvent } from "@bremio/event-view";
+import { extractResponse, renderEvent } from "@bremio/event-view";
 import { createRegistry, runBremio, runSingleAgent } from "@bremio/orchestrator";
 import { c, formatEventView, statusGlyph } from "./ui";
 
@@ -175,44 +175,55 @@ export async function showSessionCommand(options: SessionShowOptions): Promise<n
   const maxEvents = options.maxEvents ?? 100;
 
   for (const turn of sessionDetail.turns ?? []) {
-    console.log(`\n${c.bold(`Turn ${turn.turnIndex + 1}`)} ${c.dim(`(run ${turn.runId})`)}`);
-    console.log(` Prompt: ${c.bold(turn.prompt)}`);
-    if (turn.model || turn.reasoningLevel) {
-      console.log(
-        ` Model: ${c.dim(turn.model ?? "not reported")}${turn.reasoningLevel ? c.dim(` [${turn.reasoningLevel}]`) : ""}`,
-      );
-    }
-
     const events = runEventsMap.get(turn.runId) ?? [];
-    const totalEvents = events.length;
+    const agentEvents = events.map((ev) =>
+      typeof ev.data === "object" && ev.data !== null
+        ? { type: ev.kind ?? "log", ...ev.data }
+        : { type: ev.kind ?? "log", text: ev.message, message: ev.message },
+    );
 
-    let displayEvents = events;
+    // Attributed like a conversation rather than labelled like a record: the
+    // prompt is something the user said and the response is the agent's reply.
+    console.log(`\n${c.bold("You")} ${c.dim(`· turn ${turn.turnIndex + 1}`)}`);
+    for (const promptLine of turn.prompt.split("\n")) console.log(`  ${promptLine}`);
+
+    const who = turn.model ?? "Agent";
+    console.log(
+      `\n${c.bold(who)}${turn.reasoningLevel ? c.dim(` · ${turn.reasoningLevel}`) : ""}`,
+    );
+
+    const totalEvents = events.length;
+    let displayEvents = agentEvents;
     let elided = 0;
     if (maxEvents > 0 && totalEvents > maxEvents) {
-      displayEvents = events.slice(0, maxEvents);
+      displayEvents = agentEvents.slice(0, maxEvents);
       elided = totalEvents - maxEvents;
     }
 
-    if (displayEvents.length > 0) {
-      console.log(` Process:`);
-      for (const ev of displayEvents) {
-        const agentEv =
-          typeof ev.data === "object" && ev.data !== null
-            ? { type: ev.kind ?? "log", ...ev.data }
-            : { type: ev.kind ?? "log", text: ev.message, message: ev.message };
-        const view = renderEvent(agentEv as any);
-        console.log(`   ${formatEventView(view)}`);
-      }
-      if (elided > 0) {
-        console.log(
-          c.yellow(
-            `   ... elided ${elided} long transcript event(s). Use --max-events ${totalEvents} (or 0) to view full transcript.`,
-          ),
-        );
-      }
+    // The work the agent did, dimmed and subordinate. The answer itself is
+    // printed after it, undimmed — it is what the user asked for, and until
+    // now no surface showed it at all.
+    for (const agentEv of displayEvents) {
+      if (agentEv.type === "message" || agentEv.type === "completed") continue;
+      console.log(`  ${c.dim(formatEventView(renderEvent(agentEv as any)))}`);
+    }
+    if (elided > 0) {
+      console.log(
+        c.yellow(
+          `  ... elided ${elided} long transcript event(s). Use --max-events ${totalEvents} (or 0) to view full transcript.`,
+        ),
+      );
     }
 
-    console.log(` Outcome: ${statusGlyph(turn.status)}`);
+    const response = extractResponse(agentEvents);
+    if (response) {
+      console.log("");
+      for (const responseLine of response.split("\n")) console.log(`  ${responseLine}`);
+    } else {
+      console.log(`  ${c.dim("(no response recorded)")}`);
+    }
+
+    console.log(`\n  ${c.dim(`${statusGlyph(turn.status)} ${turn.status}`)}`);
   }
 
   console.log(line);

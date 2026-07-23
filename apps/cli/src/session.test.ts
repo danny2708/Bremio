@@ -65,8 +65,8 @@ describe("A3-T1: bremio session list and bremio session show", () => {
       repositoryPath: repoPath,
       prompt: "refactor database client",
     });
-    store.appendEvent(run.id, "message", { message: "analyzing schema" });
     store.appendEvent(run.id, "tool_use", { name: "read", input: { file_path: "src/db.ts" } });
+    store.appendEvent(run.id, "message", { text: "analyzing schema" });
     store.appendEvent(run.id, "completed", { message: "done" });
     store.updateRun(run.id, { status: "completed" });
     store.close();
@@ -78,18 +78,23 @@ describe("A3-T1: bremio session list and bremio session show", () => {
     expect(code).toBe(0);
 
     const output = logs.join("\n");
-    expect(output).toContain("Turn 1");
+    expect(output).toContain("turn 1");
     expect(output).toContain("refactor database client");
-    expect(output).toContain("analyzing schema");
     expect(output).toContain("→ read src/db.ts");
     expect(output).toContain("completed");
+    // The agent's answer, which the transcript never used to print at all.
+    expect(output).toContain("analyzing schema");
 
-    // Order check: Prompt -> Process -> Outcome
+    // Order: what the user asked -> the work -> the answer -> the outcome.
+    // The answer sits after the work and before the status line, so a long
+    // tool log cannot bury it and the status cannot be mistaken for a reply.
     const promptIdx = output.indexOf("refactor database client");
-    const processIdx = output.indexOf("analyzing schema");
-    const outcomeIdx = output.indexOf("Outcome:");
-    expect(promptIdx).toBeLessThan(processIdx);
-    expect(processIdx).toBeLessThan(outcomeIdx);
+    const workIdx = output.indexOf("→ read src/db.ts");
+    const answerIdx = output.lastIndexOf("analyzing schema");
+    const outcomeIdx = output.lastIndexOf("completed");
+    expect(promptIdx).toBeLessThan(workIdx);
+    expect(workIdx).toBeLessThan(answerIdx);
+    expect(answerIdx).toBeLessThan(outcomeIdx);
   });
 
   it("3. an unknown id exits non-zero with a naming message", async () => {

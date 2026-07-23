@@ -129,4 +129,50 @@ describe("A3-T2: Transcript Assembly", () => {
     expect(noTurnsModel.sessionId).toBe("ses-empty");
     expect(noTurnsModel.turns).toHaveLength(0);
   });
+
+  it("4. carries the agent's answer, not only the work it did to get there", () => {
+    const session: SessionDetail = {
+      id: "ses-answer",
+      repositoryPath: "/tmp/repo",
+      title: "weather",
+      turns: [
+        { turnIndex: 0, runId: "run-1", prompt: "How is the weather?", status: "completed" },
+      ],
+    };
+    const events = new Map([
+      [
+        "run-1",
+        [
+          { seq: 1, kind: "started", data: { type: "started" } },
+          { seq: 2, kind: "tool_use", data: { type: "tool_use", name: "shell" } },
+          {
+            seq: 3,
+            kind: "message",
+            data: { type: "message", role: "assistant", text: "Which city did you mean?" },
+          },
+        ],
+      ],
+    ]);
+
+    const model = assembleTranscript(session, events);
+    // The whole value of this run was the reply. Before, the view model had
+    // nowhere to put it and every surface printed only status and file counts.
+    expect(model.turns[0]?.response).toBe("Which city did you mean?");
+  });
+
+  it("5. leaves the response undefined when the agent never answered", () => {
+    const session: SessionDetail = {
+      id: "ses-silent",
+      repositoryPath: "/tmp/repo",
+      title: "silent",
+      turns: [{ turnIndex: 0, runId: "run-1", prompt: "do a thing", status: "failed" }],
+    };
+    const events = new Map([
+      ["run-1", [{ seq: 1, kind: "started", data: { type: "started" } }]],
+    ]);
+
+    // Undefined, so the UI can say "no response recorded" rather than showing
+    // an empty block that reads as an empty answer.
+    expect(assembleTranscript(session, events).turns[0]?.response).toBeUndefined();
+  });
 });
