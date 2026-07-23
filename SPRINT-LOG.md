@@ -1548,6 +1548,36 @@ Red/green verified by mutating test assertions and confirming failure.
 
 **Deviations:** None.
 
+---
+
+## B2 — The context assembler
+
+**Done:** Created `@bremio/harness` package containing `assembleTurnContext` in `packages/harness/src/context-assembler.ts`.
+
+Key implementation details:
+1. **Scoping**: Built strictly for Lead and Single mode context continuity (workers receive composed task prompts).
+2. **Current Diff State**: Incorporates the workspace `currentDiff` under `## Current Repository State` so the model sees exact changes made in prior turns.
+3. **Stable Ordering**:
+   - Elided older turns announced via `[Elided Turn N (Summary: ...)]`.
+   - Older turns rendered as summaries `### Turn N (Summary)`.
+   - Recent turns rendered verbatim `### Turn N`.
+   - Current repository diff state (`## Current Repository State`).
+   - Current turn instruction (`## Current Turn Instruction`).
+4. **Pure & Synchronous**: Takes `AssembleContextOptions` and produces deterministic `AssembledContext`, testable without any external provider.
+
+**Tests (4 new, 486 total overall in `packages/harness/src/context-assembler.test.ts`):**
+1. Assembles exact multiline prompt content for a fixed history with summaries and verbatim turns.
+2. A turn referring to a prior change sees the current diff state in `## Current Repository State`.
+3. Explicitly announces elided older turns without silent truncation.
+4. Renders clean output for the initial turn (empty history, no diff).
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 486/486 pass.
+
+**Deviations:** None.
+
+
 
 
 
