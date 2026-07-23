@@ -12,6 +12,7 @@ export {
   type SingleRunReport,
   type SingleRunFallback,
   type SingleRunVerification,
+  shouldEscalate,
 } from "./single-run";
 export { createRegistry, type AgentRegistry } from "./registry";
 

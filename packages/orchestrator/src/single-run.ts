@@ -221,6 +221,16 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
   return report;
 }
 
+/** Escalation is offered only after a Single run fails its objective verification,
+ * not on any failure signal the model reports about itself. A run that itself
+ * failed (crash, timeout, cancel) does not qualify — only a completed run whose
+ * verification (test/lint/build) failed or was missing.
+ */
+export function shouldEscalate(report: SingleRunReport): boolean {
+  if (report.result.status !== "completed") return false;
+  return report.verification.status !== "passed";
+}
+
 function verifySingleResult(result: SingleAgentResult): SingleRunVerification {
   if (result.status !== "completed") {
     return { status: "failed", reasons: [result.error ?? `agent run ${result.status}`] };

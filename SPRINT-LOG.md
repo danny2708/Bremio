@@ -873,3 +873,61 @@ mutated "ready" string → test 2 went red; restored both → green.
 `["single", "team"]` (intentionally — auto is resolved at the CLI level, not in
 protocol types). The `--mode auto` resolution is therefore a CLI concern only;
 orchestrator and protocol layers never see the string `"auto"`.
+
+---
+
+## S4-T2 — User-approved escalation from Single to Team
+
+**Done:** After a Single run fails its objective verification, Bremio may escalate
+to a Team run — only with explicit approval. A model's own failure signal (crash,
+timeout, cancel) is never ground for escalation.
+
+**Implementation:**
+
+1. **`shouldEscalate(report)`** in `packages/orchestrator/src/single-run.ts` — pure
+   function: returns `true` only when the run completed (`result.status === "completed"`)
+   but its verification did not pass (`verification.status !== "passed"`). A failed
+   run, cancelled run, or passed verification all return `false`. Exported from
+   `@bremio/orchestrator`.
+
+2. **CLI `--escalate` flag** (`apps/cli/src/index.ts`) — when passed, the CLI
+   auto-generates a comparison ID (if none was given), passes it to the Single run,
+   and automatically escalates to Team after verification failure without prompting.
+   In interactive mode without `--escalate`, the user is prompted (`y/N`). In
+   non-interactive mode without `--escalate`, escalation is silently declined with
+   a message explaining to use `--escalate`.
+
+3. **Comparison group sharing** — both attempts record under the same `comparisonId`.
+   If `--comparison` was given, it is used. Otherwise, a unique `esc-<random>`
+   comparison ID is generated before the Single run starts, ensuring the escalated
+   Team run joins the same ledger group.
+
+4. **Safety:** A passing Single run never triggers the escalation offer.
+   `shouldEscalate` is the sole gate. Declining (or non-interactive skip) leaves
+   the Single result and all its artifacts intact — `report.json`, workspace
+   changes, and ledger entries are untouched.
+
+**Tests (7 new, 401 total):**
+
+1. **Pure function (3):** passing run returns false; completed + failed verification
+   returns true; failed/crashed run returns false (model failure is not escalation
+   grounds).
+2. **No approval (integration):** non-interactive, no `--escalate` — Single runs but
+   Team never executes. Verified by report existence.
+3. **Approval (integration):** with `--escalate` (auto-approval), both Single and
+   Team ledger summaries carry the same `comparisonId` with distinct flow modes.
+4. **Cost recording (integration):** both attempts' usage entries share one
+   comparison group, and every non-summary entry has provider-reported `costUsd`.
+5. **Passing run (pure):** `shouldEscalate` returns false for a passed verification.
+
+**Red/green verified:** Mutated `shouldEscalate` gate (always return false) → tests
+2 and 3 silently skip escalation without failing (red because they assert Team ran).
+Mutated the verification check (accept "failed" runs) → test for crashed-run
+returned true (red). Restored both → green.
+
+**Typecheck:** clean (CLI + orchestrator). **Test:** 401/401 pass (45 files).
+No regressions.
+
+**Deviations:** `--worker` and `--agent` are not accepted with `--escalate` in Single
+mode (existing validation rejects them). The escalated Team always uses Claude as
+lead with the default worker. A future iteration could accept `--escalate-worker`.
