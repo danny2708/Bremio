@@ -31,7 +31,7 @@ results back into one place.
 
 ## Status
 
-- Code status (2026-07-22): `0.1.0-alpha.1` ships the CLI and Ink TUI, a
+- Code status (2026-07-23): `1.0.0` ships the CLI and Ink TUI, a
   durable loopback daemon, and a VS Code panel. Team execution is
   dependency-aware and parallel (default concurrency 2), while git worktree
   mutations stay serialized. Reports, cancellation states, diagnostics,
@@ -48,7 +48,7 @@ results back into one place.
   controlled pair collection, and the calibrated pre-task cost kill-switch are
   implemented, as are calibration-gated Auto mode and user-approved Single→Team
   escalation.
-- The local release gate passes typecheck, 415 tests, bundle build, clean packed
+- The local release gate passes typecheck, 479 tests, bundle build, clean packed
   install, and a 21-check fresh-profile daemon E2E on Windows. The separate
   POSIX verification now passes too (WSL Ubuntu 24.04, Node 22.23.1): process
   groups, single-instance lock and discovery, SQLite, SSE resume, cancellation

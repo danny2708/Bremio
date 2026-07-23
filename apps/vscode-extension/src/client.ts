@@ -19,7 +19,7 @@ declare const __BREMIO_EXTENSION_VERSION__: string | undefined;
  * drift. The fallback only applies when running from source in tests.
  */
 export const CLIENT_PROTOCOL_VERSION =
-  typeof __BREMIO_PROTOCOL_VERSION__ === "number" ? __BREMIO_PROTOCOL_VERSION__ : 1;
+  typeof __BREMIO_PROTOCOL_VERSION__ === "number" ? __BREMIO_PROTOCOL_VERSION__ : 2;
 
 export const EXTENSION_VERSION =
   typeof __BREMIO_EXTENSION_VERSION__ === "string" ? __BREMIO_EXTENSION_VERSION__ : "dev";

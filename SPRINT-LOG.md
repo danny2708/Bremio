@@ -1430,6 +1430,84 @@ removed instead — `docs/10` §5. I re-checked A2-T2 and A3-T2 that way myself 
 both genuinely fail when their production logic is broken, so the tests are
 sound; only the described method was wrong.
 
+---
+
+## S5-T4 — Prepare the v1.0.0 release (Claude, 2026-07-23)
+
+**Version.** `1.0.0` across the four package.json files that carry one: root,
+`apps/cli`, `apps/daemon`, `apps/vscode-extension`. Install instructions in
+`README.md` and `docs/07` were still naming `bremio-0.1.0-alpha.1.tgz` and a
+`.vsix` filename the packager never produces — those commands would have failed
+for anyone following them, so they now name `bremio-1.0.0.tgz` and `bremio.vsix`
+(the packager's actual fixed output). Test counts and the roadmap's release
+heading synced to 1.0.
+
+**Protocol: 1 → 2, and why.** Every wire change since protocol 1 was additive —
+the `/sessions` and `/sessions/:id` routes, and optional fields on run detail
+and the report. An old client against a new daemon is unaffected: it ignores
+what it does not know and never calls the new routes, which is why
+`MINIMUM_CLIENT_PROTOCOL` deliberately stays at **1** rather than refusing those
+clients. The bump exists for the other direction, which is the one that actually
+breaks: a v1.0 extension asking a 0.1 daemon for `/sessions` gets a 404, and a
+sessions list that merely looks empty is the worst kind of failure. At protocol
+2 the handshake says "the running daemon is older than this extension" and names
+the fix. The version-coupling test caught the stale fallback literal in
+`client.ts` on the first `release:check` run — the extension inlines the value at
+build time and falls back to a literal only under test, and that literal was
+still 1. That test exists for exactly this and earned its place.
+
+**Gate 1 — `corepack pnpm release:check`:**
+
+```
+Test Files  50 passed (50)
+     Tests  479 passed (479)
+> bremio@1.0.0 build   →  Built Bremio 1.0.0 in D:\Work\Side-Projects\Bremio\dist
+> bremio@1.0.0 release:smoke
+PASS clean packed install: bremio 1.0.0
+```
+
+**Gate 2 — `corepack pnpm e2e:fresh`:**
+
+```
+PASS  daemon stopped and withdrew its endpoint
+PASS  daemon restarted with a new token
+PASS  the run is still in history after a restart
+PASS  its events replay  1 event(s)
+PASS  a second daemon start is refused
+PASS  no token in the bundle
+PASS  no prompts in the bundle
+21/21 checks passed
+fresh install works end to end
+```
+
+**Gate 3 — `corepack pnpm posix:verify`** (from inside WSL Ubuntu 24.04, Node
+22.23.1 — run from PowerShell it would resolve `bash` to Git Bash and drag the
+Windows `node_modules` along):
+
+```
+node v22.23.1
+PASS  supervisor
+PASS  lifecycle
+PASS  storage
+PASS  protocol
+PASS  cancellation
+PASS  0600 on the token file
+all POSIX checks passed
+```
+
+**Artifacts (built, not published).** `bremio-1.0.0.tgz` (1.19 MB) via
+`npm pack`, and `bremio.vsix` (1.18 MB) via the extension's `package` script.
+No `npm publish`, no `vsce publish`, no pushed tag — `docs/10` §2 reserves that
+for a human.
+
+**CHANGELOG.md** covers alpha → 1.0 grouped by what a user would notice, and
+carries the known limitations rather than burying them: the Windows kill-walk
+race (POSIX has no such gap, now verified rather than assumed), no registry
+publication, Auto mode staying on Single until calibration has evidence, and
+sessions being read-only until v1.1.
+
+**Deviations:** None.
+
 
 
 

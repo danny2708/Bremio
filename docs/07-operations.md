@@ -51,7 +51,7 @@ From a source checkout:
 corepack pnpm install
 corepack pnpm release:check          # typecheck, full suite, build, packed-install smoke
 npm pack                             # produces bremio-<version>.tgz
-npm install --global .\bremio-0.1.0-alpha.1.tgz
+npm install --global .\bremio-1.0.0.tgz
 bremio --version
 bremio doctor
 ```
@@ -65,7 +65,7 @@ The VS Code extension:
 ```powershell
 cd apps/vscode-extension
 corepack pnpm run package            # builds, then packs the VSIX
-code --install-extension .\bremio-0.1.0-alpha.1.vsix
+code --install-extension .\bremio.vsix
 ```
 
 Then reload the window. The extension starts the daemon itself on first use, so
@@ -85,7 +85,7 @@ survived. Your real profile is neither read nor modified.
 The complete pre-release evidence set is:
 
 ```powershell
-corepack pnpm release:check   # typecheck + 415 tests + build + packed install
+corepack pnpm release:check   # typecheck + 479 tests + build + packed install
 corepack pnpm e2e:fresh       # 21 fresh-profile daemon/install checks
 corepack pnpm posix:verify    # run from Linux or a configured WSL distribution
 ```
@@ -269,7 +269,7 @@ keep everything else.
   success. It narrows the failure from *silent* to *stated*; it does not close
   the race.
 - **No registry publication.** `npm i -g bremio` does not work for this alpha;
-  install `bremio-0.1.0-alpha.1.tgz` from the artifact you built.
+  install `bremio-1.0.0.tgz` from the artifact you built.
 - **Quota freshness depends on the provider.** Bremio reads AI-Quota-Tray's
   database, which only advances when the provider's own tooling runs. Stale
   readings are labelled with their age rather than presented as current.

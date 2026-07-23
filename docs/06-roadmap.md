@@ -3,13 +3,13 @@
 Principle: **prove the cheap thing before building the expensive one.** No
 dashboard/quota/parallelism before the core loop runs.
 
-## v0.1 alpha release cut
+## v1.0 release cut
 
-**Status (updated 2026-07-22): shipped locally as `0.1.0-alpha.1`.** The
+**Status (updated 2026-07-23): shipped locally as `1.0.0`.** The
 distributable npm tarball contains the bundled CLI/TUI and daemon; the VS Code
 extension ships as a local VSIX. Four adapters are registered: lead-capable
 Claude/Codex plus worker-only Antigravity/OpenCode. `pnpm release:check`
-typechecks, runs 415 tests, builds, packs, installs into a clean temporary
+typechecks, runs 479 tests, builds, packs, installs into a clean temporary
 project, and exercises the installed version/help/doctor commands. A separate
 fresh-profile E2E verifies daemon startup, authentication, persistence,
 restart, and diagnostics. Real-provider smoke remains explicit because it

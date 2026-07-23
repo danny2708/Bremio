@@ -10,7 +10,7 @@ deliberately not started — see the note below. The Job Object guarantee in
 S5-T1 is still not claimed: the Windows kill-walk race stands, but a run whose
 workspace is still referenced now reports `cancellation_failed` with the pids
 rather than a false `cancelled`. Current Windows gates pass `release:check`
-(415 tests) and `e2e:fresh` (21 checks); `posix:verify` remains
+(479 tests) and `e2e:fresh` (21 checks); `posix:verify` remains
 **now passing** (2026-07-23). It had been recorded as environment-blocked "because
 no WSL distribution is installed"; that was wrong twice over. WSL was installed
 all along (Ubuntu 24.04, bash 5.2) — what was missing was Node inside the distro,

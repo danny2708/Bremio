@@ -12,7 +12,7 @@ provider-agnostic orchestrator assigns isolated worktree tasks and aggregates
 the results. ROI goal: **get the most out of the models with the least quota.**
 
 ## Status
-**Bremio `0.1.0-alpha.1` is a locally packaged alpha.** It ships explicit
+**Bremio `1.0.0` is a locally packaged release.** It ships explicit
 Single/Team modes, Claude and Codex as lead-capable adapters, Antigravity
 (`agy`) and OpenCode as workers, an interactive Ink TUI, a durable loopback
 daemon, a VS Code panel, dependency-aware parallel scheduling, isolated git
@@ -42,7 +42,7 @@ From a source checkout:
 corepack pnpm install
 corepack pnpm release:check
 npm pack
-npm install --global .\bremio-0.1.0-alpha.1.tgz
+npm install --global .\bremio-1.0.0.tgz
 bremio --version
 bremio doctor
 ```

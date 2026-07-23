@@ -15,9 +15,27 @@
  * clients must be actively refused rather than merely warned.
  */
 
-export const PROTOCOL_VERSION = 1;
+/**
+ * 2 as of v1.0.0. Every wire change since protocol 1 was additive — the
+ * `/sessions` and `/sessions/:id` routes, and optional fields on run detail and
+ * the report. An old client against a new daemon is therefore fine: it ignores
+ * fields it does not know and never calls the new routes.
+ *
+ * The bump exists for the *other* direction, which is the one that actually
+ * breaks. A v1.0 extension asks a 0.1 daemon for `/sessions` and gets a 404 —
+ * a confusing failure in a surface that looks merely empty. At protocol 2 the
+ * handshake answers "the running daemon is older than this extension" and names
+ * the fix instead, which is the entire reason this mechanism exists.
+ */
+export const PROTOCOL_VERSION = 2;
 
-/** The oldest client protocol the daemon will still serve. */
+/**
+ * The oldest client protocol the daemon will still serve.
+ *
+ * Deliberately still 1: a 0.1 extension talking to a v1.0 daemon works, it
+ * simply does not use sessions. Raising this would refuse those clients
+ * outright, and nothing about the additive changes requires that.
+ */
 export const MINIMUM_CLIENT_PROTOCOL = 1;
 
 export type ProtocolCompatibility =
