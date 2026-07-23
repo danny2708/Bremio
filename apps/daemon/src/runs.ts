@@ -18,8 +18,10 @@ import {
   isTerminal,
   type PersistedRun,
   type PersistedRunEvent,
+  type PersistedSession,
   type RunStatus,
   type RunStore,
+  type SessionDetail,
 } from "./storage";
 
 export type { RunStatus };
@@ -166,6 +168,14 @@ export class RunRegistry {
       canResume: false,
       canOpenWorkspace: this.store.listArtifacts(id).some((a) => a.kind === "worktree"),
     };
+  }
+
+  sessions(repositoryPath: string): PersistedSession[] {
+    return this.store.listSessions(repositoryPath);
+  }
+
+  sessionDetail(id: string): SessionDetail | undefined {
+    return this.store.sessionDetail(id);
   }
 
   /**

@@ -194,6 +194,251 @@ export function renderDecisionReasons(message: DecisionReasonMessage): string {
   return out;
 }
 
+/**
+ * Self-contained (no module-scope references) because `panelHtml` inlines its
+ * source into the webview script via .toString(), matching the pattern used by
+ * `renderCapacityCards`. Canonical source: packages/event-view/src/index.ts.
+ */
+export function renderEvent(event: {
+  type: string;
+  text?: string;
+  name?: string;
+  input?: unknown;
+  ok?: boolean;
+  exitCode?: number;
+  detail?: string;
+  message?: string;
+  level?: string;
+  model?: string;
+  reasoningLevel?: string;
+}): { kind: string; summary: string; detail?: string; severity: string } {
+  switch (event.type) {
+    case "started":
+      return { kind: "started", summary: "started", severity: "info" };
+    case "message": {
+      const text = event.text ?? event.message ?? "";
+      const one = text.replace(/\s+/g, " ").trim();
+      const clipped = one.length > 120 ? one.slice(0, 120) + "…" : one;
+      return { kind: "message", summary: clipped, detail: text, severity: "info" };
+    }
+    case "thinking": {
+      const one = (event.text ?? "").replace(/\s+/g, " ").trim();
+      const clipped = one.length > 120 ? one.slice(0, 120) + "…" : one;
+      return { kind: "thinking", summary: "· " + clipped, detail: event.text, severity: "notice" };
+    }
+    case "tool_use": {
+      const input = (typeof event.input === "object" && event.input) ? event.input as Record<string, unknown> : undefined;
+      const command = input?.command;
+      const file_path = input?.file_path;
+      const arg = typeof command === "string" ? command : typeof file_path === "string" ? file_path : "";
+      return {
+        kind: "tool_use",
+        summary: "→ " + (event.name ?? "?") + (arg ? " " + arg : ""),
+        detail: input ? JSON.stringify(input, null, 2) : undefined,
+        severity: "info",
+      };
+    }
+    case "tool_result":
+      return {
+        kind: "tool_result",
+        summary: (event.ok ? "✓" : "✗") + " " + (event.name ?? "?") + " (exit code " + (event.exitCode ?? "not reported") + ")",
+        detail: event.detail,
+        severity: event.ok ? "success" : "error",
+      };
+    case "log": {
+      const sev = event.level === "error" ? "error" : event.level === "warn" ? "warn" : event.level === "debug" ? "notice" : "info";
+      return { kind: "log", summary: event.message ?? "", severity: sev };
+    }
+    case "usage": {
+      const model = event.model ?? "not reported";
+      const reason = event.reasoningLevel ? " [" + event.reasoningLevel + "]" : "";
+      return { kind: "usage", summary: model + reason, severity: "info" };
+    }
+    case "error":
+      return { kind: "error", summary: "✗ " + (event.message ?? ""), severity: "error" };
+    case "completed":
+      return { kind: "completed", summary: "✓ completed", severity: "success" };
+    default: {
+      const label = String(event.type);
+      return { kind: label, summary: "[" + label + "]", detail: JSON.stringify(event), severity: "info" };
+    }
+  }
+}
+
+/**
+ * Self-contained (no module-scope references) because `panelHtml` inlines its
+ * source into the webview script via .toString(), matching `renderEvent`.
+ * Canonical source: packages/event-view/src/index.ts.
+ */
+export function formatTaskExecution(input: {
+  agentId?: string;
+  confirmedModel?: string;
+  requestedModel?: string;
+  confirmedReasoningLevel?: string;
+  requestedReasoningLevel?: string;
+}): string {
+  const parts: string[] = [];
+  if (input.agentId) parts.push("agent: " + input.agentId);
+
+  const confirmedModel = input.confirmedModel;
+  const requestedModel = input.requestedModel;
+  if (confirmedModel) {
+    if (requestedModel && requestedModel !== confirmedModel) {
+      parts.push("model: " + confirmedModel + " (requested: " + requestedModel + ")");
+    } else {
+      parts.push("model: " + confirmedModel);
+    }
+  } else {
+    if (requestedModel) {
+      parts.push("model: not reported (requested: " + requestedModel + ")");
+    } else {
+      parts.push("model: not reported");
+    }
+  }
+
+  const confirmedReasoning = input.confirmedReasoningLevel;
+  const requestedReasoning = input.requestedReasoningLevel;
+  if (confirmedReasoning) {
+    if (requestedReasoning && requestedReasoning !== confirmedReasoning) {
+      parts.push("reasoning: " + confirmedReasoning + " (requested: " + requestedReasoning + ")");
+    } else {
+      parts.push("reasoning: " + confirmedReasoning);
+    }
+  } else {
+    if (requestedReasoning) {
+      parts.push("reasoning: not reported (requested: " + requestedReasoning + ")");
+    } else {
+      parts.push("reasoning: not reported");
+    }
+  }
+
+  return parts.join(" | ");
+}
+
+export function renderLogLine(event: { kind?: string; taskId?: string; message?: string; data?: unknown }): {
+  summary: string;
+  detail?: string;
+  kind: string;
+  severity: string;
+} {
+  const agentEv =
+    typeof event.data === "object" && event.data !== null
+      ? Object.assign({ type: event.kind || "log" }, event.data)
+      : { type: event.kind || "log", text: event.message, message: event.message };
+  const view = renderEvent(agentEv as any);
+  return {
+    summary: view.summary,
+    detail: view.detail,
+    kind: view.kind,
+    severity: view.severity,
+  };
+}
+
+export function assembleTaskLanes(
+  rawEvents: Array<{
+    kind?: string;
+    taskId?: string;
+    agentId?: string;
+    message?: string;
+    data?: unknown;
+  }>,
+): Array<{
+  id: string;
+  title: string;
+  agentId?: string;
+  status: string;
+  lastActivity: string;
+  events: Array<{ kind: string; summary: string; detail?: string; severity: string }>;
+}> {
+  const lanesMap = new Map<string, {
+    id: string;
+    title: string;
+    agentId?: string;
+    status: string;
+    lastActivity: string;
+    events: Array<{ kind: string; summary: string; detail?: string; severity: string }>;
+  }>();
+
+  for (const rawEv of rawEvents) {
+    const taskId =
+      rawEv.taskId || (rawEv.kind === "lead" || rawEv.kind === "plan" ? "LEAD" : "MAIN");
+    const agentId = rawEv.agentId;
+
+    let lane = lanesMap.get(taskId);
+    if (!lane) {
+      lane = {
+        id: taskId,
+        title: taskId === "LEAD" ? "Lead Planning" : taskId === "MAIN" ? "Main Task" : taskId,
+        agentId,
+        status: "running",
+        lastActivity: "starting",
+        events: [],
+      };
+      lanesMap.set(taskId, lane);
+    }
+
+    if (agentId && !lane.agentId) lane.agentId = agentId;
+
+    const dataObj =
+      typeof rawEv.data === "object" && rawEv.data !== null
+        ? (rawEv.data as Record<string, unknown>)
+        : undefined;
+
+    if (rawEv.kind === "plan" && dataObj?.plan) {
+      const planObj = dataObj.plan as { summary?: string };
+      lane.lastActivity = planObj.summary ?? rawEv.message ?? "Plan created";
+      lane.status = "completed";
+    }
+
+    if (rawEv.kind === "task-start" && rawEv.message) {
+      lane.title = rawEv.message;
+      lane.status = "running";
+    }
+
+    if (rawEv.kind === "task-complete" && rawEv.message) {
+      lane.status = rawEv.message === "completed" ? "completed" : "failed";
+      lane.lastActivity = rawEv.message;
+    }
+
+    if (rawEv.kind === "failed") {
+      lane.status = "failed";
+      if (rawEv.message) lane.lastActivity = rawEv.message;
+    }
+
+    if (rawEv.kind === "finished") {
+      lane.status = "completed";
+    }
+
+    const evType =
+      rawEv.kind === "failed"
+        ? "error"
+        : rawEv.kind === "log" || rawEv.kind === "task-event" || !rawEv.kind
+          ? "message"
+          : rawEv.kind;
+    const agentEv = dataObj
+      ? Object.assign({ type: evType }, dataObj)
+      : { type: evType, text: rawEv.message, message: rawEv.message };
+    const view = renderEvent(agentEv as any);
+
+    lane.events.push({
+      kind: view.kind,
+      summary: view.summary,
+      ...(view.detail ? { detail: view.detail } : {}),
+      severity: view.severity,
+    });
+
+    if (view.summary) {
+      lane.lastActivity = view.summary;
+    }
+
+    if (view.severity === "error") {
+      lane.status = "failed";
+    }
+  }
+
+  return Array.from(lanesMap.values());
+}
+
 export function panelHtml(nonce: string, cspSource: string, iconUri = ""): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -595,14 +840,19 @@ $("new-run").addEventListener("click", () => {
 });
 
 function appendLog(event) {
-  const line = document.createElement("span");
-  line.className = "log-line";
-  const cls = event.kind === "failed" ? "log-fail"
-    : event.kind === "finished" ? "log-done"
-    : event.kind === "lead" ? "log-lead"
-    : "log-task";
+  const view = renderLogLine(event);
+  const line = document.createElement("div");
+  line.className = "log-line " + (view.severity || "info");
+
   const tag = event.taskId ? "[" + event.taskId + "] " : "";
-  line.innerHTML = '<span class="' + cls + '">' + escapeHtml(tag) + "</span>" + escapeHtml(event.message);
+  let html = '<span class="log-tag">' + escapeHtml(tag) + '</span>'
+    + '<span class="log-summary">' + escapeHtml(view.summary) + '</span>';
+
+  if (view.detail && view.kind !== "message") {
+    html += '<pre class="log-detail">' + escapeHtml(view.detail) + '</pre>';
+  }
+
+  line.innerHTML = html;
   $("log").appendChild(line);
   $("log").scrollTop = $("log").scrollHeight;
 }
@@ -710,6 +960,13 @@ const renderCapacityCards = ${renderCapacityCards.toString()};
 // Same single-source-of-truth inlining: the panel and the unit test run this
 // exact function, so a test cannot pass while the branch is disabled.
 const renderDecisionReasons = ${renderDecisionReasons.toString()};
+
+// Inlined from webview.ts so the panel and the unit test share one renderer.
+// Canonical source: packages/event-view/src/index.ts.
+const renderEvent = ${renderEvent.toString()};
+const formatTaskExecution = ${formatTaskExecution.toString()};
+const renderLogLine = ${renderLogLine.toString()};
+const assembleTaskLanes = ${assembleTaskLanes.toString()};
 
 function renderRuns(payload) {
   const runs = payload.runs ?? [];

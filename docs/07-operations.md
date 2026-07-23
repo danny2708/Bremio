@@ -90,9 +90,26 @@ corepack pnpm e2e:fresh       # 21 fresh-profile daemon/install checks
 corepack pnpm posix:verify    # run from Linux or a configured WSL distribution
 ```
 
-`posix:verify` is not emulated through Windows Node. If `/bin/bash` is absent,
-record the gate as environment-blocked and run it on a real Linux/WSL host;
-never convert that into a pass.
+`posix:verify` is not emulated through Windows Node — run it *from inside* the
+Linux shell, not from PowerShell, or `bash` resolves to Git Bash and the Windows
+`node_modules` come with it:
+
+```bash
+wsl -d Ubuntu
+cd /mnt/d/Work/Side-Projects/Bremio && bash scripts/posix-verify.sh
+```
+
+The script needs Node **in the distro** (it exits early otherwise, which is what
+made this gate look "blocked" for longer than it should have). `nvm install 22`
+inside WSL is enough; nothing on the Windows side changes. It copies the source
+to `$HOME/bremio-posix` and installs there, because the Windows `node_modules`
+hold Windows binaries.
+
+Last run 2026-07-23 on Ubuntu 24.04 / Node 22.23.1: **all POSIX checks passed** —
+supervisor, lifecycle, storage, protocol, cancellation, and `0600` on the token
+file. If the environment is genuinely unavailable, record the gate as
+environment-blocked and run it on a real Linux/WSL host; never convert that into
+a pass.
 
 ---
 

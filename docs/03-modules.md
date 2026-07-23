@@ -212,4 +212,7 @@ Stated plainly rather than left to be discovered:
 - **POSIX verification needs a real Linux/WSL environment.** The repository has
   `pnpm posix:verify` for process groups, lock/discovery permissions, SQLite,
   SSE, and cancellation. It cannot run through a Windows-only Node process;
-  the latest local audit was blocked because no WSL distribution was installed.
+  and it now **passes** (2026-07-23, WSL Ubuntu 24.04, Node 22.23.1): 23
+  supervisor, 19 lifecycle, 18 storage, 14 protocol and 11 cancellation tests,
+  plus the `0600` token-file check. The POSIX guarantees are no longer only
+  reasoned about.

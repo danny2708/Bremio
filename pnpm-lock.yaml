@@ -66,6 +66,9 @@ importers:
       '@bremio/daemon':
         specifier: workspace:*
         version: link:../daemon
+      '@bremio/event-view':
+        specifier: workspace:*
+        version: link:../../packages/event-view
       '@bremio/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
@@ -123,6 +126,9 @@ importers:
 
   apps/vscode-extension:
     devDependencies:
+      '@bremio/event-view':
+        specifier: workspace:*
+        version: link:../../packages/event-view
       '@types/vscode':
         specifier: ^1.90.0
         version: 1.125.0
@@ -198,6 +204,8 @@ importers:
       zod:
         specifier: ^4.0.0
         version: 4.4.3
+
+  packages/event-view: {}
 
   packages/orchestrator:
     dependencies:

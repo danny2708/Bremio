@@ -41,9 +41,11 @@ import { mergeCommand } from "./merge";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
 import { collectComparison, printComparison, type ComparisonSide } from "./compare";
 import { capacityCommand } from "./quota";
+import { sessionCommandFromCli } from "./session";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
-import { c, compactEvent, printPlan, printReport, statusGlyph } from "./ui";
+import { renderEvent } from "@bremio/event-view";
+import { c, formatEventView, printPlan, printReport, statusGlyph } from "./ui";
 
 declare const __BREMIO_VERSION__: string | undefined;
 const VERSION = typeof __BREMIO_VERSION__ === "string"
@@ -58,6 +60,8 @@ ${c.bold("Usage")}
   bremio run --mode single --agent <agent> --repo <path> "<prompt>"
   bremio run --mode team --lead <agent> [--worker <agent>] --repo <path> "<prompt>"
   bremio compare [--agent <agent>] [--lead <agent>] --repo <path> "<prompt>"
+  bremio session list [--repo <path>] [--json]
+  bremio session show <id> [--json] [--max-events <n>]
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
@@ -193,6 +197,9 @@ async function main(): Promise<void> {
     case "compare":
       process.exitCode = await compareCommandFromCli(values, positionals);
       return;
+    case "session":
+      process.exitCode = await sessionCommandFromCli(values, positionals);
+      return;
     case "merge":
       process.exitCode = await mergeCommandFromCli(values, positionals);
       return;
@@ -323,8 +330,7 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
           : {
               onStart: (id) => console.log(`${c.bold("●")} ${c.cyan(id)} is running in an isolated baseline worktree…`),
               onEvent: (event) => {
-                const line = compactEvent(event);
-                if (line) console.log(line);
+                console.log(formatEventView(renderEvent(event)));
               },
             },
         team: json
@@ -332,15 +338,13 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
           : {
               onLeadStart: (id) => console.log(`${c.bold("●")} Lead ${c.cyan(id)} is planning…`),
               onLeadEvent: (event) => {
-                const line = compactEvent(event);
-                if (line) console.log(line);
+                console.log(formatEventView(renderEvent(event)));
               },
               onPlan: (plan, assign) => printPlan(plan, assign),
               onTaskStart: (task, id) =>
                 console.log(`\n${c.bold("▶")} ${c.cyan(task.id)} ${task.title} ${c.bold(`→ ${id}`)}`),
               onEvent: (task, _id, event) => {
-                const line = compactEvent(event);
-                if (line) console.log(`${c.dim(`[${task.id}]`)} ${line}`);
+                console.log(`${c.dim(`[${task.id}]`)} ${formatEventView(renderEvent(event))}`);
               },
               onTaskComplete: (taskResult) =>
                 console.log(`  ${statusGlyph(taskResult.status)} ${c.cyan(taskResult.taskId)}`),
@@ -550,8 +554,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         onLeadStart: (id) =>
           console.log(`${c.bold("●")} Lead ${c.cyan(id)} is analyzing the repo and planning…`),
         onLeadEvent: (ev) => {
-          const l = compactEvent(ev);
-          if (l) console.log(l);
+          console.log(formatEventView(renderEvent(ev)));
         },
         onPlan: (plan, assign) => printPlan(plan, assign),
         onFallback: (reason, agentId) =>
@@ -561,8 +564,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         // Tasks run concurrently by default, so every streamed line and every
         // completion is tagged — otherwise interleaved output is unreadable.
         onEvent: (task, _agentId, ev) => {
-          const l = compactEvent(ev);
-          if (l) console.log(`${c.dim(`[${task.id}]`)} ${l}`);
+          console.log(`${c.dim(`[${task.id}]`)} ${formatEventView(renderEvent(ev))}`);
         },
         onTaskComplete: (r) =>
           console.log(
@@ -590,8 +592,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
             `${c.bold("●")} Single Agent ${c.cyan(id)} is working directly in ${c.dim(repoPath)}…`,
           ),
         onEvent: (event) => {
-          const line = compactEvent(event);
-          if (line) console.log(line);
+          console.log(formatEventView(renderEvent(event)));
         },
         onComplete: (result) =>
           console.log(

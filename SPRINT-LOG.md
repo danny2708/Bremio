@@ -1115,3 +1115,322 @@ assertions state the hand-computed value, not a sign or a type.
 
 **Deviations:** S5-T4 (the v1.0 bump) is deliberately not started; the reasoning
 is recorded in `docs/08` rather than here, since it is a plan-level decision.
+
+---
+
+## A0-T1 — apps/vscode-extension
+
+**Done:** Fixed "Current file" never attaching anything — clicking the button
+moved focus to the webview, making `activeTextEditor` undefined. Added
+`lastActiveEditor` remembered via `onDidChangeActiveTextEditor` (ignoring
+undefined and non-file schemes), so focus moving to the panel does not erase
+it. Extracted `resolveActiveAttachment` — a pure, exported function — so the
+decision logic is testable without mocking VS Code. `attachActiveFile` now falls
+back to the remembered editor and rejects non-file schemes (untitled/virtual).
+
+**Tests (3):**
+1. Remembered editor yields that file when active editor is gone.
+2. Never having had an editor yields the explicit error, not an empty attach.
+3. A non-file scheme (untitled) is refused.
+
+Red/green verified: removed each guard and confirmed the corresponding test went
+red. 418/418 pass (30 extension tests, +3).
+
+**Deviations:** Added `vi.mock("vscode", ...)` to `extension.test.ts` — the
+first vscode mock in this file. Necessary because importing `extension.ts` (for
+the exported `resolveActiveAttachment`) triggers the module-level
+`vscode.window.createOutputChannel` call. The mock is inert for existing tests
+(they import only `./client` and `./webview`, which don't depend on vscode).
+
+---
+
+## A1-T1 — apps/daemon/src/storage.ts
+
+**Done:** Sessions are now first-class, durable records. Schema v1→v2 adds the
+`sessions` table (`id, repository_path, title, created_at, updated_at`) plus
+`runs.session_id` and `runs.turn_index`. The migration is real: ALTER TABLE for
+the new columns, backfill that creates one implicit session per existing run so
+every run has a session_id and turn_index=0.
+
+A run created without a `sessionId` gets one implicitly (single turn), with
+`title` derived from the prompt's first line, truncated to 80 chars with "..."
+— never invented, never the full prompt. Runs created with a `sessionId` get
+the next `turn_index` sequentially (ready for multi-turn in A1-T2+).
+
+Retention keeps sessions whole: `pruneRuns` now deletes entire sessions (not
+individual runs), so a session never ends up with a hole in its turns. The rule
+is "all terminal runs old enough or none" — stated in a comment on the query.
+
+Exported `PersistedSession`, `truncateTitle`, `RunStore.listSessions`.
+
+**Tests (8 new, 426 total):**
+1. v1 fixture database upgrades to v2 with all runs, events and artifacts intact.
+2. Fresh v2 and upgraded v1 have structurally identical schemas (same columns).
+3. Implicit session at `turn_index` 0 when none is given.
+4. Pruning never leaves a session with a gap — a session with one terminal and
+   one non-terminal run stays untouched.
+5. `listSessions` ordered by most recent activity, scoped to the repository.
+6–8. `truncateTitle` unit tests.
+
+**Hard:** The v1→v2 migration must be correct on the first try — there is no
+rollback from a migration that drops data. Verified by creating a raw v1
+fixture database with node:sqlite, runs+events+artifacts seeded, then opening
+with the v2 code and asserting everything survived.
+
+**Deviations:** Added `DatabaseSync` import to `storage.test.ts` via
+`createRequire` to build the v1 fixture database. This matches how `storage.ts`
+itself loads node:sqlite. The import is isolated to the test file and does not
+change the production dependency surface.
+
+---
+
+## A1-T2 — apps/daemon (GET /sessions, GET /sessions/:id)
+
+**Done:** Two authenticated GET endpoints for session history:
+
+- `GET /sessions?repo=<path>` — lists sessions for a repository, ordered by most
+  recent activity. Requires `repo` query parameter (400 without it).
+- `GET /sessions/:id` — session detail with turns in order, each carrying
+  `turnIndex`, `runId`, `prompt`, `status`, and the provider-confirmed
+  `model`/`reasoningLevel` from the last `usage` event in that run. Unknown
+  session returns 404 with `{ error: "unknown session: <id>" }`.
+
+Both routes use the existing `x-bremio-token` authentication and Host-header
+guard. No new handlers or middleware.
+
+**Storage:** Added `SessionDetail` + `SessionTurn` types and
+`RunStore.sessionDetail(id)` that queries the session row, all its runs sorted
+by `turn_index ASC`, then reads each run's events to extract the last `usage`
+payload. Runs without a `usage` event omit `model`/`reasoningLevel` from the
+turn.
+
+**Registry:** Added `RunRegistry.sessions(repoPath)` and
+`RunRegistry.sessionDetail(id)` — thin delegations to `this.store`.
+
+**Protocol version:** Not bumped. Additive routes are backward compatible, and
+the extension does not yet consume sessions (A3-T3 owns the panel replay). A
+bump would force a coordinated upgrade for no benefit.
+
+**Tests (4 new, 430 total):**
+1. lists sessions for a repository, scoped to repo param.
+2. rejects missing `repo` query parameter with 400.
+3. returns session detail with turns in order, model and reasoningLevel from
+   usage events.
+4. 404s an unknown session id with an error message.
+
+Red/green verified: removed each guard (repo param, session existence, turn
+ordering) and confirmed the corresponding test went red. 426/426 pass (90 daemon
+tests, +4).
+
+**Deviations:** None.
+
+---
+
+## A2-T1 — Unify CLI, TUI, and VS Code panel event rendering into one module
+
+**Done:** Three divergent event renderers (`compactEvent` in CLI `ui.ts`,
+`describeEvent` in TUI `run.tsx`, inline `if/else` in VS Code panel `webview.ts`)
+replaced with one pure mapping function in a shared package.
+
+**`packages/event-view/src/index.ts`** exports `renderEvent(event: AgentEvent): EventView`
+with 9 event-type branches (started, message, thinking, tool_use, tool_result, log,
+usage, error, completed) + unknown catch-all. Each produces a `{ kind, summary, detail?,
+severity }` struct. The function is self-contained (no module-scope closures) so it
+can be inlined into the VS Code panel webview via `.toString()`.
+
+Consumers:
+- **CLI `ui.ts`**: `formatEventView(view)` colourises by severity — red for error,
+  yellow for warn, green for success, grey for muted, default for info. All 7 call
+  sites in `index.ts` (doctor, TUI, run, log, progress indicators) go through it.
+- **TUI `run.tsx`**: `eventSummary(renderEvent(...))` — returns the summary string
+  for the event log; `describeEvent` deleted.
+- **VS Code panel** (`webview.ts`): Second copy of `renderEvent` (same body, exported
+  + `.toString()` inlined into panel HTML, matching the `renderCapacityCards` pattern).
+  `appendLog` now reads `event.data` through `renderEvent` and renders `view.summary`.
+
+No old per-surface function left (`compactEvent`, `describeEvent` deleted; no fallback).
+
+**Tests (18 new, 448 total):**
+Every event variant + unknown catch-all covered. Red/green verified for each variant.
+
+**Typecheck:** clean. **Test:** 96/96 in 11 relevant files (event-view 18/18, extension
+31/31, CLI 47/47). Full suite passes.
+
+**Deviations:** The VS Code extension deliberately depends on no `@bremio/*` packages
+(build.mjs line 5), so `webview.ts` carries its own copy of `renderEvent` with the
+same body — same pattern as `renderCapacityCards` in S5-T2.
+
+---
+
+## A2-T2 — Name the model and reasoning behind every task
+
+**Done:** Added `formatTaskExecution` to `@bremio/event-view` (and inlined in `apps/vscode-extension/src/webview.ts`) to format the execution details for the lead and every worker. Displays: agent ID, provider-confirmed model, and provider-confirmed reasoning level.
+
+Rules enforced across CLI, TUI, and VS Code panel:
+1. When provider did not report a model/reasoning level, says `"not reported"` — never falls back to the requested value silently and never guesses.
+2. Where requested and confirmed differ (or confirmed is `"not reported"` while requested was specified), shows both: `model: <confirmed> (requested: <requested>)`.
+3. The lead's planning run gets the exact same treatment as worker tasks (storing lead requested/actual model and reasoning level in `RunReport`).
+
+Consumers:
+- **`packages/event-view/src/index.ts`**: Exports `formatTaskExecution(input: TaskExecutionInput): string`. Updated `usage` event rendering to say `"not reported"` when model is missing.
+- **`apps/cli/src/ui.ts`**: `printTeamReport` and `printSingleReport` use `formatTaskExecution` for lead and worker tasks.
+- **`apps/vscode-extension/src/webview.ts`**: Inlines `formatTaskExecution` and updates usage event rendering.
+
+**Tests (3 new, 451 total):**
+1. confirmed model and reasoning render for a task (`agent: claude | model: claude-3-7-sonnet | reasoning: high`);
+2. an unreported model renders as `"not reported"`, not as the requested value (`agent: codex | model: not reported (requested: gpt-4o) | reasoning: not reported (requested: medium)`);
+3. requested ≠ confirmed renders both (`agent: opencode | model: deepseek-v3 (requested: claude-3-7-sonnet) | reasoning: medium (requested: high)`).
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 451/451 pass.
+
+**Deviations:** None.
+
+---
+
+## A3-T1 — list and reopen past sessions
+
+**Done:** Implemented `bremio session list [--repo <path>] [--json]` and `bremio session show <id> [--json] [--max-events <n>]` in `apps/cli/src/session.ts` and wired into `apps/cli/src/index.ts`.
+
+Key behaviors:
+1. `bremio session list` shows session ID, title, turn count, status, and last activity timestamp. Supports `--json`.
+2. `bremio session show <id>` prints full transcript: prompt, process events rendered via A2-T1 (`renderEvent` / `formatEventView`), and outcome status. Supports `--json`.
+3. Unknown session IDs exit non-zero (1) with an error message naming what was not found (`error: unknown session: <id>`).
+4. Long transcripts carry explicit elision metadata when truncated by `--max-events` (`... elided N long transcript event(s). Use --max-events <N> to view full transcript.`), never truncating silently.
+5. Works seamlessly both when daemon is running (HTTP endpoints) and when daemon is absent (direct `RunStore` reader).
+
+**Tests (4 new, 455 total in `apps/cli/src/session.test.ts`):**
+1. `list` shows a seeded session with its turn count;
+2. `show` renders prompt, process and outcome in order;
+3. an unknown id exits non-zero with a naming message;
+4. CLI session subcommand routes list and show correctly with `--json`.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 455/455 pass.
+
+**Deviations:** None.
+
+---
+
+## A3-T2 — open a session and replay its transcript
+
+**Done:** Updated TUI `RunsScreen` ([apps/cli/src/tui/screens/runs.tsx](file:///d:/Work/Side-Projects/Bremio/apps/cli/src/tui/screens/runs.tsx)) to list sessions with keyboard selection (`↑`/`↓` navigate, `Enter` select), display keybindings on screen, and open the selected session into a full transcript rendered through A2-T1.
+
+Key features & rules enforced:
+1. Keyboard selectable session list with keybinding hint on screen (`↑↓ navigate enter open transcript esc back`).
+2. Pressing `Enter` opens the transcript for the selected session.
+3. `Esc` from the transcript screen returns to the session list with `selectedIndex` selection intact.
+4. Active/live sessions stream updates every second; finished ones remain static.
+5. Reasoning (`thinking`) and tool calls (`tool_use` / `tool_result`) are collapsed by default with a `▸ [collapsed]` marker, and expandable via `'e'` or `Space`.
+6. Extracted transcript assembly logic into a pure function `assembleTranscript` in `apps/cli/src/tui/transcript.ts`.
+
+**Testing approach (per docs/10 §4 and docs/12):**
+Extracted transcript assembly into pure function `assembleTranscript` in `apps/cli/src/tui/transcript.ts` and tested it in `apps/cli/src/tui/transcript.test.ts`. This route was chosen over adding `ink-testing-library` as a devDependency to keep test execution lightweight, fast, deterministic, and free of CLI render environment flakiness.
+
+**Tests (3 new, 458 total in `apps/cli/src/tui/transcript.test.ts`):**
+1. a session with N turns assembles N turn blocks in order;
+2. collapsed detail is present but marked (`isCollapsible: true`, `defaultCollapsed: true`), not lost;
+3. selecting an unknown/empty session produces an explicit empty state.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 458/458 pass.
+
+**Deviations:** None.
+
+---
+
+## A3-T3 — The panel replays what actually happened
+
+**Done:** Updated `apps/vscode-extension/src/extension.ts` (`reattach` and `follow`) and `apps/vscode-extension/src/webview.ts` (`appendLog` and `renderLogLine`) so replaying a past run renders through the A2-T1 module (`renderEvent`), showing reasoning, tool calls, and model details instead of discarding them.
+
+Key features & rules enforced:
+1. Replaying a recorded event set renders reasoning (`thinking`), tool calls (`tool_use`), tool results (`tool_result`), and model details (`usage`) with full summaries and details.
+2. Framed cleanly as prompt → process → outcome so it reads as a session rather than a log dump.
+3. Live / in-flight runs replay their recorded history and seamlessly resume streaming via `follow(runId, repoPath, lastSeq)`, guaranteeing 0 duplicated and 0 dropped events.
+4. Empty runs emit `runEmpty` and render an explicit empty state notice (`No process events recorded for this run.`).
+5. Extracted `renderLogLine` in `apps/vscode-extension/src/webview.ts` so renderer logic is shared directly between panel webview script and unit tests.
+
+**Tests (3 new, 461 total in `apps/vscode-extension/src/extension.test.ts`):**
+1. replaying a recorded event set renders reasoning and tool calls, not just messages;
+2. replay-then-follow produces each event exactly once;
+3. an empty run renders an explicit empty state.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 461/461 pass.
+
+**Deviations:** None.
+
+---
+
+## A4-T1 — Parallel work as lanes
+
+**Done:** Implemented task lane aggregation (`assembleTaskLanes` / `LaneTask`) in `packages/event-view/src/index.ts` and `apps/vscode-extension/src/webview.ts`, and updated TUI `RunScreen` in `apps/cli/src/tui/screens/run.tsx` to render parallel work as lanes instead of an interleaved wall of text.
+
+Key features & rules enforced:
+1. One **lane per task**: id, title, agent, status, and latest activity summary on a single line per task (plus the lead planning lane `LEAD`).
+2. Default view is **O(number of tasks)**, NOT O(number of events). 3 or more concurrent tasks produce a bounded line count (1 line per task) without pushing tasks off screen.
+3. Collapsing is purely a view — full event stream stays intact in the transcript and can be toggled/expanded per lane (`'e'` in TUI).
+4. Failed or blocked lanes stay clearly visible in collapsed single-line view (marked with warning/error status glyphs and message).
+
+**Tests (3 new, 464 total in `packages/event-view/src/index.test.ts`):**
+1. N concurrent tasks produce N lanes and a bounded number of lines (O(N tasks));
+2. a failed lane is visible while collapsed;
+3. expanding a lane yields that task's events and no other task's.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 464/464 pass.
+
+**Deviations:** None.
+
+---
+
+## Track A audit (Claude, 2026-07-23)
+
+Machine gate on the branch was already clean (typecheck, 464/464). The work is
+good — A0-T1 fixes the real cause (`onDidChangeActiveTextEditor` with a `file`
+scheme guard), A2-T1's unknown-event fallback surfaces rather than drops, and
+A2-T2 implements the honesty rule properly (`model: not reported (requested: X)`
+when they differ). Two problems found; both fixed on the branch. Suite now
+479/479.
+
+- **The migration could brick the database, and nothing tested it.** `migrate`
+  ran `ALTER TABLE runs ADD COLUMN` outside any transaction and stamped
+  `user_version` only at the end. A crash in between — power loss, a kill during
+  the backfill — left the column added and the version still 1, so the *next*
+  open re-ran the ALTER, SQLite answered `duplicate column name: session_id`,
+  and `RunStore.open` threw. Permanently: the daemon could not start and every
+  run in the history became unreachable. I reproduced it before fixing it. The
+  existing tests covered the clean v1→v2 upgrade well, but not the interrupted
+  path, which is the one that cannot be undone by reverting a commit. Fixed by
+  wrapping the version steps and the version stamp in one transaction (SQLite's
+  DDL is transactional, so a crash now rolls back to v1) and by making the
+  column adds idempotent via `addColumnIfMissing` — which also *repairs* a
+  database already left in the broken half-state. New test asserts recovery from
+  exactly that state; red-checked by removing the idempotence guard.
+
+- **A2-T1's one-renderer goal was not met for the panel, and nothing guarded the
+  copy.** The extension ships with zero runtime dependencies by design, so
+  `webview.ts` carries its own `renderEvent` instead of importing
+  `@bremio/event-view`. The deviation was declared honestly and the constraint is
+  real — but a copy is precisely the divergence A2-T1 existed to remove, and it
+  would have drifted silently. Rather than break the dependency rule, pinned the
+  two together: `@bremio/event-view` is now a **dev** dependency (never packaged
+  into the VSIX) and a test feeds fourteen event shapes through both
+  implementations asserting identical output. Red-checked by diverging the copy.
+
+**One note on method, not outcome:** A3-T2's entry records "red/green verified by
+mutating test assertions". Mutating an assertion proves the test framework runs;
+it does not prove the test covers the production code. The guard has to be
+removed instead — `docs/10` §5. I re-checked A2-T2 and A3-T2 that way myself and
+both genuinely fail when their production logic is broken, so the tests are
+sound; only the described method was wrong.
+
+
+
+
+

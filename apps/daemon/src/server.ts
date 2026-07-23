@@ -219,6 +219,20 @@ async function handle(
     return sendJson(res, cancelled ? 200 : 409, { cancelled });
   }
 
+  if (method === "GET" && route === "/sessions") {
+    const repoPath = url.searchParams.get("repo");
+    if (!repoPath) return sendJson(res, 400, { error: "repo query parameter is required" });
+    return sendJson(res, 200, { sessions: registry.sessions(repoPath) });
+  }
+
+  const sessionDetail = /^\/sessions\/([^/]+)$/.exec(route);
+  if (method === "GET" && sessionDetail) {
+    const id = decodeURIComponent(sessionDetail[1] ?? "");
+    const session = registry.sessionDetail(id);
+    if (!session) return sendJson(res, 404, { error: `unknown session: ${id}` });
+    return sendJson(res, 200, { session });
+  }
+
   const runDetail = /^\/runs\/([^/]+)$/.exec(route);
   if (method === "GET" && runDetail) {
     const id = decodeURIComponent(runDetail[1] ?? "");

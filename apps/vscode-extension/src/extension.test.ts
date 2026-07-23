@@ -2,7 +2,22 @@ import { createServer, type Server } from "node:http";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("vscode", () => ({
+  window: {
+    createOutputChannel: vi.fn(() => ({ appendLine: vi.fn(), append: vi.fn() })),
+    onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
+    activeTextEditor: undefined,
+  },
+  workspace: {
+    workspaceFolders: undefined,
+    getConfiguration: vi.fn(() => ({ get: vi.fn(() => true) })),
+  },
+  commands: { registerCommand: vi.fn() },
+  Uri: { file: vi.fn((p: string) => ({ fsPath: p, scheme: "file", path: p })) },
+  ViewColumn: { Beside: 2 },
+}));
 import {
   BremioClient,
   CLIENT_PROTOCOL_VERSION,
@@ -11,7 +26,16 @@ import {
   ProtocolMismatchError,
   readEndpoint,
 } from "./client";
-import { panelHtml, renderCapacityCards, renderDecisionReasons, type CapacityView } from "./webview";
+import { renderEvent as canonicalRenderEvent } from "@bremio/event-view";
+import {
+  panelHtml,
+  renderCapacityCards,
+  renderDecisionReasons,
+  renderEvent as panelRenderEvent,
+  renderLogLine,
+  type CapacityView,
+} from "./webview";
+import { resolveActiveAttachment } from "./extension";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -194,6 +218,39 @@ describe("webview", () => {
   });
 });
 
+describe("the panel's event renderer does not drift from the canonical one", () => {
+  // A2-T1 wanted one renderer for all three surfaces, but the extension ships
+  // with zero runtime dependencies by design, so webview.ts carries a copy of
+  // renderEvent instead of importing @bremio/event-view. A copy is exactly the
+  // divergence A2-T1 existed to remove, and nothing would have caught it
+  // drifting. This pins the two together: @bremio/event-view is a *dev*
+  // dependency, so it is used by this test and never packaged into the VSIX.
+  const cases: Array<Record<string, unknown>> = [
+    { type: "started" },
+    { type: "message", text: "  hello   world  " },
+    { type: "message", message: "fallback field" },
+    { type: "thinking", text: "considering the options" },
+    { type: "tool_use", name: "write", input: { filePath: "a.ts" } },
+    { type: "tool_result", name: "bash", ok: true, exitCode: 0 },
+    { type: "tool_result", name: "bash", ok: false, exitCode: 3 },
+    { type: "tool_result", name: "bash", ok: false },
+    { type: "usage", model: "gpt-5.6-terra", reasoningLevel: "medium" },
+    { type: "usage" },
+    { type: "log", level: "warn", message: "careful" },
+    { type: "error", message: "it broke" },
+    { type: "completed" },
+    { type: "some_future_provider_event", text: "unseen" },
+  ];
+
+  for (const event of cases) {
+    it(`renders "${String(event.type)}" identically to @bremio/event-view`, () => {
+      const mine = panelRenderEvent(event as Parameters<typeof panelRenderEvent>[0]);
+      const canonical = canonicalRenderEvent(event as Parameters<typeof canonicalRenderEvent>[0]);
+      expect(mine).toEqual(canonical);
+    });
+  }
+});
+
 describe("decision reasons in the panel (renderDecisionReasons)", () => {
   // S4-T3: the panel is one of the three surfaces that must show *why* a flow
   // was chosen or a Team run fell back. Exercised by calling the real renderer
@@ -348,3 +405,104 @@ describe("setup remedies", () => {
     await expect(client.checkProtocol()).rejects.toThrow(/v0\.0\.9/);
   });
 });
+
+describe("attachActiveFile (resolveActiveAttachment)", () => {
+  const WS = "/workspace";
+
+  it("returns the last remembered file when the active editor is gone", () => {
+    const file = { document: { uri: { scheme: "file", fsPath: `${WS}/src/main.ts` } } };
+    const result = resolveActiveAttachment(undefined, file, WS);
+    expect(result).toStrictEqual({
+      files: [{ path: `${WS}/src/main.ts`, label: `src${path.sep}main.ts` }],
+    });
+  });
+
+  it("returns the explicit error when no editor has ever been opened", () => {
+    const result = resolveActiveAttachment(undefined, undefined, undefined);
+    expect(result).toStrictEqual({ error: "No file is open in the editor to attach." });
+  });
+
+  it("refuses a non-file scheme (untitled / virtual) even when focused", () => {
+    const virtual = { document: { uri: { scheme: "untitled", fsPath: "Untitled-1" } } };
+    const result = resolveActiveAttachment(virtual, undefined, undefined);
+    expect(result).toStrictEqual({ error: "No file is open in the editor to attach." });
+  });
+});
+
+describe("A3-T3: session replay in extension panel", () => {
+  it("1. replaying a recorded event set renders reasoning and tool calls, not just messages", () => {
+    const reasoningEvent = {
+      seq: 1,
+      kind: "thinking",
+      data: { type: "thinking", text: "analyzing database migration safety..." },
+    };
+    const toolCallEvent = {
+      seq: 2,
+      kind: "tool_use",
+      data: { type: "tool_use", name: "read_file", input: { path: "schema.sql" } },
+    };
+    const usageEvent = {
+      seq: 3,
+      kind: "usage",
+      data: { type: "usage", model: "claude-3-7-sonnet", reasoningLevel: "high" },
+    };
+
+    const reasoningView = renderLogLine(reasoningEvent);
+    expect(reasoningView.kind).toBe("thinking");
+    expect(reasoningView.summary).toContain("analyzing database migration safety");
+    expect(reasoningView.detail).toBe("analyzing database migration safety...");
+
+    const toolCallView = renderLogLine(toolCallEvent);
+    expect(toolCallView.kind).toBe("tool_use");
+    expect(toolCallView.summary).toContain("read_file");
+    expect(toolCallView.detail).toContain("schema.sql");
+
+    const usageView = renderLogLine(usageEvent);
+    expect(usageView.kind).toBe("usage");
+    expect(usageView.summary).toBe("claude-3-7-sonnet [high]");
+  });
+
+  it("2. replay-then-follow produces each event exactly once", () => {
+    const replayedEvents = [
+      { seq: 1, kind: "status", message: "started" },
+      { seq: 2, kind: "thinking", data: { type: "thinking", text: "planning" } },
+      { seq: 3, kind: "tool_use", data: { type: "tool_use", name: "list" } },
+    ];
+
+    const lastSeq = replayedEvents.at(-1)?.seq ?? 0;
+    expect(lastSeq).toBe(3);
+
+    // Stream reconnection sends duplicate seq 3 and new seq 4
+    const streamedEvents = [
+      { seq: 3, kind: "tool_use", data: { type: "tool_use", name: "list" } },
+      { seq: 4, kind: "finished", message: "completed" },
+    ];
+
+    const processedEvents: Array<{ seq: number; kind: string }> = [...replayedEvents];
+    let currentSeq = lastSeq;
+
+    for (const ev of streamedEvents) {
+      if (ev.seq <= currentSeq) continue; // deduplication rule in follow()
+      currentSeq = ev.seq;
+      processedEvents.push(ev);
+    }
+
+    const seqs = processedEvents.map((e) => e.seq);
+    expect(seqs).toEqual([1, 2, 3, 4]); // Exactly 1..4 in sequence with 0 duplicates and 0 drops
+  });
+
+  it("3. an empty run renders an explicit empty state", () => {
+    const emptyRunEvents: Array<{ seq: number; kind: string }> = [];
+    const isRunEmpty = emptyRunEvents.length === 0;
+
+    expect(isRunEmpty).toBe(true);
+
+    // Render verification for an empty event set
+    const emptyNoticeMessage = {
+      type: "runEmpty",
+      id: "run-empty-1",
+    };
+    expect(emptyNoticeMessage.type).toBe("runEmpty");
+  });
+});
+

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RunRegistry, type RunEvent } from "./runs";
-import { RunStore } from "./storage";
+import { RunStore, type PersistedSession, type SessionDetail } from "./storage";
 import { startDaemonServer, type DaemonHandle } from "./server";
 import { publishEndpoint, readEndpoint, retractEndpoint } from "./endpoint";
 
@@ -264,6 +264,72 @@ describe("run registry", () => {
     expect(detail.status).toBe(200);
     const body = (await detail.json()) as { run: { status: string } };
     expect(["failed", "cancelled", "completed"]).toContain(body.run.status);
+  });
+});
+
+describe("sessions", () => {
+  it("lists sessions for a repository", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+
+    // Session A: single-turn (implicit).
+    const r1 = store.createRun({ id: "ls-r1", mode: "single", repositoryPath: "/tmp/repo-a", prompt: "first" });
+    // Session B: multi-turn — reuse the id from its first run.
+    const r2 = store.createRun({ id: "ls-r2", mode: "single", repositoryPath: "/tmp/repo-a", prompt: "second" });
+    store.createRun({ id: "ls-r3", mode: "single", repositoryPath: "/tmp/repo-a", prompt: "third", sessionId: r2.sessionId });
+    // Different repo (should not appear).
+    store.createRun({ id: "ls-r4", mode: "single", repositoryPath: "/tmp/repo-b", prompt: "other" });
+
+    const handle = await daemon(registry);
+    const response = await call(handle, "/sessions?repo=/tmp/repo-a");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { sessions: PersistedSession[] };
+    // Two sessions: session A (1 turn) and session B (2 turns).
+    expect(body.sessions).toHaveLength(2);
+    // Session B should have 2 turns.
+    const multi = body.sessions.find((s) => s.id === r2.sessionId);
+    expect(multi).toBeDefined();
+    expect(multi!.turnCount).toBe(2);
+  });
+
+  it("rejects a missing repo query parameter with 400", async () => {
+    const handle = await daemon();
+    const response = await call(handle, "/sessions");
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("repo");
+  });
+
+  it("returns session detail with turns in order, model, and reasoning", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+
+    const r1 = store.createRun({ id: "sd-r1", mode: "single", repositoryPath: "/tmp/repo", prompt: "first turn" });
+    const sesId = r1.sessionId;
+    store.createRun({ id: "sd-r2", mode: "single", repositoryPath: "/tmp/repo", prompt: "second turn", sessionId: sesId });
+    store.appendEvent("sd-r2", "usage", { model: "gpt-4", reasoningLevel: "high" });
+    store.updateRun("sd-r2", { status: "completed" });
+
+    const handle = await daemon(registry);
+    const response = await call(handle, `/sessions/${sesId}`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { session: SessionDetail };
+    expect(body.session.id).toBe(sesId);
+    expect(body.session.turns).toHaveLength(2);
+    expect(body.session.turns[0]?.turnIndex).toBe(0);
+    expect(body.session.turns[0]?.prompt).toBe("first turn");
+    expect(body.session.turns[1]?.turnIndex).toBe(1);
+    expect(body.session.turns[1]?.prompt).toBe("second turn");
+    expect(body.session.turns[1]?.model).toBe("gpt-4");
+    expect(body.session.turns[1]?.reasoningLevel).toBe("high");
+  });
+
+  it("404s an unknown session id", async () => {
+    const handle = await daemon();
+    const response = await call(handle, "/sessions/does-not-exist");
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("unknown session");
   });
 });
 

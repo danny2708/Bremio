@@ -296,10 +296,15 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     ...(opts.hooks ? { hooks: opts.hooks } : {}),
   });
 
+  const leadIdentity = observedIdentity(observedLeadModels, observedLeadReasoningLevels);
   const report = buildReport({
     runId,
     prompt,
     leadAgentId: leadId,
+    ...(opts.model ? { leadRequestedModel: opts.model } : {}),
+    ...(leadIdentity.actualModel ? { leadActualModel: leadIdentity.actualModel } : {}),
+    ...(opts.reasoningLevel ? { leadRequestedReasoningLevel: opts.reasoningLevel } : {}),
+    ...(leadIdentity.actualReasoningLevel ? { leadActualReasoningLevel: leadIdentity.actualReasoningLevel } : {}),
     repoPath,
     runDir,
     baseBranch,

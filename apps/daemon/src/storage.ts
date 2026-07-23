@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -21,7 +22,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
  * Event payloads are telemetry, not archives. A runaway stdout would otherwise
@@ -77,6 +78,36 @@ export interface PersistedRun {
   failureMessage?: string;
   /** Set when this run was created by retrying another one. */
   retryOfRunId?: string;
+  sessionId?: string;
+  turnIndex: number;
+}
+
+export interface PersistedSession {
+  id: string;
+  repositoryPath: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  turnCount: number;
+  status?: RunStatus;
+}
+
+export interface SessionTurn {
+  turnIndex: number;
+  runId: string;
+  prompt: string;
+  status: RunStatus;
+  model?: string;
+  reasoningLevel?: string;
+}
+
+export interface SessionDetail {
+  id: string;
+  repositoryPath: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  turns: SessionTurn[];
 }
 
 export interface PersistedRunEvent {
@@ -103,6 +134,7 @@ export interface CreateRunInput {
   leadProvider?: string;
   workerProviders?: string[];
   retryOfRunId?: string;
+  sessionId?: string;
 }
 
 export function defaultDatabasePath(home = os.homedir()): string {
@@ -148,11 +180,30 @@ export class RunStore {
 
   createRun(input: CreateRunInput): PersistedRun {
     const now = new Date().toISOString();
+
+    // A run created without a session gets one implicitly (single turn), so
+    // nothing in the current code path has to change to keep working.
+    let sessionId = input.sessionId;
+    let turnIndex = 0;
+    if (!sessionId) {
+      sessionId = crypto.randomUUID();
+      this.db
+        .prepare(
+          "INSERT INTO sessions (id, repository_path, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(sessionId, input.repositoryPath, truncateTitle(input.prompt), now, now);
+    } else {
+      const last = this.db
+        .prepare("SELECT COALESCE(MAX(turn_index), -1) + 1 AS next FROM runs WHERE session_id = ?")
+        .get(sessionId) as { next: number };
+      turnIndex = Number(last.next);
+    }
+
     this.db
       .prepare(
         `INSERT INTO runs (id, mode, status, repository_path, prompt, created_at, updated_at,
-                           lead_provider, worker_providers, retry_of_run_id)
-         VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)`,
+                           lead_provider, worker_providers, retry_of_run_id, session_id, turn_index)
+         VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -164,6 +215,8 @@ export class RunStore {
         input.leadProvider ?? null,
         input.workerProviders ? JSON.stringify(input.workerProviders) : null,
         input.retryOfRunId ?? null,
+        sessionId,
+        turnIndex,
       );
     return this.getRun(input.id) as PersistedRun;
   }
@@ -366,23 +419,44 @@ export class RunStore {
    * Delete terminal runs older than the cutoff, keeping at least `keepMinimum`.
    * Active and interrupted runs are never removed: interrupted still needs a
    * decision from the user, so discarding it would destroy the evidence.
+   *
+   * Sessions are kept whole to preserve conversation continuity — pruning a run
+   * from the middle of a session would leave the transcript with a hole. Either
+   * every terminal run in the session is older than the cutoff and none of the
+   * session's runs are in the keep-minimum set, or the session stays untouched.
    */
   pruneRuns(options: { olderThan: Date; keepMinimum?: number }): number {
     const keep = options.keepMinimum ?? 20;
+    const cutoff = options.olderThan.toISOString();
+
     const rows = this.db
       .prepare(
-        `SELECT id FROM runs
-         WHERE status IN ('completed', 'failed', 'cancelled')
-           AND created_at < ?
-           AND id NOT IN (SELECT id FROM runs ORDER BY created_at DESC LIMIT ?)`,
+        `SELECT s.id FROM sessions s
+         WHERE NOT EXISTS (
+           SELECT 1 FROM runs r
+           WHERE r.session_id = s.id
+             AND (r.status NOT IN ('completed', 'failed', 'cancelled')
+               OR r.created_at >= ?)
+         )
+         AND EXISTS (
+           SELECT 1 FROM runs r
+           WHERE r.session_id = s.id
+         )
+         AND s.id NOT IN (
+           SELECT r.session_id FROM runs r
+           WHERE r.status IN ('completed', 'failed', 'cancelled')
+           GROUP BY r.session_id
+           ORDER BY MAX(r.created_at) DESC
+           LIMIT ?
+         )`,
       )
-      .all(options.olderThan.toISOString(), keep) as Array<{ id: string }>;
+      .all(cutoff, keep) as Array<{ id: string }>;
 
     if (rows.length === 0) return 0;
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const deleteRun = this.db.prepare("DELETE FROM runs WHERE id = ?");
-      for (const row of rows) deleteRun.run(row.id);
+      const del = this.db.prepare("DELETE FROM sessions WHERE id = ?");
+      for (const row of rows) del.run(row.id);
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
@@ -390,6 +464,74 @@ export class RunStore {
     }
     return rows.length;
   }
+
+  listSessions(repositoryPath: string): PersistedSession[] {
+    const rows = this.db
+      .prepare(
+        `SELECT s.*, COUNT(r.id) AS turn_count,
+                (SELECT status FROM runs WHERE session_id = s.id ORDER BY turn_index DESC LIMIT 1) AS status
+         FROM sessions s
+         LEFT JOIN runs r ON r.session_id = s.id
+         WHERE s.repository_path = ?
+         GROUP BY s.id
+         ORDER BY MAX(r.created_at) DESC, s.created_at DESC`,
+      )
+      .all(repositoryPath) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      repositoryPath: String(row.repository_path),
+      title: String(row.title),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      turnCount: Number(row.turn_count),
+      ...(row.status ? { status: String(row.status) as RunStatus } : {}),
+    }));
+  }
+
+  sessionDetail(id: string): SessionDetail | undefined {
+    const session = this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    if (!session) return undefined;
+
+    const runs = this.db
+      .prepare("SELECT * FROM runs WHERE session_id = ? ORDER BY turn_index ASC")
+      .all(id) as Array<Record<string, unknown>>;
+
+    const turns: SessionTurn[] = runs.map((row) => {
+      const run = toRun(row);
+      // Extract the last usage event for provider-confirmed model/reasoning.
+      const events = this.readEvents(run.id);
+      const usagePayload = [...events]
+        .reverse()
+        .find((e) => e.type === "usage")?.payload as
+        | { model?: string; reasoningLevel?: string }
+        | undefined;
+      return {
+        turnIndex: run.turnIndex,
+        runId: run.id,
+        prompt: run.prompt,
+        status: run.status,
+        ...(usagePayload?.model ? { model: usagePayload.model } : {}),
+        ...(usagePayload?.reasoningLevel ? { reasoningLevel: usagePayload.reasoningLevel } : {}),
+      };
+    });
+
+    return {
+      id: String(session.id),
+      repositoryPath: String(session.repository_path),
+      title: String(session.title),
+      createdAt: String(session.created_at),
+      updatedAt: String(session.updated_at),
+      turns,
+    };
+  }
+}
+
+export function truncateTitle(prompt: string, maxLen = 80): string {
+  const firstLine = prompt.split("\n")[0] ?? prompt;
+  if (firstLine.length <= maxLen) return firstLine;
+  return firstLine.slice(0, maxLen - 3) + "...";
 }
 
 function migrate(db: Database): void {
@@ -440,7 +582,72 @@ function migrate(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_runs_repo ON runs(repository_path, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
   `);
-  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+
+  // One transaction for the version steps and the version stamp together.
+  // SQLite's DDL is transactional, so a crash mid-migration rolls all the way
+  // back to the previous version instead of leaving a half-applied schema.
+  // Without this, a crash after the ALTER was unrecoverable: the next open
+  // re-ran it, SQLite answered "duplicate column name", and `RunStore.open`
+  // threw forever — the daemon could not start and every run in the history
+  // became unreachable. `addColumnIfMissing` additionally repairs a database
+  // already left in that half-state by the earlier code.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (Number(current) < 2) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY,
+          repository_path TEXT NOT NULL,
+          title TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+
+      addColumnIfMissing(db, "runs", "session_id", "TEXT REFERENCES sessions(id) ON DELETE CASCADE");
+      addColumnIfMissing(db, "runs", "turn_index", "INTEGER NOT NULL DEFAULT 0");
+
+      // Backfill: each existing run becomes its own single-turn session so no
+      // data is lost and the history is immediately navigable.
+      const existing = db
+        .prepare("SELECT id, repository_path, prompt, created_at FROM runs")
+        .all() as Array<{ id: string; repository_path: string; prompt: string; created_at: string }>;
+      for (const run of existing) {
+        const sessionId = `ses-${run.id}`;
+        const title = truncateTitle(run.prompt);
+        db.prepare(
+          "INSERT OR IGNORE INTO sessions (id, repository_path, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        ).run(sessionId, run.repository_path, title, run.created_at, run.created_at);
+        db.prepare("UPDATE runs SET session_id = ?, turn_index = 0 WHERE id = ?").run(
+          sessionId,
+          run.id,
+        );
+      }
+    }
+
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/**
+ * Add a column only when it is absent.
+ *
+ * `ALTER TABLE ... ADD COLUMN` is not idempotent — re-running it throws — so a
+ * migration that is retried after an interrupted attempt must check first.
+ */
+function addColumnIfMissing(
+  db: Database,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (columns.some((entry) => entry.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 function toRun(row: Record<string, unknown>): PersistedRun {
@@ -452,6 +659,7 @@ function toRun(row: Record<string, unknown>): PersistedRun {
     prompt: String(row.prompt),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+    turnIndex: Number(row.turn_index ?? 0),
     ...(row.base_branch ? { baseBranch: String(row.base_branch) } : {}),
     ...(row.started_at ? { startedAt: String(row.started_at) } : {}),
     ...(row.completed_at ? { completedAt: String(row.completed_at) } : {}),
@@ -464,6 +672,7 @@ function toRun(row: Record<string, unknown>): PersistedRun {
     ...(row.failure_code ? { failureCode: String(row.failure_code) } : {}),
     ...(row.failure_message ? { failureMessage: String(row.failure_message) } : {}),
     ...(row.retry_of_run_id ? { retryOfRunId: String(row.retry_of_run_id) } : {}),
+    ...(row.session_id ? { sessionId: String(row.session_id) } : {}),
   };
 }
 

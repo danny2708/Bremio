@@ -18,10 +18,10 @@ export function App({ version, repoPath }: AppProps): React.JSX.Element {
   const { exit } = useApp();
   const [screen, setScreen] = useState<Screen>("home");
 
-  // Global keys. The Run screen owns escape while it is executing.
+  // Global keys. The Run and Runs screens own escape while active.
   useInput((input, key) => {
     if (input === "q" && screen === "home") exit();
-    else if ((key.escape || input === "q") && screen !== "home" && screen !== "run") {
+    else if ((key.escape || input === "q") && screen !== "home" && screen !== "run" && screen !== "runs") {
       setScreen("home");
     }
   });
@@ -60,7 +60,7 @@ export function App({ version, repoPath }: AppProps): React.JSX.Element {
       ) : screen === "capacity" ? (
         <CapacityScreen />
       ) : (
-        <RunsScreen repoPath={repoPath} />
+        <RunsScreen repoPath={repoPath} onBack={() => setScreen("home")} />
       )}
       {screen === "run" ? null : <Footer hints={["esc back", "q home"]} />}
     </Box>

@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +9,10 @@ import {
   capPayload,
   isTerminal,
   redact,
+  truncateTitle,
 } from "./storage";
+
+const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
 const dirs: string[] = [];
 const stores: RunStore[] = [];
@@ -261,5 +265,224 @@ describe("terminal status", () => {
     expect(isTerminal("interrupted")).toBe(true);
     expect(isTerminal("running")).toBe(false);
     expect(isTerminal("queued")).toBe(false);
+  });
+});
+
+describe("sessions", () => {
+  async function createV1Fixture(): Promise<string> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-store-"));
+    dirs.push(dir);
+    const file = path.join(dir, "bremio.db");
+
+    const db = new DatabaseSync(file);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS runs (
+        id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL,
+        status TEXT NOT NULL,
+        repository_path TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        base_branch TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        lead_provider TEXT,
+        worker_providers TEXT,
+        orchestrator_run_id TEXT,
+        final_summary TEXT,
+        failure_code TEXT,
+        failure_message TEXT,
+        retry_of_run_id TEXT
+      );
+      CREATE TABLE IF NOT EXISTS run_events (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        PRIMARY KEY (run_id, seq)
+      );
+      CREATE TABLE IF NOT EXISTS artifacts (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        path TEXT NOT NULL,
+        task_id TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (run_id, kind, path)
+      );
+      CREATE INDEX IF NOT EXISTS idx_runs_repo ON runs(repository_path, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+      PRAGMA user_version = 1;
+    `);
+
+    db.prepare(
+      "INSERT INTO runs (id, mode, status, repository_path, prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("v1-run", "single", "completed", "/tmp/repo", "hello from v1", "2025-01-01T00:00:00.000Z", "2025-01-01T00:00:00.000Z");
+
+    db.prepare(
+      "INSERT INTO run_events (run_id, seq, type, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
+    ).run("v1-run", 1, "run.started", "2025-01-01T00:00:00.000Z", '{"msg":"started"}');
+
+    db.prepare(
+      "INSERT INTO artifacts (run_id, kind, path, created_at) VALUES (?, ?, ?, ?)",
+    ).run("v1-run", "report", "/tmp/repo/.bremio/report.json", "2025-01-01T00:00:00.000Z");
+
+    db.close();
+    return file;
+  }
+
+  it("recovers a migration that was interrupted after the column was added", async () => {
+    // The unrecoverable case: the ALTER committed, the version stamp never
+    // did. Re-running ALTER throws "duplicate column name", so before the
+    // migration became transactional and idempotent this state made
+    // RunStore.open fail forever — the daemon could not start and every run in
+    // the history was unreachable.
+    const file = await createV1Fixture();
+    const half = new DatabaseSync(file);
+    half.exec(
+      "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, repository_path TEXT NOT NULL," +
+        " title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+    );
+    half.exec("ALTER TABLE runs ADD COLUMN session_id TEXT");
+    half.close(); // user_version is still 1: the crash happened here
+
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    const run = s.getRun("v1-run");
+    expect(run?.prompt).toBe("hello from v1");
+    expect(s.readEvents("v1-run")).toHaveLength(1);
+    expect(s.listSessions("/tmp/repo")).toHaveLength(1);
+  });
+
+  it("upgrades a v1 fixture to v2 with all runs and events intact", async () => {
+    const file = await createV1Fixture();
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    const run = s.getRun("v1-run");
+    expect(run).toBeDefined();
+    expect(run?.prompt).toBe("hello from v1");
+    expect(run?.sessionId).toBeDefined();
+    expect(run?.turnIndex).toBe(0);
+
+    const events = s.readEvents("v1-run");
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe("run.started");
+
+    const artifacts = s.listArtifacts("v1-run");
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]?.kind).toBe("report");
+  });
+
+  it("fresh v2 and upgraded v1 have the same schema", async () => {
+    const fresh = await store();
+    const upgradedFile = await createV1Fixture();
+    const upgraded = await RunStore.open(upgradedFile);
+    stores.push(upgraded);
+
+    const freshCols = fresh["db"].prepare("PRAGMA table_info(sessions)").all() as Array<Record<string, unknown>>;
+    const upgradedCols = upgraded["db"].prepare("PRAGMA table_info(sessions)").all() as Array<Record<string, unknown>>;
+    expect(freshCols).toEqual(upgradedCols);
+
+    const freshRunCols = fresh["db"].prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
+    const upgradedRunCols = upgraded["db"].prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
+    const names = freshRunCols.map((c) => c.name).sort();
+    const upgradedNames = upgradedRunCols.map((c) => c.name).sort();
+    expect(names).toEqual(upgradedNames);
+    expect(names).toContain("session_id");
+    expect(names).toContain("turn_index");
+  });
+
+  it("creates an implicit session at turn_index 0 when none is given", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "no-session",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "test prompt",
+    });
+
+    expect(run.sessionId).toBeDefined();
+    expect(run.turnIndex).toBe(0);
+
+    const sessions = s.listSessions("/tmp/repo");
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.id).toBe(run.sessionId);
+    expect(sessions[0]?.turnCount).toBe(1);
+    expect(sessions[0]?.title).toBe("test prompt");
+  });
+
+  it("pruning never leaves a session with a gap in its turns", async () => {
+    const s = await store();
+    const now = new Date().toISOString();
+    // Create the session first so the FK constraint is satisfied.
+    (s as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): unknown } } }).db
+      .prepare(
+        "INSERT INTO sessions (id, repository_path, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run("ses-gap", "/tmp/repo", "test", now, now);
+
+    const runA = s.createRun({
+      id: "turn-a",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "first",
+      sessionId: "ses-gap",
+    });
+    const runB = s.createRun({
+      id: "turn-b",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "second",
+      sessionId: "ses-gap",
+    });
+
+    expect(runA.turnIndex).toBe(0);
+    expect(runB.turnIndex).toBe(1);
+
+    // Mark only the first turn as terminal and old — the session has a
+    // non-terminal run so it must stay intact.
+    s.updateRun("turn-a", { status: "completed" });
+
+    const pruned = s.pruneRuns({ olderThan: new Date(Date.now() + 60_000), keepMinimum: 0 });
+    expect(pruned).toBe(0);
+
+    // Both runs must still be present — no hole.
+    expect(s.getRun("turn-a")).toBeDefined();
+    expect(s.getRun("turn-b")).toBeDefined();
+  });
+
+  it("lists sessions ordered by most recent activity, scoped to the repository", async () => {
+    const s = await store();
+
+    s.createRun({ id: "r1", mode: "single", repositoryPath: "/tmp/repo-a", prompt: "first" });
+    s.createRun({ id: "r2", mode: "single", repositoryPath: "/tmp/repo-b", prompt: "second" });
+    s.createRun({ id: "r3", mode: "single", repositoryPath: "/tmp/repo-a", prompt: "third" });
+
+    const sessionsA = s.listSessions("/tmp/repo-a");
+    expect(sessionsA).toHaveLength(2);
+    expect(sessionsA[0]?.turnCount).toBe(1);
+    expect(sessionsA[1]?.turnCount).toBe(1);
+
+    const sessionsB = s.listSessions("/tmp/repo-b");
+    expect(sessionsB).toHaveLength(1);
+    expect(sessionsB[0]?.title).toBe("second");
+  });
+});
+
+describe("truncateTitle", () => {
+  it("uses the first line when shorter than the limit", () => {
+    expect(truncateTitle("hello world")).toBe("hello world");
+  });
+
+  it("truncates with ellipsis when longer than the limit", () => {
+    const long = "x".repeat(100);
+    expect(truncateTitle(long, 10)).toBe("xxxxxxx...");
+  });
+
+  it("handles multi-line prompts", () => {
+    expect(truncateTitle("first line\nsecond line", 80)).toBe("first line");
   });
 });

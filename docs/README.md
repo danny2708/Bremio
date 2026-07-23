@@ -25,6 +25,8 @@ results back into one place.
 | 09 | [09-opencode-adapter.md](09-opencode-adapter.md) | OpenCode adapter design + verification checklist |
 | 10 | [10-delegation-contract.md](10-delegation-contract.md) | Working agreement for delegated implementation |
 | 11 | [11-local-providers.md](11-local-providers.md) | Plug-and-play seam for local models (Jan/Ollama/LM Studio) |
+| 12 | [12-session-history-and-observability.md](12-session-history-and-observability.md) | Track A (v1.0 blocker): sessions, one renderer, parallel lanes |
+| 13 | [13-context-and-harness.md](13-context-and-harness.md) | Track B (v1.1): context assembly, budget, session continuity |
 | 99 | [99-risks-and-open-questions.md](99-risks-and-open-questions.md) | **Read before coding.** ROI, load-bearing risks, items to verify |
 
 ## Status
@@ -47,9 +49,10 @@ results back into one place.
   implemented, as are calibration-gated Auto mode and user-approved Single→Team
   escalation.
 - The local release gate passes typecheck, 415 tests, bundle build, clean packed
-  install, and a 21-check fresh-profile daemon E2E on Windows. The current
-  machine has no WSL distribution, so the separate POSIX verification command
-  is environment-blocked in the latest audit rather than marked passed.
+  install, and a 21-check fresh-profile daemon E2E on Windows. The separate
+  POSIX verification now passes too (WSL Ubuntu 24.04, Node 22.23.1): process
+  groups, single-instance lock and discovery, SQLite, SSE resume, cancellation
+  states, and `0600` on the token file. All three v1.0 gates are green.
 - Origin: brainstorm with an agent (2026-07). These docs have been **filtered
   and reworked**, not copied verbatim.
 - Resolved v0.1 decisions and remaining risks: see
