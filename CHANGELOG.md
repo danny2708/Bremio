@@ -32,6 +32,15 @@ earlier turns.
   matched by the shared error classifier, so it survives a provider rewording
   its message.
 
+### Fixes worth naming
+
+- A repository was matched by exact string equality on its path, so
+  `bremio session list` could report **no sessions for the very repository it
+  was run in** — the drive letter's case differs depending on how the shell was
+  entered, and that was enough to hide everything. Indistinguishable from
+  history loss. Matching is now canonical, and old rows match without being
+  rewritten.
+
 ### Known limitations
 
 - Re-injection is a reconstruction, not the provider's own state — a long
