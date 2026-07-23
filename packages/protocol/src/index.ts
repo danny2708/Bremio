@@ -57,8 +57,14 @@ export {
 } from "./event";
 
 export {
+  SessionContextSchema,
+  type SessionContext,
+} from "./session-context";
+
+export {
   MINIMUM_CLIENT_PROTOCOL,
   PROTOCOL_VERSION,
   checkProtocolCompatibility,
   type ProtocolCompatibility,
 } from "./version";
+

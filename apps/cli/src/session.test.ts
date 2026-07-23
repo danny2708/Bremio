@@ -140,4 +140,16 @@ describe("A3-T1: bremio session list and bremio session show", () => {
     expect(jsonShow.session.id).toBe(run.sessionId!);
     expect(jsonShow.session.turns[0].prompt).toBe("json prompt test");
   });
+
+  it("CLI session continue subcommand returns error when session is unknown", async () => {
+    const errorLogs: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((msg) => errorLogs.push(String(msg)));
+
+    const code = await sessionCommandFromCli(
+      { db: dbPath },
+      ["session", "continue", "unknown-session-id", "follow up prompt"],
+    );
+    expect(code).toBe(1);
+    expect(errorLogs.join("\n")).toContain("session not found: unknown-session-id");
+  });
 });

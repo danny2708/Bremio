@@ -339,7 +339,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     }
   }
 
-  resumeRun(): AsyncIterable<AgentEvent> {
+  resumeRun(_sessionId: string, _request: AgentRunRequest): AsyncIterable<AgentEvent> {
     throw new Error("OpenCode resumeRun is not implemented (resumableSessions: false)");
   }
 

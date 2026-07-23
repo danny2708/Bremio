@@ -1,4 +1,5 @@
 import type { AgentAdapter } from "@bremio/adapter-sdk";
+import { prepareTurnExecution } from "@bremio/harness";
 import {
   PlanSchema,
   type AgentEvent,
@@ -39,6 +40,16 @@ export interface CreatePlanOptions {
   validate?: (plan: Plan) => void;
   signal?: AbortSignal;
   onEvent?: (event: AgentEvent) => void;
+  sessionId?: string;
+  turnIndex?: number;
+  priorTurns?: Array<{
+    turnIndex: number;
+    prompt: string;
+    finalText?: string;
+    summary?: string;
+    measuredInputTokens?: number;
+  }>;
+  providerSessionId?: string;
 }
 
 export interface CreatePlanResult {
@@ -123,19 +134,44 @@ async function runLead(
       }, opts.timeoutMs)
     : undefined;
 
-  const events = lead.startRun({
-    runId,
-    role: "planner",
-    prompt,
-    cwd: opts.cwd,
-    permission: "read-only",
-    systemPrompt: LEAD_SYSTEM_PROMPT,
-    outputSchema: planJsonSchema,
-    ...(opts.model ? { model: opts.model } : {}),
-    ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
-    maxTurns: opts.maxTurns ?? 30,
-    signal: controller.signal,
-  });
+  let events: AsyncIterable<AgentEvent>;
+  if (opts.priorTurns && opts.priorTurns.length > 0) {
+    const execution = await prepareTurnExecution({
+      adapter: lead,
+      sessionId: opts.sessionId ?? opts.runId,
+      turnIndex: opts.turnIndex ?? opts.priorTurns.length,
+      priorTurns: opts.priorTurns,
+      providerSessionId: opts.providerSessionId,
+      newPrompt: prompt,
+      request: {
+        runId,
+        role: "planner",
+        cwd: opts.cwd,
+        permission: "read-only",
+        systemPrompt: LEAD_SYSTEM_PROMPT,
+        outputSchema: planJsonSchema,
+        ...(opts.model ? { model: opts.model } : {}),
+        ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
+        maxTurns: opts.maxTurns ?? 30,
+        signal: controller.signal,
+      },
+    });
+    events = execution.run();
+  } else {
+    events = lead.startRun({
+      runId,
+      role: "planner",
+      prompt,
+      cwd: opts.cwd,
+      permission: "read-only",
+      systemPrompt: LEAD_SYSTEM_PROMPT,
+      outputSchema: planJsonSchema,
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
+      maxTurns: opts.maxTurns ?? 30,
+      signal: controller.signal,
+    });
+  }
   try {
     const run = await collectRun(events, { log, ...(opts.onEvent ? { onEvent: opts.onEvent } : {}) });
     if (!timedOut) return run;

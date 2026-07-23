@@ -22,7 +22,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 /**
  * Event payloads are telemetry, not archives. A runaway stdout would otherwise
@@ -116,6 +116,21 @@ export interface PersistedRunEvent {
   type: string;
   timestamp: string;
   payload: unknown;
+}
+
+export interface PersistedSessionContext {
+  sessionId: string;
+  turnIndex: number;
+  summary?: string;
+  providerSessionIds?: Record<string, string>;
+  createdAt: string;
+}
+
+export interface SaveSessionContextInput {
+  sessionId: string;
+  turnIndex: number;
+  summary?: string;
+  providerSessionIds?: Record<string, string>;
 }
 
 export interface PersistedArtifact {
@@ -526,6 +541,49 @@ export class RunStore {
       turns,
     };
   }
+
+  saveSessionContext(input: SaveSessionContextInput): PersistedSessionContext {
+    const now = new Date().toISOString();
+    const providerJson =
+      input.providerSessionIds && Object.keys(input.providerSessionIds).length > 0
+        ? JSON.stringify(input.providerSessionIds)
+        : null;
+    const summaryVal = input.summary !== undefined ? input.summary : null;
+
+    this.db
+      .prepare(
+        `INSERT INTO session_context (session_id, turn_index, summary, provider_session_ids, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(session_id, turn_index) DO UPDATE SET
+           summary = excluded.summary,
+           provider_session_ids = excluded.provider_session_ids,
+           created_at = excluded.created_at`,
+      )
+      .run(input.sessionId, input.turnIndex, summaryVal, providerJson, now);
+
+    return this.getSessionContext(input.sessionId, input.turnIndex)!;
+  }
+
+  getSessionContext(sessionId: string, turnIndex: number): PersistedSessionContext | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM session_context WHERE session_id = ? AND turn_index = ?")
+      .get(sessionId, turnIndex) as Record<string, unknown> | undefined;
+    return row ? toSessionContext(row) : undefined;
+  }
+
+  listSessionContexts(sessionId: string): PersistedSessionContext[] {
+    const rows = this.db
+      .prepare("SELECT * FROM session_context WHERE session_id = ? ORDER BY turn_index ASC")
+      .all(sessionId) as Array<Record<string, unknown>>;
+    return rows.map(toSessionContext);
+  }
+
+  getLatestSessionContext(sessionId: string): PersistedSessionContext | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM session_context WHERE session_id = ? ORDER BY turn_index DESC LIMIT 1")
+      .get(sessionId) as Record<string, unknown> | undefined;
+    return row ? toSessionContext(row) : undefined;
+  }
 }
 
 export function truncateTitle(prompt: string, maxLen = 80): string {
@@ -625,6 +683,20 @@ function migrate(db: Database): void {
       }
     }
 
+    if (Number(current) < 3) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_context (
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          turn_index INTEGER NOT NULL,
+          summary TEXT,
+          provider_session_ids TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (session_id, turn_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_context_session ON session_context(session_id, turn_index);
+      `);
+    }
+
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -648,6 +720,20 @@ function addColumnIfMissing(
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (columns.some((entry) => entry.name === column)) return;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+function toSessionContext(row: Record<string, unknown>): PersistedSessionContext {
+  const providerSessionIds = row.provider_session_ids
+    ? (parseJson(row.provider_session_ids) as Record<string, string>)
+    : undefined;
+
+  return {
+    sessionId: String(row.session_id),
+    turnIndex: Number(row.turn_index),
+    ...(row.summary !== null && row.summary !== undefined ? { summary: String(row.summary) } : {}),
+    ...(providerSessionIds && Object.keys(providerSessionIds).length > 0 ? { providerSessionIds } : {}),
+    createdAt: String(row.created_at),
+  };
 }
 
 function toRun(row: Record<string, unknown>): PersistedRun {

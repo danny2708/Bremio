@@ -64,6 +64,35 @@ export function buildCodexExecArgs(
   return args;
 }
 
+export function buildCodexResumeArgs(
+  sessionId: string,
+  req: AgentRunRequest,
+  outFile: string,
+  schemaFile?: string,
+): string[] {
+  const sandbox = req.permission === "read-only" ? "read-only" : "workspace-write";
+  const args = [
+    "exec",
+    "resume",
+    sessionId,
+    "--json",
+    "--color",
+    "never",
+    "-C",
+    req.cwd,
+    "-s",
+    sandbox,
+    "-o",
+    outFile,
+  ];
+  if (schemaFile) args.push("--output-schema", schemaFile);
+  if (req.model) args.push("-m", req.model);
+  if (req.reasoningLevel) {
+    args.push("-c", `model_reasoning_effort=${JSON.stringify(req.reasoningLevel)}`);
+  }
+  return args;
+}
+
 export class CodexAdapter implements AgentAdapter {
   readonly id = "codex";
   readonly provider = "openai";
@@ -108,6 +137,14 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async *startRun(req: AgentRunRequest): AsyncIterable<AgentEvent> {
+    yield* this.runInternal(req);
+  }
+
+  async *resumeRun(sessionId: string, req: AgentRunRequest): AsyncIterable<AgentEvent> {
+    yield* this.runInternal(req, sessionId);
+  }
+
+  private async *runInternal(req: AgentRunRequest, resumeSessionId?: string): AsyncIterable<AgentEvent> {
     const now = () => Date.now();
     yield { type: "started", runId: req.runId, ts: now() };
 
@@ -120,14 +157,16 @@ export class CodexAdapter implements AgentAdapter {
       await fs.writeFile(schemaFile, JSON.stringify(req.outputSchema), "utf8");
     }
 
-    const args = buildCodexExecArgs(req, outFile, schemaFile);
+    const args = resumeSessionId
+      ? buildCodexResumeArgs(resumeSessionId, req, outFile, schemaFile)
+      : buildCodexExecArgs(req, outFile, schemaFile);
 
     let spawnError: Error | undefined;
     let stderr = "";
+    let capturedSessionId = resumeSessionId;
+
     const child = spawnCodex(this.bin, args, req.cwd);
     this.children.set(req.runId, child);
-    // The supervisor owns the tree: `codex` spawns its own children, and
-    // killing only this pid would leave them running against the worktree.
     processSupervisor.adopt(req.runId, child);
 
     child.on("error", (e) => {
@@ -137,23 +176,26 @@ export class CodexAdapter implements AgentAdapter {
       stderr += d.toString();
     });
 
-    // Compose external cancellation with `cancelRun`.
     const onAbort = () => void this.cancelRun(req.runId);
     req.signal?.addEventListener("abort", onAbort, { once: true });
-    // A signal already aborted before we attached the listener won't fire it.
     if (req.signal?.aborted) void this.cancelRun(req.runId);
 
     const exit = new Promise<number | null>((resolve) => {
       child.on("close", (code) => resolve(code));
     });
 
-    // Feed the prompt via stdin (avoids arg-length/escaping issues).
     child.stdin.write(req.prompt);
     child.stdin.end();
 
     const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
     try {
       for await (const line of rl) {
+        if (!capturedSessionId && line.includes("thread.started")) {
+          try {
+            const parsed = JSON.parse(line.trim());
+            if (parsed.thread_id) capturedSessionId = String(parsed.thread_id);
+          } catch {}
+        }
         for (const ev of mapCodexLine(line, req.runId)) yield ev;
       }
     } finally {
@@ -179,7 +221,7 @@ export class CodexAdapter implements AgentAdapter {
       const raw = (await fs.readFile(outFile, "utf8")).trim();
       finalText = raw.length > 0 ? raw : undefined;
     } catch {
-      // no output file (e.g. crash) — leave finalText undefined.
+      // no output file
     }
     await fs.rm(outFile, { force: true }).catch(() => {});
     if (schemaFile) await fs.rm(schemaFile, { force: true }).catch(() => {});
@@ -197,12 +239,13 @@ export class CodexAdapter implements AgentAdapter {
       type: "completed",
       runId: req.runId,
       ts: now(),
-      outcome: { status, ...(finalText ? { finalText } : {}), ...(error ? { error } : {}) },
+      outcome: {
+        status,
+        ...(finalText ? { finalText } : {}),
+        ...(error ? { error } : {}),
+        ...(capturedSessionId ? { sessionId: capturedSessionId } : {}),
+      },
     };
-  }
-
-  resumeRun(): AsyncIterable<AgentEvent> {
-    throw new Error("resumeRun is not implemented in Phase 1");
   }
 
   /**

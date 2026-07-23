@@ -14,6 +14,7 @@
     "@bremio/adapter-opencode": "workspace:*",
     "@bremio/adapter-sdk": "workspace:*",
     "@bremio/orchestrator": "workspace:*",
+    "@bremio/harness": "workspace:*",
     "@bremio/protocol": "workspace:*",
     "@bremio/quota": "workspace:*",
     "@bremio/workspace": "workspace:*",

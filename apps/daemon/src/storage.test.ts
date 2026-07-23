@@ -268,69 +268,70 @@ describe("terminal status", () => {
   });
 });
 
+async function createV1Fixture(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-store-"));
+  dirs.push(dir);
+  const file = path.join(dir, "bremio.db");
+
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS runs (
+      id TEXT PRIMARY KEY,
+      mode TEXT NOT NULL,
+      status TEXT NOT NULL,
+      repository_path TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      base_branch TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      lead_provider TEXT,
+      worker_providers TEXT,
+      orchestrator_run_id TEXT,
+      final_summary TEXT,
+      failure_code TEXT,
+      failure_message TEXT,
+      retry_of_run_id TEXT
+    );
+    CREATE TABLE IF NOT EXISTS run_events (
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      PRIMARY KEY (run_id, seq)
+    );
+    CREATE TABLE IF NOT EXISTS artifacts (
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      path TEXT NOT NULL,
+      task_id TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (run_id, kind, path)
+    );
+    CREATE INDEX IF NOT EXISTS idx_runs_repo ON runs(repository_path, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+    PRAGMA user_version = 1;
+  `);
+
+  db.prepare(
+    "INSERT INTO runs (id, mode, status, repository_path, prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run("v1-run", "single", "completed", "/tmp/repo", "hello from v1", "2025-01-01T00:00:00.000Z", "2025-01-01T00:00:00.000Z");
+
+  db.prepare(
+    "INSERT INTO run_events (run_id, seq, type, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
+  ).run("v1-run", 1, "run.started", "2025-01-01T00:00:00.000Z", '{"msg":"started"}');
+
+  db.prepare(
+    "INSERT INTO artifacts (run_id, kind, path, created_at) VALUES (?, ?, ?, ?)",
+  ).run("v1-run", "report", "/tmp/repo/.bremio/report.json", "2025-01-01T00:00:00.000Z");
+
+  db.close();
+  return file;
+}
+
 describe("sessions", () => {
-  async function createV1Fixture(): Promise<string> {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-store-"));
-    dirs.push(dir);
-    const file = path.join(dir, "bremio.db");
-
-    const db = new DatabaseSync(file);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS runs (
-        id TEXT PRIMARY KEY,
-        mode TEXT NOT NULL,
-        status TEXT NOT NULL,
-        repository_path TEXT NOT NULL,
-        prompt TEXT NOT NULL,
-        base_branch TEXT,
-        started_at TEXT,
-        completed_at TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        lead_provider TEXT,
-        worker_providers TEXT,
-        orchestrator_run_id TEXT,
-        final_summary TEXT,
-        failure_code TEXT,
-        failure_message TEXT,
-        retry_of_run_id TEXT
-      );
-      CREATE TABLE IF NOT EXISTS run_events (
-        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-        seq INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        PRIMARY KEY (run_id, seq)
-      );
-      CREATE TABLE IF NOT EXISTS artifacts (
-        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-        kind TEXT NOT NULL,
-        path TEXT NOT NULL,
-        task_id TEXT,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (run_id, kind, path)
-      );
-      CREATE INDEX IF NOT EXISTS idx_runs_repo ON runs(repository_path, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-      PRAGMA user_version = 1;
-    `);
-
-    db.prepare(
-      "INSERT INTO runs (id, mode, status, repository_path, prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run("v1-run", "single", "completed", "/tmp/repo", "hello from v1", "2025-01-01T00:00:00.000Z", "2025-01-01T00:00:00.000Z");
-
-    db.prepare(
-      "INSERT INTO run_events (run_id, seq, type, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
-    ).run("v1-run", 1, "run.started", "2025-01-01T00:00:00.000Z", '{"msg":"started"}');
-
-    db.prepare(
-      "INSERT INTO artifacts (run_id, kind, path, created_at) VALUES (?, ?, ?, ?)",
-    ).run("v1-run", "report", "/tmp/repo/.bremio/report.json", "2025-01-01T00:00:00.000Z");
-
-    db.close();
-    return file;
-  }
 
   it("recovers a migration that was interrupted after the column was added", async () => {
     // The unrecoverable case: the ALTER committed, the version stamp never
@@ -469,6 +470,120 @@ describe("sessions", () => {
     const sessionsB = s.listSessions("/tmp/repo-b");
     expect(sessionsB).toHaveLength(1);
     expect(sessionsB[0]?.title).toBe("second");
+  });
+});
+
+describe("session_context (B1)", () => {
+  it("stores and retrieves session context per turn without overwriting earlier turns", async () => {
+    const s = await store();
+    const run0 = s.createRun({
+      id: "run-turn-0",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "turn 0 prompt",
+    });
+    const sessionId = run0.sessionId!;
+
+    const ctx0 = s.saveSessionContext({
+      sessionId,
+      turnIndex: 0,
+      summary: "turn 0 summary",
+      providerSessionIds: { claude: "claude-ses-0" },
+    });
+
+    expect(ctx0.sessionId).toBe(sessionId);
+    expect(ctx0.turnIndex).toBe(0);
+    expect(ctx0.summary).toBe("turn 0 summary");
+    expect(ctx0.providerSessionIds).toEqual({ claude: "claude-ses-0" });
+
+    // Add turn 1
+    const run1 = s.createRun({
+      id: "run-turn-1",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "turn 1 prompt",
+      sessionId,
+    });
+    expect(run1.turnIndex).toBe(1);
+
+    const ctx1 = s.saveSessionContext({
+      sessionId,
+      turnIndex: 1,
+      summary: "turn 1 summary",
+      providerSessionIds: { claude: "claude-ses-1", codex: "codex-th-1" },
+    });
+
+    expect(ctx1.turnIndex).toBe(1);
+
+    // Turn 0 summary must still be readable after Turn 1 exists
+    const fetched0 = s.getSessionContext(sessionId, 0);
+    expect(fetched0?.summary).toBe("turn 0 summary");
+    expect(fetched0?.providerSessionIds).toEqual({ claude: "claude-ses-0" });
+
+    const fetched1 = s.getSessionContext(sessionId, 1);
+    expect(fetched1?.summary).toBe("turn 1 summary");
+    expect(fetched1?.providerSessionIds).toEqual({ claude: "claude-ses-1", codex: "codex-th-1" });
+
+    const all = s.listSessionContexts(sessionId);
+    expect(all).toHaveLength(2);
+    expect(all[0]?.turnIndex).toBe(0);
+    expect(all[1]?.turnIndex).toBe(1);
+
+    expect(s.getLatestSessionContext(sessionId)?.turnIndex).toBe(1);
+  });
+
+  it("distinguishes an absent summary (undefined) from an empty summary (empty string)", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "run-absent",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "prompt",
+    });
+    const sessionId = run.sessionId!;
+
+    // Turn 0: summary absent (undefined)
+    s.saveSessionContext({
+      sessionId,
+      turnIndex: 0,
+      providerSessionIds: { claude: "claude-0" },
+    });
+
+    const fetched0 = s.getSessionContext(sessionId, 0);
+    expect(fetched0).toBeDefined();
+    expect("summary" in fetched0!).toBe(false);
+    expect(fetched0?.summary).toBeUndefined();
+
+    // Turn 1: summary explicit empty string ("")
+    s.saveSessionContext({
+      sessionId,
+      turnIndex: 1,
+      summary: "",
+      providerSessionIds: { claude: "claude-1" },
+    });
+
+    const fetched1 = s.getSessionContext(sessionId, 1);
+    expect(fetched1).toBeDefined();
+    expect("summary" in fetched1!).toBe(true);
+    expect(fetched1?.summary).toBe("");
+  });
+
+  it("upgrades a v2 database to v3 including session_context table creation", async () => {
+    const fresh = await store();
+    const upgradedFile = await createV1Fixture();
+    const upgraded = await RunStore.open(upgradedFile);
+    stores.push(upgraded);
+
+    const freshCtxCols = fresh["db"].prepare("PRAGMA table_info(session_context)").all() as Array<{ name: string }>;
+    const upgradedCtxCols = upgraded["db"].prepare("PRAGMA table_info(session_context)").all() as Array<{ name: string }>;
+    const names = freshCtxCols.map((c) => c.name).sort();
+    const upgradedNames = upgradedCtxCols.map((c) => c.name).sort();
+
+    expect(names).toEqual(upgradedNames);
+    expect(names).toContain("session_id");
+    expect(names).toContain("turn_index");
+    expect(names).toContain("summary");
+    expect(names).toContain("provider_session_ids");
   });
 });
 

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { AgentEvent, ReasoningLevel, TaskStatus, TestRun, UsageSummary } from "@bremio/protocol";
+import { prepareTurnExecution, type TurnMechanismDecision } from "@bremio/harness";
 import { TaskLog } from "@bremio/workspace";
 import { appendLedgerEntry, ledgerPathFor } from "./ledger";
 import type { AgentRegistry } from "./registry";
@@ -30,6 +31,16 @@ export interface RunSingleAgentOptions {
   comparisonId?: string;
   signal?: AbortSignal;
   hooks?: SingleRunHooks;
+  sessionId?: string;
+  turnIndex?: number;
+  priorTurns?: Array<{
+    turnIndex: number;
+    prompt: string;
+    finalText?: string;
+    summary?: string;
+    measuredInputTokens?: number;
+  }>;
+  providerSessionId?: string;
 }
 
 export interface SingleAgentResult {
@@ -78,6 +89,8 @@ export interface SingleRunReport {
     dirtyBefore: string[];
     dirtyAfter: string[];
   };
+  turnIndex?: number;
+  mechanismDecision?: TurnMechanismDecision;
   /** Present only when Team stopped before task execution and delegated here. */
   fallback?: SingleRunFallback;
 }
@@ -139,22 +152,57 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
 
   opts.hooks?.onStart?.(opts.primaryAgentId);
   let collected: CollectedRun;
+  let mechanismDecision: TurnMechanismDecision | undefined;
+
   try {
-    collected = await collectRun(
-      adapter.startRun({
-        runId,
-        role: "implementer",
-        prompt: opts.prompt,
-        cwd: repoPath,
-        permission: "workspace-write",
-        ...(opts.model ? { model: opts.model } : {}),
-        ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
-        ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
-        signal: controller.signal,
-        metadata: { executionMode: "single" },
-      }),
-      { log, ...(opts.hooks?.onEvent ? { onEvent: opts.hooks.onEvent } : {}) },
-    );
+    if (opts.priorTurns && opts.priorTurns.length > 0) {
+      const execution = await prepareTurnExecution({
+        adapter,
+        sessionId: opts.sessionId ?? runId,
+        turnIndex: opts.turnIndex ?? opts.priorTurns.length,
+        priorTurns: opts.priorTurns,
+        providerSessionId: opts.providerSessionId,
+        currentDiff: before.dirtyFiles.length > 0 ? before.dirtyFiles.join("\n") : undefined,
+        newPrompt: opts.prompt,
+        request: {
+          runId,
+          role: "implementer",
+          cwd: repoPath,
+          permission: "workspace-write",
+          ...(opts.model ? { model: opts.model } : {}),
+          ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
+          ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
+          signal: controller.signal,
+          metadata: { executionMode: "single" },
+        },
+      });
+
+      mechanismDecision = execution.decision;
+      collected = await collectRun(execution.run(), {
+        log,
+        ...(opts.hooks?.onEvent ? { onEvent: opts.hooks.onEvent } : {}),
+      });
+    } else {
+      mechanismDecision = {
+        mechanism: "re-inject",
+        reason: "initial turn of single-agent run",
+      };
+      collected = await collectRun(
+        adapter.startRun({
+          runId,
+          role: "implementer",
+          prompt: opts.prompt,
+          cwd: repoPath,
+          permission: "workspace-write",
+          ...(opts.model ? { model: opts.model } : {}),
+          ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
+          ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
+          signal: controller.signal,
+          metadata: { executionMode: "single" },
+        }),
+        { log, ...(opts.hooks?.onEvent ? { onEvent: opts.hooks.onEvent } : {}) },
+      );
+    }
   } catch (error) {
     collected = {
       outcome: { status: controller.signal.aborted ? "cancelled" : "failed", error: (error as Error).message },
@@ -209,6 +257,8 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     result,
     verification,
     workspace: { dirtyBefore: before.dirtyFiles, dirtyAfter: after.dirtyFiles },
+    ...(opts.turnIndex !== undefined ? { turnIndex: opts.turnIndex } : {}),
+    ...(mechanismDecision ? { mechanismDecision } : {}),
   };
 
   await fs.writeFile(

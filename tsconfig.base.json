@@ -15,6 +15,21 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@bremio/protocol": ["./packages/protocol/src/index.ts"],
+      "@bremio/adapter-sdk": ["./packages/adapter-sdk/src/index.ts"],
+      "@bremio/workspace": ["./packages/workspace/src/index.ts"],
+      "@bremio/quota": ["./packages/quota/src/index.ts"],
+      "@bremio/event-view": ["./packages/event-view/src/index.ts"],
+      "@bremio/harness": ["./packages/harness/src/index.ts"],
+      "@bremio/orchestrator": ["./packages/orchestrator/src/index.ts"],
+      "@bremio/daemon": ["./apps/daemon/src/index.ts"],
+      "@bremio/adapter-claude": ["./packages/adapter-claude/src/index.ts"],
+      "@bremio/adapter-codex": ["./packages/adapter-codex/src/index.ts"],
+      "@bremio/adapter-opencode": ["./packages/adapter-opencode/src/index.ts"],
+      "@bremio/adapter-antigravity": ["./packages/adapter-antigravity/src/index.ts"],
+      "@bremio/adapter-local": ["./packages/adapter-local/src/index.ts"]
+    }
   }
 }

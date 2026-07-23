@@ -176,7 +176,7 @@ export class LocalOpenAiAdapter implements AgentAdapter {
     }
   }
 
-  resumeRun(): AsyncIterable<AgentEvent> {
+  resumeRun(_sessionId: string, _request: AgentRunRequest): AsyncIterable<AgentEvent> {
     throw new Error(`${this.id} resumeRun is not implemented (resumableSessions: false)`);
   }
 

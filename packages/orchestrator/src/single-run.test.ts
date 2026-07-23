@@ -90,8 +90,8 @@ class SingleMockAdapter implements AgentAdapter {
     };
   }
 
-  resumeRun(): AsyncIterable<AgentEvent> {
-    throw new Error("not implemented");
+  async *resumeRun(sessionId: string, request: AgentRunRequest): AsyncIterable<AgentEvent> {
+    yield* this.startRun(request);
   }
 
   async cancelRun(runId: string): Promise<void> {
@@ -300,5 +300,41 @@ describe("runSingleAgent", () => {
 
     expect(report.result.tests.map((test) => test.exitCode)).toEqual([1, 0]);
     expect(report.verification).toEqual({ status: "passed", reasons: [] });
+  });
+
+  it("runs a follow-up turn in Single mode seeing prior turns and recorded mechanism decision", async () => {
+    const adapter = new SingleMockAdapter();
+    const registry = createRegistry([adapter]);
+
+    const turn0 = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "Create initial structure",
+      registry,
+    });
+
+    expect(turn0.result.status).toBe("completed");
+
+    const turn1 = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "Add error handling to initial structure",
+      registry,
+      sessionId: turn0.runId,
+      turnIndex: 1,
+      priorTurns: [
+        {
+          turnIndex: 0,
+          prompt: turn0.prompt,
+          finalText: turn0.result.summary,
+        },
+      ],
+      providerSessionId: turn0.result.sessionId,
+    });
+
+    expect(turn1.result.status).toBe("completed");
+    expect(turn1.turnIndex).toBe(1);
+    expect(turn1.mechanismDecision?.mechanism).toBe("resume");
+    expect(turn1.mechanismDecision?.reason).toContain("resumableSessions is true");
   });
 });

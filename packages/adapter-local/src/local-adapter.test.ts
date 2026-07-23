@@ -92,6 +92,11 @@ describe("LocalOpenAiAdapter capabilities", () => {
     for (const value of Object.values(caps)) expect(value).toBe(false);
   });
 
+  it("explicitly rejects resumeRun", () => {
+    const adapter = new LocalOpenAiAdapter({ id: "x", baseUrl: "http://localhost:1/v1" });
+    expect(() => adapter.resumeRun("s-123", request())).toThrow(/not implemented/i);
+  });
+
   it("merges an explicit capability override over the conservative default", async () => {
     const caps = await new LocalOpenAiAdapter({
       id: "x",

@@ -60,6 +60,11 @@ describe("AntigravityAdapter", () => {
     expect(caps.testing).toBe(false);
     expect(caps.repositoryWrite).toBe(true);
     expect(caps.shell).toBe(true);
+    expect(caps.resumableSessions).toBe(false);
+  });
+
+  it("explicitly rejects resumeRun", () => {
+    expect(() => adapter().resumeRun("s-123", request())).toThrow(/not implemented/i);
   });
 
   it("reports the agy version from healthCheck", async () => {

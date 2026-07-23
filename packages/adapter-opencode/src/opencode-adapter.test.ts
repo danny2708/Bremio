@@ -43,6 +43,10 @@ describe("OpenCodeAdapter", () => {
     expect(caps.resumableSessions).toBe(false);
   });
 
+  it("explicitly rejects resumeRun", () => {
+    expect(() => adapter().resumeRun("s-123", request())).toThrow(/not implemented/i);
+  });
+
   it("reports the opencode version from healthCheck", async () => {
     const health = await adapter().healthCheck();
     expect(health.status).toBe("ok");
