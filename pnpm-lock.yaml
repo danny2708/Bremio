@@ -126,6 +126,9 @@ importers:
 
   apps/vscode-extension:
     devDependencies:
+      '@bremio/event-view':
+        specifier: workspace:*
+        version: link:../../packages/event-view
       '@types/vscode':
         specifier: ^1.90.0
         version: 1.125.0

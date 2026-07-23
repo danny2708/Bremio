@@ -583,39 +583,71 @@ function migrate(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
   `);
 
-  if (Number(current) < 2) {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        repository_path TEXT NOT NULL,
-        title TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    `);
+  // One transaction for the version steps and the version stamp together.
+  // SQLite's DDL is transactional, so a crash mid-migration rolls all the way
+  // back to the previous version instead of leaving a half-applied schema.
+  // Without this, a crash after the ALTER was unrecoverable: the next open
+  // re-ran it, SQLite answered "duplicate column name", and `RunStore.open`
+  // threw forever — the daemon could not start and every run in the history
+  // became unreachable. `addColumnIfMissing` additionally repairs a database
+  // already left in that half-state by the earlier code.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (Number(current) < 2) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY,
+          repository_path TEXT NOT NULL,
+          title TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
 
-    db.exec("ALTER TABLE runs ADD COLUMN session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE");
-    db.exec("ALTER TABLE runs ADD COLUMN turn_index INTEGER NOT NULL DEFAULT 0");
+      addColumnIfMissing(db, "runs", "session_id", "TEXT REFERENCES sessions(id) ON DELETE CASCADE");
+      addColumnIfMissing(db, "runs", "turn_index", "INTEGER NOT NULL DEFAULT 0");
 
-    // Backfill: each existing run becomes its own single-turn session so no
-    // data is lost and the history is immediately navigable.
-    const existing = db
-      .prepare("SELECT id, repository_path, prompt, created_at FROM runs")
-      .all() as Array<{ id: string; repository_path: string; prompt: string; created_at: string }>;
-    for (const run of existing) {
-      const sessionId = `ses-${run.id}`;
-      const title = truncateTitle(run.prompt);
-      db.prepare(
-        "INSERT OR IGNORE INTO sessions (id, repository_path, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-      ).run(sessionId, run.repository_path, title, run.created_at, run.created_at);
-      db.prepare("UPDATE runs SET session_id = ?, turn_index = 0 WHERE id = ?").run(
-        sessionId,
-        run.id,
-      );
+      // Backfill: each existing run becomes its own single-turn session so no
+      // data is lost and the history is immediately navigable.
+      const existing = db
+        .prepare("SELECT id, repository_path, prompt, created_at FROM runs")
+        .all() as Array<{ id: string; repository_path: string; prompt: string; created_at: string }>;
+      for (const run of existing) {
+        const sessionId = `ses-${run.id}`;
+        const title = truncateTitle(run.prompt);
+        db.prepare(
+          "INSERT OR IGNORE INTO sessions (id, repository_path, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        ).run(sessionId, run.repository_path, title, run.created_at, run.created_at);
+        db.prepare("UPDATE runs SET session_id = ?, turn_index = 0 WHERE id = ?").run(
+          sessionId,
+          run.id,
+        );
+      }
     }
-  }
 
-  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/**
+ * Add a column only when it is absent.
+ *
+ * `ALTER TABLE ... ADD COLUMN` is not idempotent — re-running it throws — so a
+ * migration that is retried after an interrupted attempt must check first.
+ */
+function addColumnIfMissing(
+  db: Database,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (columns.some((entry) => entry.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 function toRun(row: Record<string, unknown>): PersistedRun {

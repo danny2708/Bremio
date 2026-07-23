@@ -332,6 +332,30 @@ describe("sessions", () => {
     return file;
   }
 
+  it("recovers a migration that was interrupted after the column was added", async () => {
+    // The unrecoverable case: the ALTER committed, the version stamp never
+    // did. Re-running ALTER throws "duplicate column name", so before the
+    // migration became transactional and idempotent this state made
+    // RunStore.open fail forever — the daemon could not start and every run in
+    // the history was unreachable.
+    const file = await createV1Fixture();
+    const half = new DatabaseSync(file);
+    half.exec(
+      "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, repository_path TEXT NOT NULL," +
+        " title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+    );
+    half.exec("ALTER TABLE runs ADD COLUMN session_id TEXT");
+    half.close(); // user_version is still 1: the crash happened here
+
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    const run = s.getRun("v1-run");
+    expect(run?.prompt).toBe("hello from v1");
+    expect(s.readEvents("v1-run")).toHaveLength(1);
+    expect(s.listSessions("/tmp/repo")).toHaveLength(1);
+  });
+
   it("upgrades a v1 fixture to v2 with all runs and events intact", async () => {
     const file = await createV1Fixture();
     const s = await RunStore.open(file);

@@ -1,7 +1,7 @@
 {
   "name": "bremio-vscode",
   "displayName": "Bremio",
-  "description": "Orchestrate AI coding agents \u2014 different minds, one team.",
+  "description": "Orchestrate AI coding agents — different minds, one team.",
   "version": "0.1.0-alpha.1",
   "private": true,
   "publisher": "bremio",
@@ -52,7 +52,8 @@
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0",
-    "@vscode/vsce": "^3.2.0"
+    "@vscode/vsce": "^3.2.0",
+    "@bremio/event-view": "workspace:*"
   },
   "icon": "media/icon.png"
 }

@@ -1387,6 +1387,49 @@ Red/green verified by mutating test assertions and confirming failure.
 
 **Deviations:** None.
 
+---
+
+## Track A audit (Claude, 2026-07-23)
+
+Machine gate on the branch was already clean (typecheck, 464/464). The work is
+good — A0-T1 fixes the real cause (`onDidChangeActiveTextEditor` with a `file`
+scheme guard), A2-T1's unknown-event fallback surfaces rather than drops, and
+A2-T2 implements the honesty rule properly (`model: not reported (requested: X)`
+when they differ). Two problems found; both fixed on the branch. Suite now
+479/479.
+
+- **The migration could brick the database, and nothing tested it.** `migrate`
+  ran `ALTER TABLE runs ADD COLUMN` outside any transaction and stamped
+  `user_version` only at the end. A crash in between — power loss, a kill during
+  the backfill — left the column added and the version still 1, so the *next*
+  open re-ran the ALTER, SQLite answered `duplicate column name: session_id`,
+  and `RunStore.open` threw. Permanently: the daemon could not start and every
+  run in the history became unreachable. I reproduced it before fixing it. The
+  existing tests covered the clean v1→v2 upgrade well, but not the interrupted
+  path, which is the one that cannot be undone by reverting a commit. Fixed by
+  wrapping the version steps and the version stamp in one transaction (SQLite's
+  DDL is transactional, so a crash now rolls back to v1) and by making the
+  column adds idempotent via `addColumnIfMissing` — which also *repairs* a
+  database already left in the broken half-state. New test asserts recovery from
+  exactly that state; red-checked by removing the idempotence guard.
+
+- **A2-T1's one-renderer goal was not met for the panel, and nothing guarded the
+  copy.** The extension ships with zero runtime dependencies by design, so
+  `webview.ts` carries its own `renderEvent` instead of importing
+  `@bremio/event-view`. The deviation was declared honestly and the constraint is
+  real — but a copy is precisely the divergence A2-T1 existed to remove, and it
+  would have drifted silently. Rather than break the dependency rule, pinned the
+  two together: `@bremio/event-view` is now a **dev** dependency (never packaged
+  into the VSIX) and a test feeds fourteen event shapes through both
+  implementations asserting identical output. Red-checked by diverging the copy.
+
+**One note on method, not outcome:** A3-T2's entry records "red/green verified by
+mutating test assertions". Mutating an assertion proves the test framework runs;
+it does not prove the test covers the production code. The guard has to be
+removed instead — `docs/10` §5. I re-checked A2-T2 and A3-T2 that way myself and
+both genuinely fail when their production logic is broken, so the tests are
+sound; only the described method was wrong.
+
 
 
 

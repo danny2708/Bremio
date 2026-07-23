@@ -26,7 +26,15 @@ import {
   ProtocolMismatchError,
   readEndpoint,
 } from "./client";
-import { panelHtml, renderCapacityCards, renderDecisionReasons, renderLogLine, type CapacityView } from "./webview";
+import { renderEvent as canonicalRenderEvent } from "@bremio/event-view";
+import {
+  panelHtml,
+  renderCapacityCards,
+  renderDecisionReasons,
+  renderEvent as panelRenderEvent,
+  renderLogLine,
+  type CapacityView,
+} from "./webview";
 import { resolveActiveAttachment } from "./extension";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -208,6 +216,39 @@ describe("webview", () => {
     // :root token definitions, never as a `background:` value.
     expect(html).not.toMatch(/background:\s*#[0-9a-fA-F]{3,8}/);
   });
+});
+
+describe("the panel's event renderer does not drift from the canonical one", () => {
+  // A2-T1 wanted one renderer for all three surfaces, but the extension ships
+  // with zero runtime dependencies by design, so webview.ts carries a copy of
+  // renderEvent instead of importing @bremio/event-view. A copy is exactly the
+  // divergence A2-T1 existed to remove, and nothing would have caught it
+  // drifting. This pins the two together: @bremio/event-view is a *dev*
+  // dependency, so it is used by this test and never packaged into the VSIX.
+  const cases: Array<Record<string, unknown>> = [
+    { type: "started" },
+    { type: "message", text: "  hello   world  " },
+    { type: "message", message: "fallback field" },
+    { type: "thinking", text: "considering the options" },
+    { type: "tool_use", name: "write", input: { filePath: "a.ts" } },
+    { type: "tool_result", name: "bash", ok: true, exitCode: 0 },
+    { type: "tool_result", name: "bash", ok: false, exitCode: 3 },
+    { type: "tool_result", name: "bash", ok: false },
+    { type: "usage", model: "gpt-5.6-terra", reasoningLevel: "medium" },
+    { type: "usage" },
+    { type: "log", level: "warn", message: "careful" },
+    { type: "error", message: "it broke" },
+    { type: "completed" },
+    { type: "some_future_provider_event", text: "unseen" },
+  ];
+
+  for (const event of cases) {
+    it(`renders "${String(event.type)}" identically to @bremio/event-view`, () => {
+      const mine = panelRenderEvent(event as Parameters<typeof panelRenderEvent>[0]);
+      const canonical = canonicalRenderEvent(event as Parameters<typeof canonicalRenderEvent>[0]);
+      expect(mine).toEqual(canonical);
+    });
+  }
 });
 
 describe("decision reasons in the panel (renderDecisionReasons)", () => {
