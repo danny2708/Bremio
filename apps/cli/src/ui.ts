@@ -48,13 +48,19 @@ export function compactEvent(event: AgentEvent): string | undefined {
   }
 }
 
-export function printPlan(plan: Plan, assign: Map<string, string>): void {
+export function printPlan(
+  plan: Plan,
+  assign: Map<string, string>,
+  reasonByTask?: ReadonlyMap<string, string>,
+): void {
   console.log(`\n${c.bold("Plan")}: ${plan.summary}`);
   for (const t of plan.tasks) {
     const agent = assign.get(t.id) ?? "?";
+    const reason = reasonByTask?.get(t.id);
     const deps = t.dependencies.length ? c.dim(` ⇠ ${t.dependencies.join(", ")}`) : "";
+    const reasonText = reason ? c.dim(` (${reason})`) : "";
     console.log(
-      `  ${c.cyan(t.id)}  ${t.kind.padEnd(14)} ${c.bold(`→ ${agent}`)}  ${c.dim(`[${t.risk}]`)}${deps}`,
+      `  ${c.cyan(t.id)}  ${t.kind.padEnd(14)} ${c.bold(`→ ${agent}`)}${reasonText}  ${c.dim(`[${t.risk}]`)}${deps}`,
     );
     console.log(`      ${t.title}`);
   }
@@ -74,14 +80,16 @@ function printTeamReport(report: RunReport): void {
   console.log(`\n${line}`);
   console.log(` ${c.bold("Bremio report")}  ${c.dim(report.runId)}`);
   console.log(` lead: ${c.cyan(report.leadAgentId)}   repo: ${c.dim(report.repoPath)}`);
+  if (report.autoModeReason) console.log(` mode: ${c.cyan("auto")}  ${c.dim(report.autoModeReason)}`);
   console.log(line);
 
-  for (const { task, agentId, result } of report.tasks) {
+  for (const { task, agentId, result, reason } of report.tasks) {
     console.log(
       `\n${c.cyan(task.id)} ${c.bold(task.title)}  ${c.dim(`(${task.kind})`)}`,
     );
+    const reasonText = reason ? c.dim(` (${reason})`) : "";
     console.log(
-      `  agent: ${c.bold(agentId)}   status: ${statusGlyph(result.status)}   files: ${result.filesChanged.length}`,
+      `  agent: ${c.bold(agentId)}${reasonText}   status: ${statusGlyph(result.status)}   files: ${result.filesChanged.length}`,
     );
     const execution = [
       result.durationMs !== undefined ? `duration=${(result.durationMs / 1000).toFixed(1)}s` : undefined,

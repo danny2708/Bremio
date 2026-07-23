@@ -372,7 +372,10 @@ async function follow(runId: string, repoPath: string, resumeFrom = 0): Promise<
   // The quality gate lives in the orchestrator's report, which rides along on
   // the terminal event rather than on the run row.
   const finished = [...(detail.events ?? [])].reverse().find((event) => event.kind === "finished");
-  const gate = (finished?.data as { qualityGate?: unknown } | undefined)?.qualityGate;
+  const data = finished?.data as Record<string, unknown> | undefined;
+  const gate = (data as { qualityGate?: unknown } | undefined)?.qualityGate;
+  const fallbackReason = (data as { fallback?: { reason?: string } } | undefined)?.fallback?.reason;
+  const autoModeReason = (data as { autoModeReason?: string } | undefined)?.autoModeReason;
 
   post({
     type: "runFinished",
@@ -381,6 +384,8 @@ async function follow(runId: string, repoPath: string, resumeFrom = 0): Promise<
     recovery: detail.recovery,
     failureMessage: detail.run?.failureMessage,
     gate,
+    fallbackReason,
+    autoModeReason,
   });
   await sendRuns();
 }
@@ -421,13 +426,19 @@ async function reattach(runId: string): Promise<void> {
     return;
   }
   const finished = [...(detail.events ?? [])].reverse().find((e) => e.kind === "finished");
+  const data = finished?.data as Record<string, unknown> | undefined;
+  const gate2 = (data as { qualityGate?: unknown } | undefined)?.qualityGate;
+  const fallbackReason2 = (data as { fallback?: { reason?: string } } | undefined)?.fallback?.reason;
+  const autoModeReason2 = (data as { autoModeReason?: string } | undefined)?.autoModeReason;
   post({
     type: "runFinished",
     state: detail.run.status,
     runId,
     recovery: detail.recovery,
     failureMessage: detail.run.failureMessage,
-    gate: (finished?.data as { qualityGate?: unknown } | undefined)?.qualityGate,
+    gate: gate2,
+    fallbackReason: fallbackReason2,
+    autoModeReason: autoModeReason2,
   });
 }
 

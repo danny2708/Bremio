@@ -30,6 +30,7 @@ const FULL_CAPABILITIES: AgentCapabilities = {
 
 abstract class BaseAdapter implements AgentAdapter {
   abstract readonly id: string;
+  abstract readonly provider: string;
   readonly requests: AgentRunRequest[] = [];
 
   async getCapabilities(): Promise<AgentCapabilities> {
@@ -54,8 +55,8 @@ abstract class BaseAdapter implements AgentAdapter {
 }
 
 class VerifyingSingle extends BaseAdapter {
-  readonly id = "single-agent";
-  readonly provider = "test";
+  override readonly id = "single-agent";
+  override readonly provider = "test";
   private failVerification: boolean;
 
   constructor(failVerification = true) {
@@ -101,8 +102,8 @@ class VerifyingSingle extends BaseAdapter {
 }
 
 class EscalationLead extends BaseAdapter {
-  readonly id = "claude";
-  readonly provider = "anthropic";
+  override readonly id = "claude";
+  override readonly provider = "anthropic";
 
   async *startRun(request: AgentRunRequest): AsyncIterable<AgentEvent> {
     this.requests.push(request);
@@ -134,8 +135,8 @@ class EscalationLead extends BaseAdapter {
 }
 
 class EscalationWorker extends BaseAdapter {
-  readonly id = "codex";
-  readonly provider = "openai";
+  override readonly id = "codex";
+  override readonly provider = "openai";
 
   async *startRun(request: AgentRunRequest): AsyncIterable<AgentEvent> {
     this.requests.push(request);
@@ -236,7 +237,7 @@ describe("shouldEscalate", () => {
         summary: "done",
         filesChanged: [],
         commandsExecuted: [],
-        tests: [{ command: "pnpm test", exitCode: 1 }],
+        tests: [{ command: "pnpm test", passed: 0, failed: 1, exitCode: 1 }],
         logsPath: "/tmp/log",
         durationMs: 100,
       },
@@ -378,7 +379,7 @@ describe("escalation integration", () => {
         summary: "all good",
         filesChanged: [],
         commandsExecuted: [],
-        tests: [{ command: "pnpm test", exitCode: 0 }],
+        tests: [{ command: "pnpm test", passed: 1, failed: 0, exitCode: 0 }],
         logsPath: "/tmp/log",
         durationMs: 100,
       },

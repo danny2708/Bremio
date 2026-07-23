@@ -931,3 +931,61 @@ No regressions.
 **Deviations:** `--worker` and `--agent` are not accepted with `--escalate` in Single
 mode (existing validation rejects them). The escalated Team always uses Claude as
 lead with the default worker. A future iteration could accept `--escalate-worker`.
+
+---
+
+## S4-T3 — Say why every automatic choice was made
+
+**Done:** Every automatic decision now carries a human-readable reason that reaches
+the CLI, TUI, and VS Code panel. Four decision points are covered.
+
+**Implementation:**
+
+1. **`RunReport` + `RunReportTask`** (`aggregator.ts`): Added optional `autoModeReason`
+   to `RunReport` and optional `reason` to `RunReportTask`, so every report carries the
+   "why" for both flow selection and per-task agent assignment.
+
+2. **`BuildReportInput`** (`aggregator.ts`): Accepts `reasonByTask` map and
+   `autoModeReason` string. `buildReport` passes them through to the output.
+
+3. **`runBremio`** (`run.ts`): After `assignAgents`, iterates assigned tasks and calls
+   `assessCapacity` (already exported from `@bremio/quota`) for each agent. Default
+   reasons when no capacity data: `"lead (deterministic)"` / `"worker (deterministic)"`.
+   When capacity data exists: `"healthy at 75% remaining, fresh"`, `"last-known 4% is
+   not fresh high-confidence data"`, `"confirmed exhausted at 2% remaining"`, etc.
+   Accepts `autoModeReason` in `RunBremioOptions`.
+
+4. **`auto-mode.ts`**: Fixed reason — `"preferTeamWhenReady is disabled"` (removed
+   "policy" per spec — say the actual cause, not the policy name).
+
+5. **CLI** (`apps/cli/src/ui.ts`): `printTeamReport` shows `autoModeReason` in the
+   mode header and per-task `reason` in the agent column. `printPlan` accepts optional
+   `reasonByTask` map.
+
+6. **TUI** (`apps/cli/src/tui/screens/run.tsx`): Shows `autoModeReason` for Team
+   reports.
+
+7. **VS Code panel** (`apps/vscode-extension/src/extension.ts`, `webview.ts`):
+   Extracts `fallbackReason` and `autoModeReason` from the finished event data,
+   renders fallback as a banner and auto mode reason as a card.
+
+8. **Daemon round-trip**: All reason fields are plain JSON-safe strings serialized
+   via `JSON.stringify(JSON.parse(...))`. No special protocol changes needed.
+
+**Tests (3 new, 404 total):**
+
+1. **Serialization**: A `RunReport` with `autoModeReason` and per-task `reason`
+   survives `JSON.stringify` → `JSON.parse` with all content intact.
+2. **CLI rendering**: `printReport` for a Team report outputs both the auto mode
+   reason and the per-task capacity reason string.
+3. **Redaction**: `redactDeep` does not corrupt reason values containing legitimate
+   operational data, and key-based redaction catches token-like keys. (Reason values
+   that happen to look like tokens are not redacted by the key-based redactor — the
+   requirement is that producers never put secrets in reason strings.)
+
+**Typecheck:** clean (CLI + orchestrator + VS Code extension). **Test:** 404/404
+pass (46 files). No regressions.
+
+**Deviations:** The VS Code panel does not yet render per-task reasons (only the
+fallback and auto-mode banners). Task-level reasons are available in the report
+JSON and CLI output. Full TUI task-level display belongs in a follow-up pass.

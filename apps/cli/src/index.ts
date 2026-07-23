@@ -716,6 +716,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
       ...(capacitySnapshots ? { capacitySnapshots } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
+      ...(isAuto && autoReason ? { autoModeReason: autoReason } : {}),
     });
 
     if (json) console.log(JSON.stringify(report, null, 2));

@@ -638,6 +638,12 @@ window.addEventListener("message", (event) => {
     } else if (message.failureMessage) {
       panelHtmlOut += '<div class="banner bad">' + escapeHtml(message.failureMessage) + "</div>";
     }
+    if (message.fallbackReason) {
+      panelHtmlOut += '<div class="banner warn"><strong>Team fallback</strong><br>' + escapeHtml(message.fallbackReason) + "</div>";
+    }
+    if (message.autoModeReason) {
+      panelHtmlOut += '<div class="card"><span class="muted">auto mode: ' + escapeHtml(message.autoModeReason) + "</span></div>";
+    }
     if (message.gate) panelHtmlOut += renderGate(message.gate, message.runId);
     if (message.recovery?.canRetry) {
       panelHtmlOut += '<div class="row" style="margin-top:10px"><button class="ghost" data-action="retry" data-run="' + escapeHtml(message.runId) + '">Retry</button></div>';

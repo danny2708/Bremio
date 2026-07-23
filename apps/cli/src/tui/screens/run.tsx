@@ -258,6 +258,9 @@ export function RunScreen({
             </>
           ) : (
             <>
+              {report.autoModeReason ? (
+                <Text color={theme.muted}>{`  auto mode: ${report.autoModeReason}`}</Text>
+              ) : null}
               <Text color={theme.muted}>
                 {`  tasks: ${report.summary.completed}/${report.summary.total} completed  ·  files: ${report.summary.filesChanged}`}
               </Text>
