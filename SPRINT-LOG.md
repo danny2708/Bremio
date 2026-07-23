@@ -1181,3 +1181,45 @@ with the v2 code and asserting everything survived.
 `createRequire` to build the v1 fixture database. This matches how `storage.ts`
 itself loads node:sqlite. The import is isolated to the test file and does not
 change the production dependency surface.
+
+---
+
+## A1-T2 — apps/daemon (GET /sessions, GET /sessions/:id)
+
+**Done:** Two authenticated GET endpoints for session history:
+
+- `GET /sessions?repo=<path>` — lists sessions for a repository, ordered by most
+  recent activity. Requires `repo` query parameter (400 without it).
+- `GET /sessions/:id` — session detail with turns in order, each carrying
+  `turnIndex`, `runId`, `prompt`, `status`, and the provider-confirmed
+  `model`/`reasoningLevel` from the last `usage` event in that run. Unknown
+  session returns 404 with `{ error: "unknown session: <id>" }`.
+
+Both routes use the existing `x-bremio-token` authentication and Host-header
+guard. No new handlers or middleware.
+
+**Storage:** Added `SessionDetail` + `SessionTurn` types and
+`RunStore.sessionDetail(id)` that queries the session row, all its runs sorted
+by `turn_index ASC`, then reads each run's events to extract the last `usage`
+payload. Runs without a `usage` event omit `model`/`reasoningLevel` from the
+turn.
+
+**Registry:** Added `RunRegistry.sessions(repoPath)` and
+`RunRegistry.sessionDetail(id)` — thin delegations to `this.store`.
+
+**Protocol version:** Not bumped. Additive routes are backward compatible, and
+the extension does not yet consume sessions (A3-T3 owns the panel replay). A
+bump would force a coordinated upgrade for no benefit.
+
+**Tests (4 new, 430 total):**
+1. lists sessions for a repository, scoped to repo param.
+2. rejects missing `repo` query parameter with 400.
+3. returns session detail with turns in order, model and reasoningLevel from
+   usage events.
+4. 404s an unknown session id with an error message.
+
+Red/green verified: removed each guard (repo param, session existence, turn
+ordering) and confirmed the corresponding test went red. 426/426 pass (90 daemon
+tests, +4).
+
+**Deviations:** None.

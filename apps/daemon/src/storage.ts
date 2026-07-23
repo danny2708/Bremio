@@ -91,6 +91,24 @@ export interface PersistedSession {
   turnCount: number;
 }
 
+export interface SessionTurn {
+  turnIndex: number;
+  runId: string;
+  prompt: string;
+  status: RunStatus;
+  model?: string;
+  reasoningLevel?: string;
+}
+
+export interface SessionDetail {
+  id: string;
+  repositoryPath: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  turns: SessionTurn[];
+}
+
 export interface PersistedRunEvent {
   runId: string;
   seq: number;
@@ -465,6 +483,45 @@ export class RunStore {
       updatedAt: String(row.updated_at),
       turnCount: Number(row.turn_count),
     }));
+  }
+
+  sessionDetail(id: string): SessionDetail | undefined {
+    const session = this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    if (!session) return undefined;
+
+    const runs = this.db
+      .prepare("SELECT * FROM runs WHERE session_id = ? ORDER BY turn_index ASC")
+      .all(id) as Array<Record<string, unknown>>;
+
+    const turns: SessionTurn[] = runs.map((row) => {
+      const run = toRun(row);
+      // Extract the last usage event for provider-confirmed model/reasoning.
+      const events = this.readEvents(run.id);
+      const usagePayload = [...events]
+        .reverse()
+        .find((e) => e.type === "usage")?.payload as
+        | { model?: string; reasoningLevel?: string }
+        | undefined;
+      return {
+        turnIndex: run.turnIndex,
+        runId: run.id,
+        prompt: run.prompt,
+        status: run.status,
+        ...(usagePayload?.model ? { model: usagePayload.model } : {}),
+        ...(usagePayload?.reasoningLevel ? { reasoningLevel: usagePayload.reasoningLevel } : {}),
+      };
+    });
+
+    return {
+      id: String(session.id),
+      repositoryPath: String(session.repository_path),
+      title: String(session.title),
+      createdAt: String(session.created_at),
+      updatedAt: String(session.updated_at),
+      turns,
+    };
   }
 }
 
