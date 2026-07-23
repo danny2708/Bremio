@@ -1,8 +1,11 @@
 import { Box, Text, useInput } from "ink";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_MAX_CONCURRENCY,
   createRegistry,
+  ledgerPathFor,
+  readLedger,
+  resolveAutoMode,
   runBremio,
   runSingleAgent,
   type BremioRunReport,
@@ -12,8 +15,55 @@ import { ErrorBox, Header, Menu, Spinner, StatusText, TextInput } from "../compo
 import { createAdapters, AGENT_LABELS } from "../data";
 import { theme } from "../theme";
 
-type Phase = "mode" | "agent" | "prompt" | "running" | "done";
+type Phase = "mode" | "agent" | "worker" | "prompt" | "running" | "done";
 type Mode = "single" | "team";
+/** What the user picked, which is not the same as what will run under `auto`. */
+type ModeChoice = Mode | "auto";
+
+export interface AgentChoice {
+  id: string;
+  leadEligible: boolean;
+  hint?: string;
+}
+
+/**
+ * The agents the picker offers, and which of them may lead.
+ *
+ * Derived from each adapter's declared capabilities so the TUI cannot drift
+ * from the CLI: a provider added to `createAdapters` appears here without
+ * anyone remembering to edit a list, and one that loses `structuredOutput`
+ * stops being offered as a lead on its own.
+ */
+export function buildAgentChoices(
+  adapters: ReadonlyArray<{ id: string; capabilities: { planning: boolean; structuredOutput: boolean } }>,
+): AgentChoice[] {
+  return adapters.map((adapter) => ({
+    id: adapter.id,
+    leadEligible: adapter.capabilities.planning && adapter.capabilities.structuredOutput,
+  }));
+}
+
+/**
+ * The one-line description of what is about to run, or is running.
+ *
+ * Under `auto` the chosen mode is shown alongside the fact that auto chose it,
+ * so the run is never described only as "auto" — the user has to be able to see
+ * whether Single or Team was actually selected.
+ */
+export function describeSelection(selection: {
+  modeChoice: ModeChoice;
+  mode: Mode;
+  agentId: string;
+  workerId?: string;
+}): string {
+  const label = (id: string): string => AGENT_LABELS[id] ?? id;
+  const modeText = selection.modeChoice === "auto" ? `auto → ${selection.mode}` : selection.mode;
+  const agents =
+    selection.mode === "team" && selection.workerId
+      ? `${label(selection.agentId)} → ${label(selection.workerId)}`
+      : label(selection.agentId);
+  return `${modeText} · ${agents}`;
+}
 
 function reportStatus(report: BremioRunReport): string {
   if (report.mode === "single") return report.result.status;
@@ -33,18 +83,64 @@ export function RunScreen({
 }): React.JSX.Element {
   const [phase, setPhase] = useState<Phase>("mode");
   const [mode, setMode] = useState<Mode>("single");
+  const [modeChoice, setModeChoice] = useState<ModeChoice>("single");
+  const [autoReason, setAutoReason] = useState<string | undefined>(undefined);
   const [agentId, setAgentId] = useState<string>("claude");
+  const [workerId, setWorkerId] = useState<string | undefined>(undefined);
   const [prompt, setPrompt] = useState("");
   const [events, setEvents] = useState<Array<{ kind?: string; taskId?: string; agentId?: string; message?: string; data?: unknown }>>([]);
   const [expandedLane, setExpandedLane] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState("starting");
   const [report, setReport] = useState<BremioRunReport | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [agentChoices, setAgentChoices] = useState<AgentChoice[]>([]);
   const abortRef = useRef<AbortController | undefined>(undefined);
+
+  // Capabilities are read once, on mount: a picker that has to wait for four
+  // adapter probes on every keystroke would be unusable.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const choices = await Promise.all(
+        createAdapters().map(async (adapter) => ({
+          id: adapter.id,
+          capabilities: await adapter.getCapabilities(),
+        })),
+      );
+      if (!cancelled) setAgentChoices(buildAgentChoices(choices));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const pushEv = useCallback((ev: { kind?: string; taskId?: string; agentId?: string; message?: string; data?: unknown }) => {
     setEvents((prev) => [...prev, ev]);
   }, []);
+
+  /**
+   * Resolve `auto` the same way `bremio run --mode auto` does, from this
+   * repository's ledger. The decision and its reason are shown before the run
+   * starts rather than only in the report: the point of auto mode is that the
+   * user can see why it chose what it chose.
+   */
+  const resolveAuto = useCallback(async () => {
+    let resolved: Mode = "single";
+    let reason: string;
+    try {
+      const entries = await readLedger(ledgerPathFor(repoPath));
+      const result = resolveAutoMode(entries);
+      resolved = result.mode;
+      reason = result.reason;
+    } catch (err) {
+      // Fail closed to Single, and say so. An unreadable ledger is not
+      // evidence that Team is worth it.
+      reason = `auto selected Single — could not read the ledger (${(err as Error).message})`;
+    }
+    setMode(resolved);
+    setAutoReason(reason);
+    setPhase("agent");
+  }, [repoPath]);
 
   const start = useCallback(async () => {
     setPhase("running");
@@ -74,6 +170,7 @@ export function RunScreen({
         setStatus(`${AGENT_LABELS[agentId] ?? agentId} is planning`);
         result = await runBremio({
           leadId: agentId,
+          ...(workerId ? { workerId } : {}),
           repoPath,
           prompt,
           registry,
@@ -102,7 +199,7 @@ export function RunScreen({
       setError((err as Error).message);
       setPhase("done");
     }
-  }, [agentId, mode, prompt, pushEv, repoPath]);
+  }, [agentId, mode, prompt, pushEv, repoPath, workerId]);
 
   useInput(
     (input, key) => {
@@ -130,10 +227,18 @@ export function RunScreen({
           items={[
             { key: "single", label: "Single Agent", hint: "one agent, directly in this workspace" },
             { key: "team", label: "Team", hint: "lead plans, worker executes in git worktrees" },
+            { key: "auto", label: "Auto", hint: "decide from calibration evidence in this repo" },
           ]}
           onSelect={(key) => {
+            setModeChoice(key as ModeChoice);
+            setAgentId("claude");
+            setWorkerId(undefined);
+            if (key === "auto") {
+              void resolveAuto();
+              return;
+            }
             setMode(key as Mode);
-            setAgentId(key === "team" ? "claude" : "claude");
+            setAutoReason(undefined);
             setPhase("agent");
           }}
         />
@@ -142,27 +247,50 @@ export function RunScreen({
   }
 
   if (phase === "agent") {
-    const items =
-      mode === "single"
-        ? [
-            { key: "claude", label: "Claude" },
-            { key: "codex", label: "Codex" },
-            { key: "antigravity", label: "Antigravity", hint: "subscription quota via agy" },
-          ]
-        : [
-            { key: "claude", label: "Claude", hint: "lead" },
-            { key: "codex", label: "Codex", hint: "lead" },
-          ];
+    // Lead eligibility is a capability question, not a list of names: an agent
+    // that cannot return a structured plan cannot lead, whoever it is.
+    const items = agentChoices
+      .filter((choice) => (mode === "team" ? choice.leadEligible : true))
+      .map((choice) => ({
+        key: choice.id,
+        label: AGENT_LABELS[choice.id] ?? choice.id,
+        ...(choice.hint ? { hint: choice.hint } : {}),
+      }));
     return (
       <Box flexDirection="column">
         <Header
           title={mode === "single" ? "Choose agent" : "Choose lead"}
-          subtitle={mode === "team" ? "the other agent becomes the worker" : undefined}
+          subtitle={autoReason ?? (mode === "team" ? "plans the work" : undefined)}
         />
         <Menu
           items={items}
           onSelect={(key) => {
             setAgentId(key);
+            setPhase(mode === "team" ? "worker" : "prompt");
+          }}
+        />
+      </Box>
+    );
+  }
+
+  if (phase === "worker") {
+    // A worker only has to execute, so lead eligibility is irrelevant here —
+    // this is where OpenCode and Antigravity become selectable, which the CLI
+    // already allowed via --worker and the TUI simply never offered.
+    const items = agentChoices
+      .filter((choice) => choice.id !== agentId)
+      .map((choice) => ({
+        key: choice.id,
+        label: AGENT_LABELS[choice.id] ?? choice.id,
+        ...(choice.hint ? { hint: choice.hint } : {}),
+      }));
+    return (
+      <Box flexDirection="column">
+        <Header title="Choose worker" subtitle={`executes in git worktrees · lead is ${AGENT_LABELS[agentId] ?? agentId}`} />
+        <Menu
+          items={items}
+          onSelect={(key) => {
+            setWorkerId(key);
             setPhase("prompt");
           }}
         />
@@ -175,7 +303,7 @@ export function RunScreen({
       <Box flexDirection="column">
         <Header
           title="Prompt"
-          subtitle={`${mode === "single" ? "single" : "team"} · ${AGENT_LABELS[agentId] ?? agentId}`}
+          subtitle={describeSelection({ modeChoice, mode, agentId, ...(workerId ? { workerId } : {}) })}
         />
         <TextInput
           value={prompt}
@@ -193,7 +321,7 @@ export function RunScreen({
   if (phase === "running") {
     return (
       <Box flexDirection="column">
-        <Header title="Running" subtitle={`${mode} · ${AGENT_LABELS[agentId] ?? agentId}`} />
+        <Header title="Running" subtitle={describeSelection({ modeChoice, mode, agentId, ...(workerId ? { workerId } : {}) })} />
         <Spinner label={status} />
         <Box flexDirection="column" marginTop={1}>
           {lanes.map((lane) => {
@@ -230,7 +358,7 @@ export function RunScreen({
 
   return (
     <Box flexDirection="column">
-      <Header title="Result" subtitle={`${mode} · ${AGENT_LABELS[agentId] ?? agentId}`} />
+      <Header title="Result" subtitle={describeSelection({ modeChoice, mode, agentId, ...(workerId ? { workerId } : {}) })} />
       {error ? <ErrorBox message={error} /> : null}
       {report ? (
         <Box flexDirection="column">
