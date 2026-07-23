@@ -16,6 +16,7 @@ import { RunStore, defaultDatabasePath } from "./storage";
 import {
   MINIMUM_CLIENT_PROTOCOL,
   PROTOCOL_VERSION,
+  cleanLeakedEndpointFiles,
   daemonEndpointPath,
   mintToken,
   publishEndpoint,
@@ -111,6 +112,10 @@ export async function startDaemon(options: StartDaemonOptions): Promise<RunningD
   // shutdown closure below.
   const releaseLock = lock.release;
 
+  // Safe here and only here: holding the lock means no other daemon has a temp
+  // file in flight, so anything matching the pattern was orphaned by a death.
+  await cleanLeakedEndpointFiles(endpointFile);
+
   const store = await RunStore.open(options.databasePath ?? defaultDatabasePath());
   const registry = new RunRegistry(store);
   const reconciled = registry.reconcileOnStartup().map((run) => run.id);
@@ -150,7 +155,19 @@ export async function startDaemon(options: StartDaemonOptions): Promise<RunningD
     daemonVersion: options.version,
     protocolVersion: PROTOCOL_VERSION,
   };
-  await publishEndpoint(endpoint, endpointFile);
+  try {
+    await publishEndpoint(endpoint, endpointFile);
+  } catch (err) {
+    // Publishing is the last step, which made it easy to miss that it can fail
+    // — a rename onto a locked destination does on Windows. Unwound like any
+    // other startup failure: a daemon that never became discoverable must not
+    // keep the single-instance lock, or every later start is refused by a
+    // process that is not running.
+    await handle.close();
+    store.close();
+    await releaseLock();
+    throw err;
+  }
 
   /**
    * Graceful shutdown, in the order that avoids losing work: refuse new runs,

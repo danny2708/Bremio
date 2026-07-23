@@ -3,7 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireSingleInstanceLock, clearStaleLock, processExists, verifyDaemonAlive } from "./lock";
-import { publishEndpoint, readEndpoint, retractEndpoint } from "./endpoint";
+import {
+  cleanLeakedEndpointFiles,
+  publishEndpoint,
+  readEndpoint,
+  retractEndpoint,
+} from "./endpoint";
 import { DaemonAlreadyRunningError, daemonStatus, startDaemon, stopDaemon } from "./index";
 
 const dirs: string[] = [];
@@ -145,6 +150,36 @@ describe("discovery file", () => {
     await retractEndpoint(files.endpointFile, process.pid);
     expect(await readEndpoint(files.endpointFile)).toBeDefined();
   });
+
+  it("leaves no temp file behind when the rename fails", async () => {
+    const files = await sandbox();
+    const directory = path.dirname(files.endpointFile);
+    // A directory cannot be renamed over by a file, so this fails the rename
+    // without stubbing fs — the same step that fails on Windows when the
+    // destination is held open.
+    await fs.mkdir(files.endpointFile, { recursive: true });
+
+    await expect(publishEndpoint(endpoint(1), files.endpointFile)).rejects.toThrow();
+
+    const leaked = (await fs.readdir(directory)).filter((name) => name.endsWith(".tmp"));
+    expect(leaked).toEqual([]);
+  });
+
+  it("sweeps temp files orphaned by a start that died before renaming", async () => {
+    const files = await sandbox();
+    const directory = path.dirname(files.endpointFile);
+    const orphan = `${files.endpointFile}.11111111-2222-3333-4444-555555555555.tmp`;
+    await fs.writeFile(orphan, "{}", "utf8");
+    // An unrelated file with a similar name must survive the sweep.
+    const bystander = path.join(directory, "notes.tmp");
+    await fs.writeFile(bystander, "keep me", "utf8");
+
+    const removed = await cleanLeakedEndpointFiles(files.endpointFile);
+
+    expect(removed).toBe(1);
+    expect(await fs.readdir(directory)).toContain("notes.tmp");
+    expect(await fs.readdir(directory)).not.toContain(path.basename(orphan));
+  });
 });
 
 describe("daemon lifecycle", () => {
@@ -156,6 +191,25 @@ describe("daemon lifecycle", () => {
     const published = await readEndpoint(files.endpointFile);
     expect(published?.port).toBe(running.port);
     expect(await verifyDaemonAlive(published!)).toBe(true);
+  });
+
+  it("releases the lock when it cannot publish discovery, so the next start is not refused", async () => {
+    const files = await sandbox();
+    // Make the rename fail: publishing is the final startup step, and it used
+    // to run outside the unwind path, so a failure here left the lock held by
+    // a process that was not running. Every later start then reported "already
+    // running" forever, which is what a user sees as a permanently dead daemon.
+    await fs.mkdir(files.endpointFile, { recursive: true });
+
+    await expect(startDaemon({ version: "test", ...files })).rejects.toThrow();
+
+    // The lock must be gone, so a corrected start can take it.
+    await expect(fs.readFile(files.lockFile, "utf8")).rejects.toThrow();
+
+    await fs.rm(files.endpointFile, { recursive: true, force: true });
+    const running = await startDaemon({ version: "test", ...files });
+    closers.push(() => running.close());
+    expect((await daemonStatus({ endpointFile: files.endpointFile })).running).toBe(true);
   });
 
   it("reports running, then not running after a stop", async () => {

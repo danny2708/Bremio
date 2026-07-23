@@ -53,8 +53,41 @@ export async function publishEndpoint(
   } finally {
     await handle.close();
   }
-  await fs.rename(temporary, file);
+  try {
+    await fs.rename(temporary, file);
+  } catch (err) {
+    // The temp file is this call's private garbage. Leaving it behind means
+    // ~/.bremio accumulates one dead file per failed start, forever, with a
+    // name nothing else ever looks at or cleans.
+    await fs.rm(temporary, { force: true }).catch(() => {});
+    throw err;
+  }
   await fs.chmod(file, 0o600).catch(() => {});
+}
+
+/**
+ * Delete `daemon.json.<uuid>.tmp` files left by a start that died between
+ * writing the temp file and renaming it into place.
+ *
+ * Nothing else ever reads these names, so a leaked one is invisible until the
+ * directory is listed by hand. Startup is the safe moment to sweep: this
+ * process holds the single-instance lock, so no other daemon owns a temp file
+ * in flight.
+ */
+export async function cleanLeakedEndpointFiles(file = daemonEndpointPath()): Promise<number> {
+  const directory = path.dirname(file);
+  const prefix = `${path.basename(file)}.`;
+  let removed = 0;
+  try {
+    for (const entry of await fs.readdir(directory)) {
+      if (!entry.startsWith(prefix) || !entry.endsWith(".tmp")) continue;
+      await fs.rm(path.join(directory, entry), { force: true }).catch(() => {});
+      removed += 1;
+    }
+  } catch {
+    // The directory not being readable is not a reason to refuse to start.
+  }
+  return removed;
 }
 
 export async function readEndpoint(
