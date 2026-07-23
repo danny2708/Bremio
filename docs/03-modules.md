@@ -18,7 +18,8 @@ bremio/
 │   ├── adapter-claude/
 │   ├── adapter-codex/
 │   ├── adapter-antigravity/
-│   └── adapter-opencode/
+│   ├── adapter-opencode/
+│   └── adapter-local/     # OpenAI-compatible local servers; unregistered (docs/11)
 ├── config/  routing.yaml
 └── ~/.bremio/bremio.db     # daemon state (SQLite, outside the repo)
 ```
@@ -205,8 +206,9 @@ Stated plainly rather than left to be discovered:
 - **Retry policy is deliberately unintelligent.** Bounded attempts, no adaptive
   backoff, no provider reputation. Those need evidence Bremio does not have,
   and a wrong guess spends real quota.
-- **The extension panel is dark-only.** A light variant is a CSS block away but
-  is not implemented.
+- **The extension panel follows the editor theme.** Surfaces come from
+  `--vscode-*` variables, so it stays readable in light and dark; the brand
+  palette is confined to borders, frames and buttons.
 - **POSIX verification needs a real Linux/WSL environment.** The repository has
   `pnpm posix:verify` for process groups, lock/discovery permissions, SQLite,
   SSE, and cancellation. It cannot run through a Windows-only Node process;

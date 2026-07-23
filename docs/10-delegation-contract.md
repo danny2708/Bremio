@@ -90,6 +90,22 @@ This repo has a strong existing style. Match it rather than importing your own.
 - **A test must be able to fail.** Before calling a test done, break the thing it
   covers and confirm it goes red. A test that passes either way manufactures
   confidence, which is worse than having no test at all.
+- **A test must cover the property its name claims.** This is the sharper form of
+  the rule above, and the one that keeps getting missed. If a test is called
+  "escalation never runs without approval", then *removing the approval check*
+  must turn it red — it is not enough to assert some neighbouring fact about
+  eligibility. Sprint 4 shipped exactly that: the approval gate was never
+  exercised, so deleting it left the suite green. Two habits catch it:
+  - Name the guard, then delete the guard, then watch that test — not the suite —
+    go red. If it does not, the test is about something else; either fix the test
+    or rename it to what it actually proves.
+  - Never assert on *source text* to prove *behaviour*. Checking that generated
+    code contains a string passes even when that branch is disabled. Extract the
+    logic and call it.
+- **Assert exact values, not shapes.** For anything numeric, assert the figure
+  hand-computed from fixed inputs (`netGain === 42`), never merely that the
+  result is a number, is positive, or has the right type — a sign check passes a
+  wrong formula. For an error or `unknown` path, assert the exact reason string.
 - Timing: never assert "it finished" after a fixed `setTimeout`. Poll with a
   bound. A flaky test in this repo has already cost a debugging session.
 - Platform-dependent behaviour (process groups, file modes) is tested where it

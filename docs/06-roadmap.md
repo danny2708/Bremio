@@ -9,7 +9,7 @@ dashboard/quota/parallelism before the core loop runs.
 distributable npm tarball contains the bundled CLI/TUI and daemon; the VS Code
 extension ships as a local VSIX. Four adapters are registered: lead-capable
 Claude/Codex plus worker-only Antigravity/OpenCode. `pnpm release:check`
-typechecks, runs 365 tests, builds, packs, installs into a clean temporary
+typechecks, runs 415 tests, builds, packs, installs into a clean temporary
 project, and exercises the installed version/help/doctor commands. A separate
 fresh-profile E2E verifies daemon startup, authentication, persistence,
 restart, and diagnostics. Real-provider smoke remains explicit because it
@@ -19,8 +19,10 @@ The next product milestone is evidence, not more surface area: net gain is
 computed and reported fail-closed, and `bremio compare` now collects matched
 Single/Team samples from one clean commit. The next step is running enough real
 pairs to satisfy calibration before Auto routing may make decisions. Parallel
-execution, TUI, daemon, and editor integration have already shipped in the
-alpha; light-theme panel polish and automatic decisions remain open.
+execution, TUI, daemon, editor integration, light-theme panel support and
+automatic decisions have all shipped. What remains open is not surface area but
+evidence: `--mode auto` exists and is calibration-gated, so it stays on Single
+until real paired runs justify anything else.
 
 ## Execution modes — manual before automatic
 
@@ -35,10 +37,16 @@ target. Team is the existing plan/delegate/review flow. Legacy `--lead` without
 Claude-led Team, and Codex-led Team; the Team quality gates completed 3/3 in
 both lead directions.
 
-Still deferred after the manual-mode evidence gate:
+Shipped since, behind the manual-mode evidence gate:
 
-- `Auto` mode selection;
-- user-approved Single→Team escalation;
+- `Auto` mode selection — calibration-gated, and fail-closed to Single until
+  paired evidence meets the thresholds;
+- user-approved Single→Team escalation — offered only after a Single run fails
+  its objective verification, and never run without `--escalate` or an explicit
+  yes at a prompt.
+
+Still deferred:
+
 - extracting Single into another package (keep it as an orchestrator module
   until a concrete package boundary is justified).
 
@@ -125,8 +133,8 @@ missing, errored, disabled, or unsupported quota cannot hard-exclude an agent.
 The ledger now computes `net_gain` against the cheapest fully measured verified
 Single baseline. A calibration-gated kill-switch can stop Team after planning
 but before worker tasks when measured coordination cost exceeds the configured
-share. Automatic initial flow selection remains open; unreported costs keep the
-switch inert rather than creating an estimate.
+share. Automatic initial flow selection is implemented and calibration-gated;
+unreported costs keep the switch inert rather than creating an estimate.
 
 **Capacity sub-roadmap:**
 
@@ -176,7 +184,7 @@ evidence, non-inferiority, actual-model coverage, provider-reported cost
 coverage, and Team-only coordination coverage. It recommends Single while
 evidence is insufficient. Net-gain computation, fail-closed stats presentation,
 controlled pair collection, and the calibrated pre-task cost kill-switch are
-implemented; automatic initial flow selection remains open. No token-to-quota
+implemented, as is calibration-gated automatic flow selection. No token-to-quota
 or missing-price estimate is introduced.
 
 ## Phase 5 — Parallel + VS Code extension
@@ -225,7 +233,11 @@ bounded, conservative retry policy.
 
 Still open in Phase 5: Windows tree termination is confirmed with a centralized
 supervisor and `taskkill /T /F`, but it is weaker than a Job Object against a
-descendant created during the kill walk. The panel remains dark-only.
+descendant created during the kill walk. That gap is now *stated* rather than
+silent — a run whose workspace is still referenced by a process started after it
+reports `cancellation_failed` with the pids instead of a false `cancelled` (see
+`docs/07`). The panel supports light and dark themes and shows capacity cards
+with the CLI's honesty rules.
 
 ## Phase 6 — Additional providers
 OpenCode (verified 2026-07-21). Jan was dropped from the current roadmap: there

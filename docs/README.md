@@ -44,8 +44,9 @@ results back into one place.
   freshness, confidence, unavailable/last-known states, and native usage links.
   Scored capacity routing is opt-in. Net-gain arithmetic, fail-closed stats,
   controlled pair collection, and the calibrated pre-task cost kill-switch are
-  implemented; Auto mode remains deferred.
-- The local release gate passes typecheck, 365 tests, bundle build, clean packed
+  implemented, as are calibration-gated Auto mode and user-approved Single→Team
+  escalation.
+- The local release gate passes typecheck, 415 tests, bundle build, clean packed
   install, and a 21-check fresh-profile daemon E2E on Windows. The current
   machine has no WSL distribution, so the separate POSIX verification command
   is environment-blocked in the latest audit rather than marked passed.

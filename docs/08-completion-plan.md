@@ -3,14 +3,24 @@
 The remaining distance between the shipped `v0.1.0-alpha.1` and the design in
 `docs/00`–`docs/06`, broken into 5 sprints and 20 tasks.
 
-**Execution status (2026-07-22):** Sprint 1 plus its remediation and Sprint 2
-are merged into `main`. Sprint 3 is complete on `sprint/efficiency-s3`; Sprint
-4 remains open. Sprint 5 is still open:
-the supervisor gate was stabilized by serializing daemon-wide
-Windows termination, but the stronger Job Object guarantee in S5-T1 is not
-claimed. Current Windows gates pass `release:check` (365 tests) and
-`e2e:fresh` (21 checks); the latest `posix:verify` attempt is blocked because
-this machine has no installed WSL distribution.
+**Execution status (2026-07-23):** Sprints 1–4 (with sprint 1's remediation) and
+S5-T1/S5-T2 are merged into `main`, each audited before merge. Remaining:
+**S5-T3** (this status sync) and **S5-T4** (v1.0 release prep), the latter
+deliberately not started — see the note below. The Job Object guarantee in
+S5-T1 is still not claimed: the Windows kill-walk race stands, but a run whose
+workspace is still referenced now reports `cancellation_failed` with the pids
+rather than a false `cancelled`. Current Windows gates pass `release:check`
+(415 tests) and `e2e:fresh` (21 checks); `posix:verify` remains
+environment-blocked on this machine (no WSL distribution), recorded as blocked
+rather than passed.
+
+**On S5-T4 and the version number.** Dogfooding after Sprint 4 surfaced a gap
+this plan never covered: runs are not stored or reopenable as sessions, the
+process is not shown richly while working, and parallel tasks have no
+overview. That work (session history and observability, then a stateful
+context/harness layer) is scoped outside this document. Cutting `1.0.0` before
+it lands would put a stability promise on the exact thing the first real user
+found missing, so the version bump waits.
 
 Every task states its **goal**, **why it exists**, the **files** it touches, its
 **success criteria** as verifiable assertions, the **tests** it must produce,

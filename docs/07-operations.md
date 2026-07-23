@@ -85,7 +85,7 @@ survived. Your real profile is neither read nor modified.
 The complete pre-release evidence set is:
 
 ```powershell
-corepack pnpm release:check   # typecheck + 365 tests + build + packed install
+corepack pnpm release:check   # typecheck + 415 tests + build + packed install
 corepack pnpm e2e:fresh       # 21 fresh-profile daemon/install checks
 corepack pnpm posix:verify    # run from Linux or a configured WSL distribution
 ```

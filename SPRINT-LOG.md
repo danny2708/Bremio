@@ -1074,3 +1074,44 @@ the user, not to an audit. The TUI does render `report.autoModeReason`
 `"auto selected Team"`. That change is legitimate — the CLI prints
 `mode: auto  <reason>`, so the original encoded a label that never existed, and
 the surviving assertion still proves the reason reaches the surface.
+
+---
+
+## S5-T3 — Drop the Jan local worker and sync every status line (Claude)
+
+**Done:** Sprints 1–4 invalidated a lot of prose. Every claim below was false as
+written when this started; each is now what the code on `main` actually does.
+
+- `docs/06`: "light-theme panel polish and automatic decisions remain open" →
+  both shipped. "Still deferred: Auto mode selection; user-approved Single→Team
+  escalation" → both shipped, restated with the conditions that actually bind
+  them (calibration gate; `--escalate` or an explicit yes). Two separate
+  "automatic initial flow selection remains open" claims → implemented. "The
+  panel remains dark-only" → false since S5-T2, and the Phase-5 process-tree
+  note now records that the Windows race is *stated* rather than silent.
+- `docs/03`: "The extension panel is dark-only. A light variant is a CSS block
+  away but is not implemented" → replaced with what is true. Added
+  `adapter-local/` to the package tree; it existed in the repo and in `docs/11`
+  but not in the module map.
+- `docs/05` and `docs/README`: "automatic initial mode selection remains open" /
+  "Auto mode remains deferred" → implemented, with escalation named alongside.
+- Test counts: `365` → `415` across `docs/06`, `docs/07`, `docs/08`,
+  `docs/README`. Left `docs/10`'s "308 tests" alone — that one is a historical
+  account of sprint 1, not a status claim.
+- `docs/08` execution status rewritten for where the plan actually stands.
+
+**Jan:** already handled — `docs/04` and `docs/05` each carry the one-sentence
+"dropped, and why" the task asked for, and `docs/11` now documents the general
+local-provider seam that replaced the specific integration. Nothing to remove;
+verified rather than assumed.
+
+**Contract change (`docs/10` §5):** folded the two audit lessons into the test
+policy permanently, instead of leaving them in one sprint's prompt. A test must
+*cover the property its name claims* — deleting the named guard has to turn that
+test red, and asserting on source text never proves behaviour. And numeric
+assertions state the hand-computed value, not a sign or a type.
+
+**Tests.** None — documentation. **Typecheck:** clean. **Test:** 415/415.
+
+**Deviations:** S5-T4 (the v1.0 bump) is deliberately not started; the reasoning
+is recorded in `docs/08` rather than here, since it is a plan-level decision.

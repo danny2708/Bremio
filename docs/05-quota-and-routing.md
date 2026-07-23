@@ -444,7 +444,7 @@ ledger has enough evidence to enable optimization automatically.
    waits for fresh-data calibration.**
 3. Single-agent-vs-multi evidence gate. **Readiness reporting, direct baseline
    execution, net-gain arithmetic, and the calibrated pre-task kill-switch have
-   shipped; automatic initial mode selection remains open.**
+   shipped, as has calibration-gated automatic initial mode selection.**
 4. Scoring router + calibration gate. **The weighted, capability-aware router
    is implemented behind opt-in capacity routing; automatic/cheap-first mode
    remains disabled until paired evidence passes the gate.**
