@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@bremio/adapter-antigravity": "workspace:*",
+    "@bremio/event-view": "workspace:*",
     "@bremio/adapter-claude": "workspace:*",
     "@bremio/adapter-codex": "workspace:*",
     "@bremio/adapter-opencode": "workspace:*",

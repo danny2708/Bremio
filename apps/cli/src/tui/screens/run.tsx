@@ -7,7 +7,7 @@ import {
   runSingleAgent,
   type BremioRunReport,
 } from "@bremio/orchestrator";
-import type { AgentEvent } from "@bremio/protocol";
+import { renderEvent } from "@bremio/event-view";
 import { ErrorBox, Header, Menu, Spinner, StatusText, TextInput } from "../components";
 import { createAdapters, AGENT_LABELS } from "../data";
 import { theme } from "../theme";
@@ -17,34 +17,10 @@ type Mode = "single" | "team";
 
 const MAX_LINES = 12;
 
-/** Render an event as one activity line, or skip it. */
-function describeEvent(event: AgentEvent): string | undefined {
-  const clip = (s: string, n = 90) => {
-    const one = s.replace(/\s+/g, " ").trim();
-    return one.length > n ? `${one.slice(0, n)}…` : one;
-  };
-  switch (event.type) {
-    case "message":
-      return clip(event.text);
-    case "thinking":
-      return `· ${clip(event.text, 70)}`;
-    case "tool_use": {
-      const input = event.input as { command?: unknown; file_path?: unknown } | undefined;
-      const arg =
-        typeof input?.command === "string"
-          ? input.command
-          : typeof input?.file_path === "string"
-            ? input.file_path
-            : "";
-      return `⚙ ${event.name}${arg ? ` ${clip(String(arg), 60)}` : ""}`;
-    }
-    case "tool_result":
-      return `${event.ok ? "✓" : "✗"} ${event.name}`;
-    case "error":
-      return `✗ ${clip(event.message)}`;
-    default:
-      return undefined;
-  }
+function eventSummary(event: unknown): string {
+  // AgentEvent-shaped object — passed through the shared renderer.
+  const view = renderEvent(event as Parameters<typeof renderEvent>[0]);
+  return view.summary;
 }
 
 function reportStatus(report: BremioRunReport): string {
@@ -99,7 +75,7 @@ export function RunScreen({
               if (dirty.length) push(`⚠ ${dirty.length} uncommitted file(s) already in the workspace`);
             },
             onStart: (id) => push(`▶ ${id} started`),
-            onEvent: (event) => push(describeEvent(event)),
+            onEvent: (event) => push(eventSummary(event)),
           },
         });
       } else {
@@ -112,7 +88,7 @@ export function RunScreen({
           signal: controller.signal,
           hooks: {
             onLeadStart: (id) => push(`▶ lead ${id} planning…`),
-            onLeadEvent: (event) => push(describeEvent(event)),
+            onLeadEvent: (event) => push(eventSummary(event)),
             onPlan: (plan) => {
               setStatus(`executing ${plan.tasks.length} task(s), up to ${DEFAULT_MAX_CONCURRENCY} at a time`);
               push(`✓ plan: ${plan.summary}`);
@@ -123,7 +99,7 @@ export function RunScreen({
             },
             onTaskStart: (task, id) => push(`▶ ${task.id} ${task.title} → ${id}`),
             // Independent tasks run concurrently, so each line names its task.
-            onEvent: (task, _id, event) => push(`[${task.id}] ${describeEvent(event)}`),
+            onEvent: (task, _id, event) => push(`[${task.id}] ${eventSummary(event)}`),
             onTaskComplete: (taskResult) =>
               push(`${taskResult.status === "completed" ? "✓" : "✗"} ${taskResult.taskId} ${taskResult.status}`),
           },

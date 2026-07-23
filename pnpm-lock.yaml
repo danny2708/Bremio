@@ -66,6 +66,9 @@ importers:
       '@bremio/daemon':
         specifier: workspace:*
         version: link:../daemon
+      '@bremio/event-view':
+        specifier: workspace:*
+        version: link:../../packages/event-view
       '@bremio/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
@@ -198,6 +201,8 @@ importers:
       zod:
         specifier: ^4.0.0
         version: 4.4.3
+
+  packages/event-view: {}
 
   packages/orchestrator:
     dependencies:

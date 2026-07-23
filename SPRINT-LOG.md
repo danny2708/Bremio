@@ -1223,3 +1223,39 @@ ordering) and confirmed the corresponding test went red. 426/426 pass (90 daemon
 tests, +4).
 
 **Deviations:** None.
+
+---
+
+## A2-T1 — Unify CLI, TUI, and VS Code panel event rendering into one module
+
+**Done:** Three divergent event renderers (`compactEvent` in CLI `ui.ts`,
+`describeEvent` in TUI `run.tsx`, inline `if/else` in VS Code panel `webview.ts`)
+replaced with one pure mapping function in a shared package.
+
+**`packages/event-view/src/index.ts`** exports `renderEvent(event: AgentEvent): EventView`
+with 9 event-type branches (started, message, thinking, tool_use, tool_result, log,
+usage, error, completed) + unknown catch-all. Each produces a `{ kind, summary, detail?,
+severity }` struct. The function is self-contained (no module-scope closures) so it
+can be inlined into the VS Code panel webview via `.toString()`.
+
+Consumers:
+- **CLI `ui.ts`**: `formatEventView(view)` colourises by severity — red for error,
+  yellow for warn, green for success, grey for muted, default for info. All 7 call
+  sites in `index.ts` (doctor, TUI, run, log, progress indicators) go through it.
+- **TUI `run.tsx`**: `eventSummary(renderEvent(...))` — returns the summary string
+  for the event log; `describeEvent` deleted.
+- **VS Code panel** (`webview.ts`): Second copy of `renderEvent` (same body, exported
+  + `.toString()` inlined into panel HTML, matching the `renderCapacityCards` pattern).
+  `appendLog` now reads `event.data` through `renderEvent` and renders `view.summary`.
+
+No old per-surface function left (`compactEvent`, `describeEvent` deleted; no fallback).
+
+**Tests (18 new, 448 total):**
+Every event variant + unknown catch-all covered. Red/green verified for each variant.
+
+**Typecheck:** clean. **Test:** 96/96 in 11 relevant files (event-view 18/18, extension
+31/31, CLI 47/47). Full suite passes.
+
+**Deviations:** The VS Code extension deliberately depends on no `@bremio/*` packages
+(build.mjs line 5), so `webview.ts` carries its own copy of `renderEvent` with the
+same body — same pattern as `renderCapacityCards` in S5-T2.

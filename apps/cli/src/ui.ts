@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { BremioRunReport, RunReport, SingleRunReport } from "@bremio/orchestrator";
-import type { AgentEvent, Plan, TaskStatus } from "@bremio/protocol";
+import type { EventView } from "@bremio/event-view";
+import type { Plan, TaskStatus } from "@bremio/protocol";
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
 const wrap = (code: string) => (s: string) => (useColor ? `[${code}m${s}[0m` : s);
@@ -25,26 +26,14 @@ export function statusGlyph(status: TaskStatus): string {
   }
 }
 
-/** A compact one-line rendering of a live event, or undefined to skip it. */
-export function compactEvent(event: AgentEvent): string | undefined {
-  const clip = (s: string, n = 100) => {
-    const one = s.replace(/\s+/g, " ").trim();
-    return one.length > n ? `${one.slice(0, n)}…` : one;
-  };
-  switch (event.type) {
-    case "tool_use": {
-      const input = event.input as { command?: unknown; file_path?: unknown } | undefined;
-      const arg = typeof input?.command === "string"
-        ? input.command
-        : typeof input?.file_path === "string"
-          ? input.file_path
-          : "";
-      return c.dim(`   · ${event.name}${arg ? ` ${clip(String(arg), 70)}` : ""}`);
-    }
-    case "error":
-      return c.red(`   ! ${clip(event.message)}`);
-    default:
-      return undefined;
+/** Colour the summary by severity so the terminal rendering has a consistent scheme. */
+export function formatEventView(view: EventView): string {
+  switch (view.severity) {
+    case "error": return c.red(view.summary);
+    case "success": return c.green(view.summary);
+    case "warn": return c.yellow(view.summary);
+    case "notice": return c.dim(view.summary);
+    case "info": return view.summary;
   }
 }
 

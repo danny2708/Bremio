@@ -194,6 +194,76 @@ export function renderDecisionReasons(message: DecisionReasonMessage): string {
   return out;
 }
 
+/**
+ * Self-contained (no module-scope references) because `panelHtml` inlines its
+ * source into the webview script via .toString(), matching the pattern used by
+ * `renderCapacityCards`. Canonical source: packages/event-view/src/index.ts.
+ */
+export function renderEvent(event: {
+  type: string;
+  text?: string;
+  name?: string;
+  input?: unknown;
+  ok?: boolean;
+  exitCode?: number;
+  detail?: string;
+  message?: string;
+  level?: string;
+  model?: string;
+  reasoningLevel?: string;
+}): { kind: string; summary: string; detail?: string; severity: string } {
+  switch (event.type) {
+    case "started":
+      return { kind: "started", summary: "started", severity: "info" };
+    case "message": {
+      const one = (event.text ?? "").replace(/\s+/g, " ").trim();
+      const clipped = one.length > 120 ? one.slice(0, 120) + "…" : one;
+      return { kind: "message", summary: clipped, detail: event.text, severity: "info" };
+    }
+    case "thinking": {
+      const one = (event.text ?? "").replace(/\s+/g, " ").trim();
+      const clipped = one.length > 120 ? one.slice(0, 120) + "…" : one;
+      return { kind: "thinking", summary: "· " + clipped, detail: event.text, severity: "notice" };
+    }
+    case "tool_use": {
+      const input = (typeof event.input === "object" && event.input) ? event.input as Record<string, unknown> : undefined;
+      const command = input?.command;
+      const file_path = input?.file_path;
+      const arg = typeof command === "string" ? command : typeof file_path === "string" ? file_path : "";
+      return {
+        kind: "tool_use",
+        summary: "→ " + (event.name ?? "?") + (arg ? " " + arg : ""),
+        detail: input ? JSON.stringify(input, null, 2) : undefined,
+        severity: "info",
+      };
+    }
+    case "tool_result":
+      return {
+        kind: "tool_result",
+        summary: (event.ok ? "✓" : "✗") + " " + (event.name ?? "?") + " (exit code " + (event.exitCode ?? "not reported") + ")",
+        detail: event.detail,
+        severity: event.ok ? "success" : "error",
+      };
+    case "log": {
+      const sev = event.level === "error" ? "error" : event.level === "warn" ? "warn" : event.level === "debug" ? "notice" : "info";
+      return { kind: "log", summary: event.message ?? "", severity: sev };
+    }
+    case "usage": {
+      const model = event.model ?? "unknown model";
+      const reason = event.reasoningLevel ? " [" + event.reasoningLevel + "]" : "";
+      return { kind: "usage", summary: model + reason, severity: "info" };
+    }
+    case "error":
+      return { kind: "error", summary: "✗ " + (event.message ?? ""), severity: "error" };
+    case "completed":
+      return { kind: "completed", summary: "✓ completed", severity: "success" };
+    default: {
+      const label = String(event.type);
+      return { kind: label, summary: "[" + label + "]", detail: JSON.stringify(event), severity: "info" };
+    }
+  }
+}
+
 export function panelHtml(nonce: string, cspSource: string, iconUri = ""): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -595,6 +665,7 @@ $("new-run").addEventListener("click", () => {
 });
 
 function appendLog(event) {
+  const view = event.data ? renderEvent(event.data) : null;
   const line = document.createElement("span");
   line.className = "log-line";
   const cls = event.kind === "failed" ? "log-fail"
@@ -602,7 +673,8 @@ function appendLog(event) {
     : event.kind === "lead" ? "log-lead"
     : "log-task";
   const tag = event.taskId ? "[" + event.taskId + "] " : "";
-  line.innerHTML = '<span class="' + cls + '">' + escapeHtml(tag) + "</span>" + escapeHtml(event.message);
+  const text = view ? view.summary : event.message;
+  line.innerHTML = '<span class="' + cls + '">' + escapeHtml(tag) + "</span>" + escapeHtml(text);
   $("log").appendChild(line);
   $("log").scrollTop = $("log").scrollHeight;
 }
@@ -710,6 +782,10 @@ const renderCapacityCards = ${renderCapacityCards.toString()};
 // Same single-source-of-truth inlining: the panel and the unit test run this
 // exact function, so a test cannot pass while the branch is disabled.
 const renderDecisionReasons = ${renderDecisionReasons.toString()};
+
+// Inlined from webview.ts so the panel and the unit test share one renderer.
+// Canonical source: packages/event-view/src/index.ts.
+const renderEvent = ${renderEvent.toString()};
 
 function renderRuns(payload) {
   const runs = payload.runs ?? [];
