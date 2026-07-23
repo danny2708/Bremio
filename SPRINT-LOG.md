@@ -1525,6 +1525,30 @@ Capability updates:
 
 **Deviations:** None.
 
+---
+
+## B1 — The session remembers more than its transcript
+
+**Done:** Added `session_context(session_id, turn_index, summary, provider_session_ids)` table and `RunStore` methods (`saveSessionContext`, `getSessionContext`, `listSessionContexts`, `getLatestSessionContext`) in `apps/daemon/src/storage.ts`, with `SessionContextSchema` exported from `packages/protocol/src/session-context.ts`.
+
+Key implementation details:
+1. **Schema Migration (Version 3)**: Migrates database in place using transactional DDL (`BEGIN IMMEDIATE` / `COMMIT`). Existing database upgrades cleanly without data loss.
+2. **Per-adapter session IDs**: `provider_session_ids` stored as JSON string per turn.
+3. **Turn-based immutable summaries**: Stored per turn with `PRIMARY KEY (session_id, turn_index)`. Turn N's summary remains readable after Turn N+1 is added.
+4. **Summary absence semantics**: `NULL` in SQLite maps to `undefined` (absent) in `PersistedSessionContext`, distinguishing an unsummarised turn from an explicit empty string (`""`).
+
+**Tests (3 new, 30 total in `storage.test.ts`, 482 total overall):**
+1. Context per turn stored and retrieved without overwriting earlier turns.
+2. Absent summary (`undefined`) is distinguished from an empty summary (`""`).
+3. Database upgrade from v2 to v3 creates `session_context` table and indices cleanly.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 482/482 pass.
+
+**Deviations:** None.
+
+
 
 
 
