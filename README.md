@@ -42,7 +42,7 @@ From a source checkout:
 corepack pnpm install
 corepack pnpm release:check
 npm pack
-npm install --global .\bremio-1.1.0.tgz
+npm install --global .\bremio-1.2.0.tgz
 bremio --version
 bremio doctor
 ```

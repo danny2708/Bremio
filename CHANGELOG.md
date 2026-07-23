@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.2.0 — 2026-07-23
+
+The three surfaces stop disagreeing about what Bremio can do, and every one of
+them now shows what the agent actually said.
+
+### You can see the agent's answer
+
+- A run's **reply is displayed**, in the TUI, in `bremio session show`, and in
+  the panel. It was always recorded — `report.json` had it — but no surface
+  printed it, so a run whose entire value was the answer rendered as
+  `completed · 0 files` and nothing else.
+- Providers deliver it two ways: streamed message fragments, or a final text on
+  the completed outcome. Both are resolved in one place, preferring whichever is
+  longer, so a provider that streams in full but reports a clipped summary does
+  not cost you the part it clipped.
+- Transcripts read as a **conversation** — what you asked, then the work
+  (dimmed and collapsed), then the answer at full width — rather than a record
+  whose only visible content was the tool calls.
+
+### The panel does what the CLI does
+
+- **Auto mode** is in the panel. It is resolved by the daemon from the same
+  ledger through the same rule the CLI uses, so the two cannot reach different
+  answers from the same evidence. Runs record the mode that actually ran, never
+  `auto`, and carry the reason as an event so old runs still explain themselves.
+- A **Sessions tab** opens a session as a conversation and **continues it** with
+  a follow-up, which the daemon appends as that session's next turn. Sessions
+  were previously readable from the CLI and the TUI but not from the panel.
+- The panel can **reconnect** without being closed and reopened. Its agent lists
+  are filled only from a live daemon, so a daemon that was down at open time
+  used to leave Lead and Worker empty with no way to retry in place.
+
+### Fixes worth naming
+
+- A daemon that failed to publish its endpoint **kept the single-instance
+  lock**, so every later start was refused as "already running" — a daemon that
+  could not come back without deleting a file by hand. The failed publish also
+  leaked a temp file per attempt, and left a stale endpoint from an older
+  version that made clients report the wrong remedy.
+
+### Known limitations
+
+- `bremio session show --max-events <n>` is documented but not parsed; passing
+  it is an error.
+
 ## 1.1.0 — 2026-07-23
 
 Sessions stop being read-only. `bremio session continue <id> "<prompt>"` adds a
