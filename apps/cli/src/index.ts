@@ -1,4 +1,6 @@
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
+import { createInterface } from "node:readline/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { pino } from "pino";
@@ -16,6 +18,8 @@ import {
   resolveAutoMode,
   runBremio,
   runSingleAgent,
+  shouldEscalate,
+  resolveEscalationApproval,
   type RunBremioHooks,
   type SingleRunHooks,
 } from "@bremio/orchestrator";
@@ -78,6 +82,7 @@ ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --capacity-routing      Opt in to conservative Team capacity routing.
   --db <path>             Override the AQT database used for capacity routing.
   --comparison <id>       Link this run to a controlled Single/Team experiment.
+  --escalate              Auto-approve escalation to Team when Single fails verification.
   --json                  Print the report as JSON (suppresses progress).
   --verbose               Emit structured operational logs to stderr.
 
@@ -138,6 +143,7 @@ function parseCli() {
       "open-usage": { type: "string" },
       out: { type: "string" },
       comparison: { type: "string" },
+      escalate: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
@@ -595,6 +601,11 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
 
   try {
     if (mode === "single") {
+      const escalationPossible = values.escalate || process.stdout.isTTY;
+      const escComparisonId = escalationPossible
+        ? (values.comparison?.trim() || `esc-${randomBytes(4).toString("hex")}`)
+        : undefined;
+
       const report = await runSingleAgent({
         primaryAgentId: values.agent as string,
         repoPath,
@@ -607,11 +618,86 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
           ? { reasoningLevel: values.reasoning as ReasoningLevel }
           : {}),
         ...(timeoutSeconds !== undefined ? { timeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
-        ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
+        ...(escComparisonId ? { comparisonId: escComparisonId } : {}),
       });
 
       if (json) console.log(JSON.stringify(report, null, 2));
       else printReport(report);
+
+      if (shouldEscalate(report)) {
+        if (values.escalate) {
+          console.log(c.yellow("\n⚠ Single run failed verification; escalating to Team…"));
+          const teamReport = await runBremio({
+            leadId: "claude",
+            repoPath,
+            prompt,
+            registry,
+            logger,
+            signal: ac.signal,
+            hooks: teamHooks,
+            comparisonId: escComparisonId,
+            ...(timeoutSeconds !== undefined ? { taskTimeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
+            ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
+          });
+
+          if (json) console.log(JSON.stringify(teamReport, null, 2));
+          else {
+            console.log(c.dim("\n── escalated Team run ──"));
+            printReport(teamReport);
+          }
+
+          process.exitCode = teamReport.mode === "single"
+            ? teamReport.result.status === "completed" ? 0 : 1
+            : teamReport.summary.failed > 0 ||
+                teamReport.tasks.length === 0 ||
+                teamReport.qualityGate.status !== "passed"
+              ? 1
+              : 0;
+          return;
+        }
+
+        if (process.stdout.isTTY) {
+          const rl = createInterface({ input: process.stdin, output: process.stdout });
+          const answer = await rl.question(c.yellow("\nSingle run failed verification. Escalate to Team? (y/N) "));
+          rl.close();
+          // The rule lives in resolveEscalationApproval so it can be proven,
+          // not restated here where a typo would silently widen it.
+          if (resolveEscalationApproval({ escalateFlag: false, interactive: true, answer }).approved) {
+            console.log(c.yellow("Escalating to Team…"));
+            const teamReport = await runBremio({
+              leadId: "claude",
+              repoPath,
+              prompt,
+              registry,
+              logger,
+              signal: ac.signal,
+              hooks: teamHooks,
+              comparisonId: escComparisonId,
+              ...(timeoutSeconds !== undefined ? { taskTimeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
+              ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
+            });
+
+            if (json) console.log(JSON.stringify(teamReport, null, 2));
+            else {
+              console.log(c.dim("\n── escalated Team run ──"));
+              printReport(teamReport);
+            }
+
+            process.exitCode = teamReport.mode === "single"
+              ? teamReport.result.status === "completed" ? 0 : 1
+              : teamReport.summary.failed > 0 ||
+                  teamReport.tasks.length === 0 ||
+                  teamReport.qualityGate.status !== "passed"
+                ? 1
+                : 0;
+            return;
+          }
+          console.log(c.dim("Escalation declined; Single result and artifacts remain intact."));
+        } else {
+          console.log(c.dim("\n⚠ Single run failed verification. Use --escalate to retry as a Team."));
+        }
+      }
+
       process.exitCode = report.result.status === "completed" ? 0 : 1;
       return;
     }
@@ -633,6 +719,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
       ...(capacitySnapshots ? { capacitySnapshots } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
+      ...(isAuto && autoReason ? { autoModeReason: autoReason } : {}),
     });
 
     if (json) console.log(JSON.stringify(report, null, 2));

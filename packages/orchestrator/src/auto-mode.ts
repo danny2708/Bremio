@@ -40,6 +40,6 @@ export function resolveAutoMode(
 
   return {
     mode: "single",
-    reason: "auto selected Single — preferTeamWhenReady policy is disabled",
+    reason: "auto selected Single — preferTeamWhenReady is disabled",
   };
 }

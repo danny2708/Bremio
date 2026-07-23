@@ -5,6 +5,7 @@ export interface RunReportTask {
   task: Task;
   agentId: string;
   result: TaskResult;
+  reason?: string;
 }
 
 export interface RunReport {
@@ -27,6 +28,8 @@ export interface RunReport {
     cancelled: number;
     filesChanged: number;
   };
+  /** Why this flow mode (single/team) was chosen, if automatic. */
+  autoModeReason?: string;
 }
 
 export type BremioRunReport = RunReport | import("./single-run").SingleRunReport;
@@ -41,6 +44,10 @@ export interface BuildReportInput {
   plan: Plan;
   assign: Map<string, string>;
   results: TaskResult[];
+  /** Why each task was assigned to its agent. Map: taskId → reason. */
+  reasonByTask?: ReadonlyMap<string, string>;
+  /** Why this flow mode was chosen (auto mode resolution). */
+  autoModeReason?: string;
 }
 
 /** Collect every TaskResult into one report. */
@@ -53,6 +60,9 @@ export function buildReport(input: BuildReportInput): RunReport {
       task,
       agentId,
       result: result ?? missingResult(task.id, agentId),
+      ...(input.reasonByTask?.get(task.id)
+        ? { reason: input.reasonByTask.get(task.id) }
+        : {}),
     };
   });
 
@@ -78,6 +88,7 @@ export function buildReport(input: BuildReportInput): RunReport {
     tasks,
     qualityGate,
     summary,
+    ...(input.autoModeReason ? { autoModeReason: input.autoModeReason } : {}),
   };
 }
 

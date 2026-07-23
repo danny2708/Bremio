@@ -221,6 +221,50 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
   return report;
 }
 
+/** Escalation is offered only after a Single run fails its objective verification,
+ * not on any failure signal the model reports about itself. A run that itself
+ * failed (crash, timeout, cancel) does not qualify — only a completed run whose
+ * verification (test/lint/build) failed or was missing.
+ */
+export function shouldEscalate(report: SingleRunReport): boolean {
+  if (report.result.status !== "completed") return false;
+  return report.verification.status !== "passed";
+}
+
+export type EscalationApproval =
+  | { approved: true; via: "flag" | "prompt" }
+  | { approved: false; reason: string };
+
+/**
+ * Whether an *eligible* escalation may actually run.
+ *
+ * `shouldEscalate` only says a Single run qualifies to be offered; it never
+ * authorises spending a second run's quota. That authority is here, and it is
+ * deliberately a separate, pure decision so the guarantee "escalation never
+ * runs without approval" can be proven rather than asserted — the CLI's flag
+ * and terminal handling are inputs to it, not a place where the rule lives.
+ *
+ * Fail closed: with no flag and no terminal to ask in, the answer is no. A
+ * non-interactive context (CI, a pipe) must never silently pay twice, which is
+ * the double-pay trap in `docs/05` R5.
+ */
+export function resolveEscalationApproval(input: {
+  escalateFlag: boolean;
+  interactive: boolean;
+  answer?: string;
+}): EscalationApproval {
+  if (input.escalateFlag) return { approved: true, via: "flag" };
+  if (!input.interactive) {
+    return {
+      approved: false,
+      reason: "not a terminal; pass --escalate to approve escalation",
+    };
+  }
+  const answer = (input.answer ?? "").trim().toLowerCase();
+  if (answer === "y" || answer === "yes") return { approved: true, via: "prompt" };
+  return { approved: false, reason: "escalation declined" };
+}
+
 function verifySingleResult(result: SingleAgentResult): SingleRunVerification {
   if (result.status !== "completed") {
     return { status: "failed", reasons: [result.error ?? `agent run ${result.status}`] };

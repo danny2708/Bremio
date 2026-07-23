@@ -10,9 +10,10 @@ import type {
   Task,
   UsageSummary,
 } from "@bremio/protocol";
-import type {
-  AgentCapacitySnapshot,
-  CapacityRoutingPolicyInput,
+import {
+  assessCapacity,
+  type AgentCapacitySnapshot,
+  type CapacityRoutingPolicyInput,
 } from "@bremio/quota";
 import { WorktreeManager, getCurrentBranch } from "@bremio/workspace";
 import { buildReport, type BremioRunReport, type RunReport } from "./aggregator";
@@ -62,6 +63,8 @@ export interface RunBremioOptions {
   comparisonId?: string;
   /** Parsed policy override; otherwise config/routing.yaml (or its defaults) is used. */
   routingConfig?: RoutingConfig;
+  /** Why this flow mode was chosen (set by --mode auto resolution). */
+  autoModeReason?: string;
   signal?: AbortSignal;
   logger?: Logger;
   hooks?: RunBremioHooks;
@@ -261,6 +264,24 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     "plan validated; tasks assigned",
   );
 
+  const reasonByTask = new Map<string, string>();
+  const capacityPolicy = getDefaultRoutingConfig().capacityPolicy;
+  for (const [taskId, agentId] of assign) {
+    const snapshot = capacityByAgent?.get(agentId);
+    const assessment = snapshot
+      ? assessCapacity(snapshot, {
+          policy: capacityPolicy,
+          ...(opts.modelByAgent?.get(agentId)
+            ? { modelId: opts.modelByAgent.get(agentId) }
+            : {}),
+        })
+      : undefined;
+    reasonByTask.set(
+      taskId,
+      assessment?.reason ?? (agentId === leadId ? "lead (deterministic)" : "worker (deterministic)"),
+    );
+  }
+
   const results = await runPlan({
     plan,
     assign,
@@ -285,6 +306,8 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     plan,
     assign,
     results,
+    reasonByTask,
+    ...(opts.autoModeReason ? { autoModeReason: opts.autoModeReason } : {}),
   });
 
   await fs.writeFile(
