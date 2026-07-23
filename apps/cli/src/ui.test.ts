@@ -69,7 +69,7 @@ describe("S4-T3: reasons for every automatic choice", () => {
       plan: { summary: "test", tasks: [], leadAgentId: "claude" },
       tasks: [
         {
-          task: { id: "TASK-001", title: "fix", kind: "implementation", risk: "low", dependencies: [], preferredAgents: [] },
+          task: { id: "TASK-001", title: "fix", kind: "implementation", risk: "low", dependencies: [], preferredAgents: [], requiredCapabilities: [], acceptanceCriteria: [] },
           agentId: "codex",
           result: {
             taskId: "TASK-001",
@@ -84,7 +84,7 @@ describe("S4-T3: reasons for every automatic choice", () => {
           reason: "exhausted at 2% remaining, fresh; next-claude is held for lead reserve",
         },
       ],
-      qualityGate: { status: "passed", reasons: [] },
+      qualityGate: { status: "passed", reasons: [], testTaskIds: [], reviewTaskIds: [] },
       summary: { total: 1, completed: 1, failed: 0, cancelled: 0, filesChanged: 0 },
       autoModeReason: "auto selected Team — calibration gate is ready",
     });

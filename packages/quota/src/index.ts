@@ -54,3 +54,4 @@ export {
   type CapacityRoutingPolicy,
   type CapacityRoutingPolicyInput,
 } from "./routing-policy";
+export { ANTIGRAVITY_MODEL_MAP } from "./antigravity-models";

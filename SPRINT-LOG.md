@@ -989,3 +989,34 @@ pass (46 files). No regressions.
 **Deviations:** The VS Code panel does not yet render per-task reasons (only the
 fallback and auto-mode banners). Task-level reasons are available in the report
 JSON and CLI output. Full TUI task-level display belongs in a follow-up pass.
+
+---
+
+## S4-T4 — Prove the fail-closed properties hold together
+
+**Done:** Created `packages/orchestrator/src/fail-closed.integration.test.ts` —
+one integration test file with 6 assertions covering all fail-closed properties
+end to end, using the real router, real calibration evaluation, real quota
+assessment, and real net-gain computation (no mocks of the things under test):
+
+| # | Property | Guard | Underlying mechanism |
+|---|----------|-------|---------------------|
+| 1 | Uncalibrated `--mode auto` never selects Team | `evaluateCalibrationReadiness` → `"insufficient-evidence"` | `resolveAutoMode` (S4-T1) |
+| 2 | Stale or unknown quota never hard-excludes an agent | `isTrustedWindow` (expects both `freshness:"fresh"` + `confidence:"high"`) | `assessCapacity` (S2-T3) |
+| 3 | Incomplete cost data never fires the kill-switch | `costUsd` presence check in S3-T1 net-gain equation | `computeNetGain` (S3-T1) |
+| 4 | Escalation never runs without approval | `verification.status !== "passed"` and `result.status === "completed"` | `shouldEscalate` (S4-T2) |
+| 5 | Agent without `repositoryWrite` never receives a write task | `supportsTask` capability check in `router.ts:334` | `assignAgents` (S2-T3) |
+| 6 | Unmapped Antigravity bucket is never routed on | Model-scoped window match requires valid `modelId` | `assessCapacity` model-scoped routing (S2-T2) |
+
+**Red/green verified:**
+
+- **Property 1:** Removed the `evaluateCalibrationReadiness` gate from `resolveAutoMode` — `resolveAutoMode([])` returned `"team"` instead of `"single"`, test failed with `expected 'team' to be 'single'`. Restored → green.
+- **Property 2:** Removed the `isTrustedWindow` check from `confirmedExhaustion` — stale 0% snapshot hard-excluded (`hardExcluded: true`), test failed with `expected true to be false`. Restored → green.
+
+Each guard removal produces the specific assertion failure that proves the test
+covers the intended property, not a self-confirming tautology.
+
+**Exports changed:** `ANTIGRAVITY_MODEL_MAP` exported from `@bremio/quota`
+(was internal-only in `antigravity-models.ts`).
+
+**Typecheck:** clean. **Test:** 405/405 pass (47 files). No regressions.
