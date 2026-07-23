@@ -1141,3 +1141,43 @@ first vscode mock in this file. Necessary because importing `extension.ts` (for
 the exported `resolveActiveAttachment`) triggers the module-level
 `vscode.window.createOutputChannel` call. The mock is inert for existing tests
 (they import only `./client` and `./webview`, which don't depend on vscode).
+
+---
+
+## A1-T1 — apps/daemon/src/storage.ts
+
+**Done:** Sessions are now first-class, durable records. Schema v1→v2 adds the
+`sessions` table (`id, repository_path, title, created_at, updated_at`) plus
+`runs.session_id` and `runs.turn_index`. The migration is real: ALTER TABLE for
+the new columns, backfill that creates one implicit session per existing run so
+every run has a session_id and turn_index=0.
+
+A run created without a `sessionId` gets one implicitly (single turn), with
+`title` derived from the prompt's first line, truncated to 80 chars with "..."
+— never invented, never the full prompt. Runs created with a `sessionId` get
+the next `turn_index` sequentially (ready for multi-turn in A1-T2+).
+
+Retention keeps sessions whole: `pruneRuns` now deletes entire sessions (not
+individual runs), so a session never ends up with a hole in its turns. The rule
+is "all terminal runs old enough or none" — stated in a comment on the query.
+
+Exported `PersistedSession`, `truncateTitle`, `RunStore.listSessions`.
+
+**Tests (8 new, 426 total):**
+1. v1 fixture database upgrades to v2 with all runs, events and artifacts intact.
+2. Fresh v2 and upgraded v1 have structurally identical schemas (same columns).
+3. Implicit session at `turn_index` 0 when none is given.
+4. Pruning never leaves a session with a gap — a session with one terminal and
+   one non-terminal run stays untouched.
+5. `listSessions` ordered by most recent activity, scoped to the repository.
+6–8. `truncateTitle` unit tests.
+
+**Hard:** The v1→v2 migration must be correct on the first try — there is no
+rollback from a migration that drops data. Verified by creating a raw v1
+fixture database with node:sqlite, runs+events+artifacts seeded, then opening
+with the v2 code and asserting everything survived.
+
+**Deviations:** Added `DatabaseSync` import to `storage.test.ts` via
+`createRequire` to build the v1 fixture database. This matches how `storage.ts`
+itself loads node:sqlite. The import is isolated to the test file and does not
+change the production dependency surface.
