@@ -1312,4 +1312,33 @@ Red/green verified by mutating test assertions and confirming failure.
 
 **Deviations:** None.
 
+---
+
+## A3-T2 — open a session and replay its transcript
+
+**Done:** Updated TUI `RunsScreen` ([apps/cli/src/tui/screens/runs.tsx](file:///d:/Work/Side-Projects/Bremio/apps/cli/src/tui/screens/runs.tsx)) to list sessions with keyboard selection (`↑`/`↓` navigate, `Enter` select), display keybindings on screen, and open the selected session into a full transcript rendered through A2-T1.
+
+Key features & rules enforced:
+1. Keyboard selectable session list with keybinding hint on screen (`↑↓ navigate enter open transcript esc back`).
+2. Pressing `Enter` opens the transcript for the selected session.
+3. `Esc` from the transcript screen returns to the session list with `selectedIndex` selection intact.
+4. Active/live sessions stream updates every second; finished ones remain static.
+5. Reasoning (`thinking`) and tool calls (`tool_use` / `tool_result`) are collapsed by default with a `▸ [collapsed]` marker, and expandable via `'e'` or `Space`.
+6. Extracted transcript assembly logic into a pure function `assembleTranscript` in `apps/cli/src/tui/transcript.ts`.
+
+**Testing approach (per docs/10 §4 and docs/12):**
+Extracted transcript assembly into pure function `assembleTranscript` in `apps/cli/src/tui/transcript.ts` and tested it in `apps/cli/src/tui/transcript.test.ts`. This route was chosen over adding `ink-testing-library` as a devDependency to keep test execution lightweight, fast, deterministic, and free of CLI render environment flakiness.
+
+**Tests (3 new, 458 total in `apps/cli/src/tui/transcript.test.ts`):**
+1. a session with N turns assembles N turn blocks in order;
+2. collapsed detail is present but marked (`isCollapsible: true`, `defaultCollapsed: true`), not lost;
+3. selecting an unknown/empty session produces an explicit empty state.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 458/458 pass.
+
+**Deviations:** None.
+
+
 
