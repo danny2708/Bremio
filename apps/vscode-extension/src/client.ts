@@ -80,13 +80,44 @@ export interface RunEvent {
 }
 
 export interface StartRunRequest {
-  mode: "single" | "team";
+  /** `auto` is resolved daemon-side from the repository's calibration ledger. */
+  mode: "single" | "team" | "auto";
   repoPath: string;
   prompt: string;
   agentId: string;
   workerId?: string;
   timeoutMs?: number;
   maxConcurrency?: number;
+  /** Continue an existing session rather than starting a new one. */
+  sessionId?: string;
+}
+
+export interface SessionSummary {
+  id: string;
+  repositoryPath: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  turnCount: number;
+  status?: string;
+}
+
+export interface SessionTurn {
+  turnIndex: number;
+  runId: string;
+  prompt: string;
+  status: string;
+  model?: string;
+  reasoningLevel?: string;
+}
+
+export interface SessionDetail {
+  id: string;
+  repositoryPath: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  turns: SessionTurn[];
 }
 
 export function endpointPath(home = os.homedir()): string {
@@ -287,6 +318,15 @@ export class BremioClient {
 
   retry(id: string): Promise<{ run?: PersistedRun; error?: string }> {
     return this.#call(`/runs/${encodeURIComponent(id)}/retry`, { method: "POST" });
+  }
+
+  /** Sessions in this repository, newest first. */
+  sessions(repoPath: string): Promise<{ sessions: SessionSummary[] }> {
+    return this.#call(`/sessions?repo=${encodeURIComponent(repoPath)}`);
+  }
+
+  session(id: string): Promise<{ session: SessionDetail }> {
+    return this.#call(`/sessions/${encodeURIComponent(id)}`);
   }
 
   startRun(request: StartRunRequest): Promise<{ run: { id: string } }> {

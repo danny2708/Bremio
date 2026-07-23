@@ -268,6 +268,36 @@ export function renderEvent(event: {
 /**
  * Self-contained (no module-scope references) because `panelHtml` inlines its
  * source into the webview script via .toString(), matching `renderEvent`.
+ * Canonical source: packages/event-view/src/index.ts (`extractResponse`).
+ *
+ * A drift test runs both copies over the same inputs and asserts they agree.
+ */
+export function extractResponse(
+  events: ReadonlyArray<Record<string, unknown>>,
+): string | undefined {
+  const fragments: string[] = [];
+  let finalText: string | undefined;
+
+  for (const event of events) {
+    const type = (event.type ?? event.kind) as string | undefined;
+    if (type === "message" && typeof event.text === "string") {
+      const role = event.role as string | undefined;
+      if (role === undefined || role === "assistant") fragments.push(event.text);
+    }
+    if (type === "completed") {
+      const outcome = event.outcome as { finalText?: string } | undefined;
+      if (typeof outcome?.finalText === "string") finalText = outcome.finalText;
+    }
+  }
+
+  const streamed = fragments.join("\n").trim();
+  if (finalText && finalText.trim().length >= streamed.length) return finalText.trim();
+  return streamed.length > 0 ? streamed : finalText ? finalText.trim() : undefined;
+}
+
+/**
+ * Self-contained (no module-scope references) because `panelHtml` inlines its
+ * source into the webview script via .toString(), matching `renderEvent`.
  * Canonical source: packages/event-view/src/index.ts.
  */
 export function formatTaskExecution(input: {
@@ -682,6 +712,25 @@ pre.log {
  * and --bremio-accent-muted was never defined, leaving warn with no fill. */
 .banner.warn { background: color-mix(in srgb, var(--bremio-accent) 16%, transparent); color: var(--bremio-accent-hover); }
 .banner.bad { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+
+/* Session transcript: a conversation, so the two speakers are visually
+ * distinct and the agent's answer is the most prominent thing on screen.
+ * The work it did to get there is subordinate, collapsed by default. */
+.session-row { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.session-row:hover { background: color-mix(in srgb, var(--bremio-accent) 10%, transparent); }
+.session-row .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn { border-left: 2px solid color-mix(in srgb, var(--bremio-accent) 35%, transparent); padding: 0 0 0 10px; margin: 0 0 18px; }
+.speaker { font-weight: 600; font-size: 12px; margin-bottom: 3px; }
+.speaker.you { color: var(--bremio-accent-hover); }
+.speaker.agent { color: var(--fg); }
+.bubble { white-space: pre-wrap; word-break: break-word; margin-bottom: 10px; }
+.bubble.response { font-size: 13px; line-height: 1.5; }
+/* The process log is reference material, not the answer: dimmed, monospaced
+ * and scrollable so a thousand tool calls cannot push the reply off screen. */
+.process { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; color: var(--muted); max-height: 260px; overflow: auto; margin-bottom: 8px; }
+.process summary { cursor: pointer; }
+.process div { white-space: pre-wrap; word-break: break-all; }
+.turn-foot { font-size: 11px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -697,6 +746,7 @@ pre.log {
 
 <nav>
   <button data-tab="run" class="active">Run</button>
+  <button data-tab="sessions">Sessions</button>
   <button data-tab="runs">Runs</button>
   <button data-tab="capacity">Capacity</button>
   <button data-tab="doctor">Doctor</button>
@@ -709,7 +759,9 @@ pre.log {
       <div class="seg" id="mode-seg">
         <button data-mode="single" class="on">Single</button>
         <button data-mode="team">Team</button>
+        <button data-mode="auto">Auto</button>
       </div>
+      <div class="muted" id="auto-note" style="display:none">Bremio picks Single or Team from this repository's calibration evidence, and records why.</div>
 
       <label id="agent-label">Agent</label>
       <select id="agent"></select>
@@ -758,6 +810,7 @@ pre.log {
     </div>
   </section>
 
+  <section id="tab-sessions"><div class="empty">Loading sessions…</div></section>
   <section id="tab-runs"><div class="empty">Loading runs…</div></section>
   <section id="tab-capacity"><div class="empty">Loading capacity…</div></section>
   <section id="tab-doctor"><div class="empty">Checking adapters…</div></section>
@@ -770,11 +823,16 @@ let mode = "single";
 let adapters = [];
 let activeRunId = null;
 
+/** Show a tab without asking the host to reload it. */
+function showTab(tab) {
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll("main section").forEach((s) => s.classList.toggle("active", s.id === "tab-" + tab));
+}
+
 document.querySelectorAll("nav button").forEach((button) => {
   button.addEventListener("click", () => {
-    document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b === button));
     const tab = button.dataset.tab;
-    document.querySelectorAll("main section").forEach((s) => s.classList.toggle("active", s.id === "tab-" + tab));
+    showTab(tab);
     vscode.postMessage({ type: "tab", tab });
   });
 });
@@ -784,9 +842,14 @@ $("mode-seg").addEventListener("click", (event) => {
   if (!button) return;
   mode = button.dataset.mode;
   document.querySelectorAll("#mode-seg button").forEach((b) => b.classList.toggle("on", b === button));
-  $("agent-label").textContent = mode === "team" ? "Lead" : "Agent";
-  $("worker-wrap").style.display = mode === "team" ? "block" : "none";
-  $("concurrency-wrap").style.display = mode === "team" ? "block" : "none";
+  // Under auto the run may resolve to Team, so the worker and concurrency
+  // controls stay available — hiding them would silently discard a choice the
+  // resolved mode can still use.
+  const teamCapable = mode === "team" || mode === "auto";
+  $("agent-label").textContent = teamCapable ? "Lead" : "Agent";
+  $("worker-wrap").style.display = teamCapable ? "block" : "none";
+  $("concurrency-wrap").style.display = teamCapable ? "block" : "none";
+  $("auto-note").style.display = mode === "auto" ? "block" : "none";
   renderAgentOptions();
 });
 
@@ -795,10 +858,14 @@ function renderAgentOptions() {
   const worker = $("worker");
   agent.innerHTML = "";
   worker.innerHTML = "";
+  // Auto can resolve to Team, so its agent must be able to lead. Offering a
+  // non-lead-eligible agent would let the user pick something that fails only
+  // once the ledger happens to say Team.
+  const requiresLead = mode === "team" || mode === "auto";
   for (const a of adapters) {
-    // Team lead must be lead-eligible; the capability contract decides, so a
-    // provider without structured output simply cannot be offered here.
-    if (mode === "team" && !a.leadEligible) continue;
+    // The capability contract decides, so a provider without structured
+    // output simply cannot be offered here.
+    if (requiresLead && !a.leadEligible) continue;
     const option = document.createElement("option");
     option.value = a.id;
     option.textContent = a.id + (a.health.status === "ok" ? "" : " (" + a.health.status + ")");
@@ -810,9 +877,11 @@ function renderAgentOptions() {
     option.textContent = a.id;
     worker.appendChild(option);
   }
-  $("run-hint").textContent = mode === "team"
-    ? "Lead plans; the worker executes in isolated git worktrees."
-    : "One agent works directly in the repository.";
+  $("run-hint").textContent = mode === "auto"
+    ? "Auto decides from calibration evidence and falls back to Single until there is enough."
+    : mode === "team"
+      ? "Lead plans; the worker executes in isolated git worktrees."
+      : "One agent works directly in the repository.";
 }
 
 $("reconnect").addEventListener("click", () => {
@@ -828,8 +897,8 @@ $("start").addEventListener("click", () => {
     type: "startRun",
     mode,
     agentId: $("agent").value,
-    workerId: mode === "team" ? $("worker").value : undefined,
-    maxConcurrency: mode === "team" ? Number($("concurrency").value) : undefined,
+    workerId: mode === "single" ? undefined : $("worker").value,
+    maxConcurrency: mode === "single" ? undefined : Number($("concurrency").value),
     repoPath: $("repo").value.trim(),
     prompt: $("prompt").value.trim(),
     attachments: attachments.map((file) => file.path),
@@ -897,6 +966,12 @@ window.addEventListener("message", (event) => {
   }
   if (message.type === "runs") {
     $("tab-runs").innerHTML = renderRuns(message.runs);
+  }
+  if (message.type === "sessions") {
+    $("tab-sessions").innerHTML = renderSessionList(message.sessions);
+  }
+  if (message.type === "sessionDetail") {
+    $("tab-sessions").innerHTML = renderTranscript(message.session, message.turns);
   }
   if (message.type === "runStarted") {
     activeRunId = message.id;
@@ -977,6 +1052,78 @@ const renderEvent = ${renderEvent.toString()};
 const formatTaskExecution = ${formatTaskExecution.toString()};
 const renderLogLine = ${renderLogLine.toString()};
 const assembleTaskLanes = ${assembleTaskLanes.toString()};
+const extractResponse = ${extractResponse.toString()};
+
+function renderSessionList(sessions) {
+  if (!sessions || sessions.length === 0) {
+    return '<div class="empty">No sessions in this repository yet.</div>';
+  }
+  const badge = (status) =>
+    status === "completed" ? "ok" : status === "failed" ? "bad" : "warn";
+  return sessions.map((s) => {
+    const turns = s.turnCount ?? 1;
+    return '<div class="session-row" data-session="' + escapeHtml(s.id) + '">'
+      + '<span class="title">' + escapeHtml(s.title || "Untitled") + "</span>"
+      + '<span class="muted">' + turns + (turns === 1 ? " turn" : " turns") + "</span>"
+      + '<span class="badge ' + badge(s.status) + '">' + escapeHtml(s.status ?? "completed") + "</span>"
+      + "</div>";
+  }).join("");
+}
+
+/**
+ * A session as a conversation: each turn is the user's prompt, then what the
+ * agent did (collapsed), then what it actually said.
+ *
+ * The response is the point. It is rendered undimmed at full width, because a
+ * run whose whole value was the reply used to show only "completed · 0 files".
+ */
+function renderTranscript(session, turns) {
+  let out = '<div class="row" style="margin-bottom:10px">'
+    + '<button class="ghost" data-action="back-to-sessions">← Sessions</button>'
+    + '<strong style="margin-left:8px">' + escapeHtml(session.title || session.id) + "</strong>"
+    + "</div>";
+
+  for (const turn of turns) {
+    out += '<div class="turn">';
+    out += '<div class="speaker you">You</div>';
+    out += '<div class="bubble">' + escapeHtml(turn.prompt) + "</div>";
+
+    const who = turn.model || "Agent";
+    out += '<div class="speaker agent">' + escapeHtml(who)
+      + (turn.reasoningLevel ? ' <span class="muted">· ' + escapeHtml(turn.reasoningLevel) + "</span>" : "")
+      + "</div>";
+
+    const steps = (turn.events || [])
+      .filter((ev) => ev.kind !== "message" && ev.kind !== "completed");
+    if (steps.length > 0) {
+      out += '<details class="process"><summary>' + steps.length + " step"
+        + (steps.length === 1 ? "" : "s") + "</summary>";
+      for (const step of steps) {
+        out += "<div>" + escapeHtml(step.summary) + "</div>";
+      }
+      out += "</details>";
+    }
+
+    out += turn.response
+      ? '<div class="bubble response">' + escapeHtml(turn.response) + "</div>"
+      : '<div class="bubble muted">(no response recorded)</div>';
+
+    out += '<div class="turn-foot">' + escapeHtml(turn.status) + " · run " + escapeHtml(turn.runId) + "</div>";
+    out += "</div>";
+  }
+
+  // Continuing a session is the same action as starting a run, aimed at an
+  // existing session id — the daemon appends it as the next turn.
+  out += '<div id="continue-wrap">'
+    + '<label>Continue this session</label>'
+    + '<textarea id="continue-prompt" rows="3" placeholder="follow up…"></textarea>'
+    + '<div class="row" style="margin-top:8px">'
+    + '<button class="primary" data-action="continue-session" data-session="'
+    + escapeHtml(session.id) + '">Send turn</button>'
+    + "</div></div>";
+
+  return out;
+}
 
 function renderRuns(payload) {
   const runs = payload.runs ?? [];
@@ -1062,8 +1209,35 @@ document.addEventListener("click", (event) => {
     renderAttachments();
     return;
   }
+  const sessionRow = event.target.closest("[data-session]:not([data-action])");
+  if (sessionRow) {
+    vscode.postMessage({ type: "openSession", sessionId: sessionRow.dataset.session });
+    return;
+  }
   const button = event.target.closest("[data-action]");
   if (!button) return;
+  if (button.dataset.action === "back-to-sessions") {
+    vscode.postMessage({ type: "tab", tab: "sessions" });
+    return;
+  }
+  if (button.dataset.action === "continue-session") {
+    const prompt = $("continue-prompt").value.trim();
+    if (!prompt) return;
+    // Switch to the Run tab so the new turn streams where every other run
+    // streams, rather than inventing a second live view.
+    showTab("run");
+    vscode.postMessage({
+      type: "startRun",
+      mode,
+      agentId: $("agent").value,
+      workerId: mode === "single" ? undefined : $("worker").value,
+      repoPath: $("repo").value.trim(),
+      prompt,
+      sessionId: button.dataset.session,
+      attachments: [],
+    });
+    return;
+  }
   const runId = button.dataset.run;
   const actions = { open: "openRun", retry: "retry", diff: "viewDiff", merge: "merge" };
   const type = actions[button.dataset.action];

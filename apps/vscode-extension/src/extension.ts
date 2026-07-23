@@ -12,7 +12,7 @@ import {
   type RunEvent,
 } from "./client";
 import { CliNotFoundError, launchCli } from "./cli-launcher";
-import { panelHtml } from "./webview";
+import { extractResponse, panelHtml, renderEvent } from "./webview";
 
 let panel: vscode.WebviewPanel | undefined;
 let daemonProcess: ChildProcess | undefined;
@@ -218,7 +218,11 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
       case "tab":
         if (message.tab === "capacity") await sendCapacity();
         if (message.tab === "runs") await sendRuns();
+        if (message.tab === "sessions") await sendSessions();
         if (message.tab === "doctor") await sendAdapters();
+        return;
+      case "openSession":
+        if (typeof message.sessionId === "string") await sendSessionDetail(message.sessionId);
         return;
       case "startRun":
         await startRun(message);
@@ -258,6 +262,55 @@ async function refreshAll(): Promise<void> {
 
 async function sendAdapters(): Promise<void> {
   post({ type: "adapters", ...(await client.adapters()) });
+}
+
+async function sendSessions(): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) return post({ type: "sessions", sessions: [] });
+  post({ type: "sessions", ...(await client.sessions(repoPath)) });
+}
+
+/**
+ * Send one session as a conversation: each turn with the work it did and the
+ * answer it gave.
+ *
+ * The response is derived here rather than in the webview so the panel and the
+ * CLI read the same events through the same rule.
+ */
+async function sendSessionDetail(sessionId: string): Promise<void> {
+  const repoPath = currentRepo() ?? "";
+  const { session } = await client.session(sessionId);
+
+  const turns = await Promise.all(
+    (session.turns ?? []).map(async (turn) => {
+      let events: Array<Record<string, unknown>> = [];
+      try {
+        const detail = await client.run(turn.runId, repoPath);
+        events = (detail.events ?? []) as unknown as Array<Record<string, unknown>>;
+      } catch {
+        // A turn whose run was pruned still belongs in the transcript; it
+        // simply has no process detail left to show.
+      }
+      // Persisted events keep the agent payload under `data`; the answer lives
+      // there, not in the envelope the daemon wraps around it.
+      const agentEvents = events.map((event) =>
+        typeof event.data === "object" && event.data !== null
+          ? { kind: event.kind, ...(event.data as Record<string, unknown>) }
+          : { kind: event.kind, text: event.message },
+      );
+      return {
+        ...turn,
+        // `renderEvent` returns its own `kind` (the display category, e.g.
+        // "tool_use"), which is the one the transcript filters on.
+        events: agentEvents.map((event) =>
+          renderEvent({ type: String(event.kind ?? "log"), ...event } as never),
+        ),
+        response: extractResponse(agentEvents),
+      };
+    }),
+  );
+
+  post({ type: "sessionDetail", session, turns });
 }
 
 async function sendCapacity(): Promise<void> {
@@ -349,14 +402,23 @@ async function startRun(message: Record<string, unknown>): Promise<void> {
       )
     : typed;
 
+  // An unrecognised mode falls back to Single rather than to whatever the
+  // daemon would default to — but `auto` must survive, or the panel would
+  // quietly run Single while its button said Auto.
+  const mode =
+    message.mode === "team" ? "team" : message.mode === "auto" ? "auto" : "single";
+
   const { run } = await client.startRun({
-    mode: message.mode === "team" ? "team" : "single",
+    mode,
     repoPath,
     prompt,
     agentId: String(message.agentId ?? "claude"),
     ...(message.workerId ? { workerId: String(message.workerId) } : {}),
     ...(typeof message.maxConcurrency === "number"
       ? { maxConcurrency: message.maxConcurrency }
+      : {}),
+    ...(typeof message.sessionId === "string" && message.sessionId
+      ? { sessionId: message.sessionId }
       : {}),
   });
 

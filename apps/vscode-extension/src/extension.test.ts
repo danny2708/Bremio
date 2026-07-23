@@ -26,11 +26,15 @@ import {
   ProtocolMismatchError,
   readEndpoint,
 } from "./client";
-import { renderEvent as canonicalRenderEvent } from "@bremio/event-view";
+import {
+  extractResponse as canonicalExtractResponse,
+  renderEvent as canonicalRenderEvent,
+} from "@bremio/event-view";
 import {
   panelHtml,
   renderCapacityCards,
   renderDecisionReasons,
+  extractResponse as panelExtractResponse,
   renderEvent as panelRenderEvent,
   renderLogLine,
   type CapacityView,
@@ -167,6 +171,27 @@ describe("webview", () => {
     expect(html).toContain('<script nonce="test-nonce">');
   });
 
+  it("offers every execution mode the CLI does", () => {
+    // The panel and the CLI are meant to be the same product. Auto existed as
+    // `--mode auto` for a whole release while the panel offered only two
+    // buttons, so a panel user could not reach it at all.
+    expect(html).toContain('data-mode="single"');
+    expect(html).toContain('data-mode="team"');
+    expect(html).toContain('data-mode="auto"');
+  });
+
+  it("can open a session as a conversation and continue it", () => {
+    // Sessions were readable from the CLI and the TUI but not from the panel,
+    // which is where most of the dogfooding happens.
+    expect(html).toContain('data-tab="sessions"');
+    expect(html).toContain('id="tab-sessions"');
+    expect(html).toContain('data-action="continue-session"');
+    // Speaker attribution is what makes it read as a conversation rather than
+    // as a log dump.
+    expect(html).toContain('class="speaker you"');
+    expect(html).toContain('class="speaker agent"');
+  });
+
   it("keeps the brand tokens and confines yellow to actions", () => {
     expect(html).toContain("--bremio-primary: #2563eb");
     expect(html).toContain("--bremio-accent: #f4c542");
@@ -247,6 +272,26 @@ describe("the panel's event renderer does not drift from the canonical one", () 
       const mine = panelRenderEvent(event as Parameters<typeof panelRenderEvent>[0]);
       const canonical = canonicalRenderEvent(event as Parameters<typeof canonicalRenderEvent>[0]);
       expect(mine).toEqual(canonical);
+    });
+  }
+});
+
+describe("the panel's response extractor does not drift from the canonical one", () => {
+  // Same reason as renderEvent above: webview.ts carries a copy so the VSIX
+  // ships no runtime dependencies, and a copy needs pinning or it drifts.
+  const cases: Array<Array<Record<string, unknown>>> = [
+    [{ type: "message", role: "assistant", text: "one" }, { type: "message", role: "assistant", text: "two" }],
+    [{ type: "completed", outcome: { finalText: "the whole answer" } }],
+    [{ type: "message", text: "streamed in full" }, { type: "completed", outcome: { finalText: "clipped…" } }],
+    [{ type: "message", role: "user", text: "prompt" }, { type: "message", role: "assistant", text: "answer" }],
+    [{ kind: "message", text: "read from storage" }],
+    [{ type: "started" }, { type: "tool_use", name: "shell" }],
+    [],
+  ];
+
+  for (const [index, events] of cases.entries()) {
+    it(`extracts case ${index} identically to @bremio/event-view`, () => {
+      expect(panelExtractResponse(events)).toEqual(canonicalExtractResponse(events));
     });
   }
 });
