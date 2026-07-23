@@ -1287,3 +1287,29 @@ Red/green verified by mutating test assertions and confirming failure.
 
 **Deviations:** None.
 
+---
+
+## A3-T1 — list and reopen past sessions
+
+**Done:** Implemented `bremio session list [--repo <path>] [--json]` and `bremio session show <id> [--json] [--max-events <n>]` in `apps/cli/src/session.ts` and wired into `apps/cli/src/index.ts`.
+
+Key behaviors:
+1. `bremio session list` shows session ID, title, turn count, status, and last activity timestamp. Supports `--json`.
+2. `bremio session show <id>` prints full transcript: prompt, process events rendered via A2-T1 (`renderEvent` / `formatEventView`), and outcome status. Supports `--json`.
+3. Unknown session IDs exit non-zero (1) with an error message naming what was not found (`error: unknown session: <id>`).
+4. Long transcripts carry explicit elision metadata when truncated by `--max-events` (`... elided N long transcript event(s). Use --max-events <N> to view full transcript.`), never truncating silently.
+5. Works seamlessly both when daemon is running (HTTP endpoints) and when daemon is absent (direct `RunStore` reader).
+
+**Tests (4 new, 455 total in `apps/cli/src/session.test.ts`):**
+1. `list` shows a seeded session with its turn count;
+2. `show` renders prompt, process and outcome in order;
+3. an unknown id exits non-zero with a naming message;
+4. CLI session subcommand routes list and show correctly with `--json`.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 455/455 pass.
+
+**Deviations:** None.
+
+

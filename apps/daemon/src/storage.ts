@@ -89,6 +89,7 @@ export interface PersistedSession {
   createdAt: string;
   updatedAt: string;
   turnCount: number;
+  status?: RunStatus;
 }
 
 export interface SessionTurn {
@@ -467,7 +468,8 @@ export class RunStore {
   listSessions(repositoryPath: string): PersistedSession[] {
     const rows = this.db
       .prepare(
-        `SELECT s.*, COUNT(r.id) AS turn_count
+        `SELECT s.*, COUNT(r.id) AS turn_count,
+                (SELECT status FROM runs WHERE session_id = s.id ORDER BY turn_index DESC LIMIT 1) AS status
          FROM sessions s
          LEFT JOIN runs r ON r.session_id = s.id
          WHERE s.repository_path = ?
@@ -482,6 +484,7 @@ export class RunStore {
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       turnCount: Number(row.turn_count),
+      ...(row.status ? { status: String(row.status) as RunStatus } : {}),
     }));
   }
 

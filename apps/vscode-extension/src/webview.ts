@@ -216,9 +216,10 @@ export function renderEvent(event: {
     case "started":
       return { kind: "started", summary: "started", severity: "info" };
     case "message": {
-      const one = (event.text ?? "").replace(/\s+/g, " ").trim();
+      const text = event.text ?? event.message ?? "";
+      const one = text.replace(/\s+/g, " ").trim();
       const clipped = one.length > 120 ? one.slice(0, 120) + "…" : one;
-      return { kind: "message", summary: clipped, detail: event.text, severity: "info" };
+      return { kind: "message", summary: clipped, detail: text, severity: "info" };
     }
     case "thinking": {
       const one = (event.text ?? "").replace(/\s+/g, " ").trim();

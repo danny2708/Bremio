@@ -41,6 +41,7 @@ import { mergeCommand } from "./merge";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
 import { collectComparison, printComparison, type ComparisonSide } from "./compare";
 import { capacityCommand } from "./quota";
+import { sessionCommandFromCli } from "./session";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
 import { renderEvent } from "@bremio/event-view";
@@ -59,6 +60,8 @@ ${c.bold("Usage")}
   bremio run --mode single --agent <agent> --repo <path> "<prompt>"
   bremio run --mode team --lead <agent> [--worker <agent>] --repo <path> "<prompt>"
   bremio compare [--agent <agent>] [--lead <agent>] --repo <path> "<prompt>"
+  bremio session list [--repo <path>] [--json]
+  bremio session show <id> [--json] [--max-events <n>]
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
@@ -193,6 +196,9 @@ async function main(): Promise<void> {
       return;
     case "compare":
       process.exitCode = await compareCommandFromCli(values, positionals);
+      return;
+    case "session":
+      process.exitCode = await sessionCommandFromCli(values, positionals);
       return;
     case "merge":
       process.exitCode = await mergeCommandFromCli(values, positionals);
