@@ -210,6 +210,11 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
         post({ type: "workspace", repoPath: currentRepo() ?? "" });
         if (await ensureDaemon()) await refreshAll();
         return;
+      case "reconnect":
+        // `explicit` so this works even with autoStartDaemon off: the user
+        // asking for a reconnect is as explicit as the intent gets.
+        if (await ensureDaemon(true)) await refreshAll();
+        return;
       case "tab":
         if (message.tab === "capacity") await sendCapacity();
         if (message.tab === "runs") await sendRuns();

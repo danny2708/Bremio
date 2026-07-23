@@ -692,7 +692,7 @@ pre.log {
     <div class="tagline">Different minds. One team.</div>
   </div>
   <div class="spacer"></div>
-  <div class="row"><span class="status-dot" id="daemon-dot"></span><span class="muted" id="daemon-status">connecting…</span></div>
+  <div class="row"><span class="status-dot" id="daemon-dot"></span><span class="muted" id="daemon-status">connecting…</span><button class="ghost" id="reconnect" style="display:none">Reconnect</button></div>
 </header>
 
 <nav>
@@ -815,6 +815,11 @@ function renderAgentOptions() {
     : "One agent works directly in the repository.";
 }
 
+$("reconnect").addEventListener("click", () => {
+  $("daemon-status").textContent = "reconnecting…";
+  vscode.postMessage({ type: "reconnect" });
+});
+
 $("attach-files").addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
 $("attach-open").addEventListener("click", () => vscode.postMessage({ type: "attachActiveFile" }));
 
@@ -867,6 +872,11 @@ window.addEventListener("message", (event) => {
   if (message.type === "daemon") {
     $("daemon-dot").className = "status-dot " + (message.live ? "live" : "down");
     $("daemon-status").textContent = message.detail;
+    // Without this the only way back from a dead daemon is closing and
+    // reopening the panel, because the agent lists are only ever filled from a
+    // successful connection — a down daemon leaves Lead and Worker empty with
+    // no way to retry in place.
+    $("reconnect").style.display = message.live ? "none" : "inline-block";
   }
   if (message.type === "adapters") {
     adapters = message.adapters;
