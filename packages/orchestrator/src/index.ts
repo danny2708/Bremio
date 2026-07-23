@@ -84,6 +84,7 @@ export {
 export {
   appendLedgerEntry,
   readLedger,
+  readLedgerSync,
   computeStats,
   ledgerPathFor,
   LedgerEntrySchema,

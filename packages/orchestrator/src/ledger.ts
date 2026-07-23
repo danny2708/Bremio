@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { ReasoningLevelSchema, UsageSummarySchema } from "@bremio/protocol";
@@ -66,7 +66,30 @@ export async function readLedger(
   } catch {
     return []; // no ledger yet
   }
+  return parseLedger(raw, opts);
+}
 
+/**
+ * The same read, synchronously.
+ *
+ * The daemon resolves `auto` inside `RunRegistry.start`, which is synchronous
+ * because it must return a created run to the caller. Both readers share
+ * {@link parseLedger} so the tolerance rules cannot drift between them.
+ */
+export function readLedgerSync(
+  ledgerPath: string,
+  opts: ReadLedgerOptions = {},
+): LedgerEntry[] {
+  let raw: string;
+  try {
+    raw = readFileSync(ledgerPath, "utf8");
+  } catch {
+    return []; // no ledger yet
+  }
+  return parseLedger(raw, opts);
+}
+
+function parseLedger(raw: string, opts: ReadLedgerOptions): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();

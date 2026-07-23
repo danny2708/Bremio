@@ -1,5 +1,8 @@
 import {
   createRegistry,
+  ledgerPathFor,
+  readLedgerSync,
+  resolveAutoMode,
   runBremio,
   runSingleAgent,
   type BremioRunReport,
@@ -51,7 +54,12 @@ export interface RunEvent {
 }
 
 export interface StartRunInput {
-  mode: "single" | "team";
+  /**
+   * `auto` decides between Single and Team from this repository's calibration
+   * evidence. It is resolved here rather than by each client so the CLI, the
+   * TUI and the panel cannot reach different answers from the same ledger.
+   */
+  mode: "single" | "team" | "auto";
   repoPath: string;
   prompt: string;
   /** Single mode: the agent. Team mode: the lead. */
@@ -64,6 +72,8 @@ export interface StartRunInput {
   comparisonId?: string;
   /** Set when this run was created by retrying another. */
   retryOfRunId?: string;
+  /** Continues an existing session, becoming its next turn. */
+  sessionId?: string;
 }
 
 type Listener = (event: RunEvent) => void;
@@ -264,23 +274,52 @@ export class RunRegistry {
   start(input: StartRunInput): PersistedRun {
     if (!this.#accepting) throw new Error("the daemon is shutting down and is not accepting runs");
 
+    const resolved = this.#resolveMode(input);
+
     const id = `run-${Date.now().toString(36)}-${(this.#counter += 1).toString(36)}`;
     const run = this.store.createRun({
       id,
-      mode: input.mode,
+      mode: resolved.mode,
       repositoryPath: input.repoPath,
       prompt: input.prompt,
       leadProvider: input.agentId,
       ...(input.workerId ? { workerProviders: [input.workerId] } : {}),
       ...(input.retryOfRunId ? { retryOfRunId: input.retryOfRunId } : {}),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     });
 
     const controller = new AbortController();
     this.#controllers.set(id, controller);
     this.store.updateRun(id, { status: "running", startedAt: new Date().toISOString() });
+    // Recorded as an event so the reason survives into history: a user looking
+    // at an old run has to be able to see why it ran the way it did.
+    if (resolved.reason) {
+      this.#emit(id, { kind: "status", message: `auto: ${resolved.reason}` });
+    }
     // Never rejects: #execute records failure as a run outcome.
-    this.#executions.set(id, this.#execute(id, input, controller));
+    this.#executions.set(id, this.#execute(id, { ...input, mode: resolved.mode }, controller));
     return this.store.getRun(id) ?? run;
+  }
+
+  /**
+   * Turn `auto` into the mode that will actually run.
+   *
+   * Fails closed to Single: an unreadable ledger is not evidence that Team is
+   * worth its coordination cost, and the reason says so rather than leaving the
+   * user to guess why they got Single.
+   */
+  #resolveMode(input: StartRunInput): { mode: "single" | "team"; reason?: string } {
+    if (input.mode !== "auto") return { mode: input.mode };
+    try {
+      const entries = readLedgerSync(ledgerPathFor(input.repoPath));
+      const result = resolveAutoMode(entries);
+      return { mode: result.mode, reason: result.reason };
+    } catch (err) {
+      return {
+        mode: "single",
+        reason: `selected Single — could not read the ledger (${(err as Error).message})`,
+      };
+    }
   }
 
   /**

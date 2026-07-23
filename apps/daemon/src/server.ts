@@ -23,7 +23,9 @@ import { listReports, loadReportByRunId } from "@bremio/orchestrator";
 const MAX_BODY_BYTES = 256 * 1024;
 
 const StartRunSchema = z.object({
-  mode: z.enum(["single", "team"]),
+  // `auto` is resolved by the registry from the repository's ledger, so every
+  // client gets the same decision from the same evidence.
+  mode: z.enum(["single", "team", "auto"]),
   repoPath: z.string().min(1),
   prompt: z.string().min(1),
   agentId: z.string().min(1),
@@ -33,6 +35,8 @@ const StartRunSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
   maxConcurrency: z.number().int().positive().optional(),
   comparisonId: z.string().min(1).optional(),
+  /** Continue an existing session: this run becomes its next turn. */
+  sessionId: z.string().min(1).optional(),
 });
 
 const MergeSchema = z.object({
