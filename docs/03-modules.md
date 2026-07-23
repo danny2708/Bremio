@@ -212,4 +212,6 @@ Stated plainly rather than left to be discovered:
 - **POSIX verification needs a real Linux/WSL environment.** The repository has
   `pnpm posix:verify` for process groups, lock/discovery permissions, SQLite,
   SSE, and cancellation. It cannot run through a Windows-only Node process;
-  the latest local audit was blocked because no WSL distribution was installed.
+  the latest local audit was blocked because the WSL distribution has no Node
+  installed — `posix-verify.sh` requires it and exits early. WSL itself is
+  present; installing Node 22+ inside the distro unblocks the gate.
