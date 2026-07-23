@@ -1664,6 +1664,30 @@ Red/green verified by mutating test assertions and confirming failure.
 
 **Deviations:** None.
 
+---
+
+## B6 — Prove the harness fails closed too
+
+**Done:** Created `packages/harness/src/harness-safety.integration.test.ts` asserting all six harness safety properties together with real assembler and real budget.
+
+Six Safety Properties Verified:
+1. **Context limit fail-closed**: A context exceeding token budget fails closed with an explicit reason (`failureReason`) and never sends a truncated prompt to the adapter.
+2. **Expired provider session fallback**: An expired provider session ID (`session_not_found`) triggers automatic fallback to re-injection carrying assembled context, rather than starting a silent blank session.
+3. **Cancellation safety**: A cancelled turn yields status `"cancelled"` while leaving the session ID intact and resumable.
+4. **Summary vs Verbatim distinction**: Summarised turns (`### Turn N (Summary)`) and elided turns (`[Elided Turn N]`) are explicitly distinguished from verbatim history (`### Turn N`).
+5. **Estimate vs Measured labelling**: Character heuristic token counts are explicitly labelled `isEstimate: true` and `accountingMethod: "estimated"`, never reported as measured.
+6. **Capability-driven resume**: A non-resumable adapter (`resumableSessions: false`) never receives `resumeRun` calls.
+
+**Red/Green Verification**:
+- Temporarily commented out the budget enforcement check in `runReinjectTurn` (`if (!budgetRes.allowed)`).
+- Re-ran `harness-safety.integration.test.ts`: Property 1 failed immediately with `AssertionError: expected 'completed' to be 'failed'` because an oversized prompt was passed through without failing closed.
+- Restored the budget guard and confirmed all 6 assertions returned to green.
+
+**Typecheck:** clean. **Test:** 509/509 pass across 55 test files.
+
+**Deviations:** None.
+
+
 
 
 

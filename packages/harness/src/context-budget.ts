@@ -83,7 +83,7 @@ export function enforceContextBudget(options: EnforceBudgetOptions): BudgetEnfor
   const tokenBudget = budgetMap[provider] ?? config?.defaultBudget ?? 64000;
 
   // Calculate base tokens for new prompt and current diff
-  const newPromptTokens = estimateTokens(newPrompt);
+  const newPromptTokens = newPrompt ? estimateTokens(newPrompt) : { tokens: 0, method: "measured" as const, isEstimate: false };
   const diffTokens = currentDiff ? estimateTokens(currentDiff) : { tokens: 0, method: "measured" as const, isEstimate: false };
   const baseTokens = newPromptTokens.tokens + diffTokens.tokens;
   const isBaseEstimated = newPromptTokens.isEstimate || diffTokens.isEstimate;
