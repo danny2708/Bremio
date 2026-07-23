@@ -11,11 +11,13 @@ S5-T1 is still not claimed: the Windows kill-walk race stands, but a run whose
 workspace is still referenced now reports `cancellation_failed` with the pids
 rather than a false `cancelled`. Current Windows gates pass `release:check`
 (415 tests) and `e2e:fresh` (21 checks); `posix:verify` remains
-environment-blocked on this machine — not for the reason previously recorded.
-WSL *is* installed (Ubuntu, bash 5.2); what is missing is Node inside the
-distro, which `posix-verify.sh` requires and exits on. Installing Node 22+ in
-the distro unblocks it. Still recorded as blocked rather than passed, and it is
-a **v1.0 gate**.
+**now passing** (2026-07-23). It had been recorded as environment-blocked "because
+no WSL distribution is installed"; that was wrong twice over. WSL was installed
+all along (Ubuntu 24.04, bash 5.2) — what was missing was Node inside the distro,
+which `posix-verify.sh` checks for and exits on. With Node 22.23.1 installed
+there via nvm, the gate runs and passes: 23 supervisor, 19 lifecycle, 18 storage,
+14 protocol, 11 cancellation tests plus the `0600` token-file check. All three
+v1.0 gates are green.
 
 **On S5-T4 and the version number.** Dogfooding after Sprint 4 surfaced a gap
 this plan never covered: runs are not stored or reopenable as sessions, the

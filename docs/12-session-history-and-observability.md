@@ -335,8 +335,15 @@ corepack pnpm e2e:fresh
 corepack pnpm posix:verify
 ```
 
-`posix:verify` was previously recorded as blocked "because no WSL distribution
-is installed". That was wrong: WSL is installed (Ubuntu, bash 5.2). What is
-missing is **Node inside the distro** — `posix-verify.sh` checks for it and
-exits. Install Node 22+ in the distro and run the gate for real; it is a v1.0
-requirement, and an environment-blocked gate must never be recorded as passed.
+All three now pass. `posix:verify` had been recorded as blocked "because no WSL
+distribution is installed" — wrong on both counts: WSL was installed (Ubuntu
+24.04), and the actual blocker was Node missing *inside* the distro, which
+`posix-verify.sh` checks for and exits on. With Node 22.23.1 installed there
+(2026-07-23) it passes: 23 supervisor, 19 lifecycle, 18 storage, 14 protocol and
+11 cancellation tests, plus `0600` on the token file.
+
+That result is worth more than a green tick. The POSIX guarantees — process
+groups, `kill(-pgid)`, atomic discovery writes, `0600` permissions — had only
+ever been *reasoned about* on a Windows development machine. The supervisor
+suite passing on real Linux is the first empirical confirmation of the claim in
+`docs/07` that POSIX closes the process-tree gap completely.
