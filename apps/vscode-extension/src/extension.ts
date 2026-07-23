@@ -443,12 +443,17 @@ async function reattach(runId: string): Promise<void> {
   const detail = await client.run(runId, repoPath);
   if (!detail.run) throw new Error(`run ${runId} is not in the daemon's history`);
 
-  post({ type: "runStarted", id: runId });
-  for (const event of detail.events ?? []) post({ type: "runEvent", event });
+  post({ type: "runStarted", id: runId, prompt: detail.run.prompt, status: detail.run.status });
+  const events = detail.events ?? [];
+  if (events.length === 0) {
+    post({ type: "runEmpty", id: runId });
+  } else {
+    for (const event of events) post({ type: "runEvent", event });
+  }
 
-  if (detail.run.status === "running" || detail.run.status === "queued") {
+  if (detail.run.status === "running" || detail.run.status === "queued" || detail.run.status === "cancelling") {
     // Still live: pick the stream back up from where the replay ended.
-    const lastSeq = detail.events?.at(-1)?.seq ?? 0;
+    const lastSeq = events.at(-1)?.seq ?? 0;
     await follow(runId, repoPath, lastSeq);
     return;
   }

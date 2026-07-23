@@ -315,6 +315,24 @@ export function formatTaskExecution(input: {
   return parts.join(" | ");
 }
 
+export function renderLogLine(event: { kind?: string; taskId?: string; message?: string; data?: unknown }): {
+  summary: string;
+  detail?: string;
+  kind: string;
+  severity: string;
+} {
+  const agentEv =
+    typeof event.data === "object" && event.data !== null
+      ? Object.assign({ type: event.kind || "log" }, event.data)
+      : { type: event.kind || "log", text: event.message, message: event.message };
+  const view = renderEvent(agentEv as any);
+  return {
+    summary: view.summary,
+    detail: view.detail,
+    kind: view.kind,
+    severity: view.severity,
+  };
+}
 
 export function panelHtml(nonce: string, cspSource: string, iconUri = ""): string {
   return `<!DOCTYPE html>
@@ -717,16 +735,19 @@ $("new-run").addEventListener("click", () => {
 });
 
 function appendLog(event) {
-  const view = event.data ? renderEvent(event.data) : null;
-  const line = document.createElement("span");
-  line.className = "log-line";
-  const cls = event.kind === "failed" ? "log-fail"
-    : event.kind === "finished" ? "log-done"
-    : event.kind === "lead" ? "log-lead"
-    : "log-task";
+  const view = renderLogLine(event);
+  const line = document.createElement("div");
+  line.className = "log-line " + (view.severity || "info");
+
   const tag = event.taskId ? "[" + event.taskId + "] " : "";
-  const text = view ? view.summary : event.message;
-  line.innerHTML = '<span class="' + cls + '">' + escapeHtml(tag) + "</span>" + escapeHtml(text);
+  let html = '<span class="log-tag">' + escapeHtml(tag) + '</span>'
+    + '<span class="log-summary">' + escapeHtml(view.summary) + '</span>';
+
+  if (view.detail && view.kind !== "message") {
+    html += '<pre class="log-detail">' + escapeHtml(view.detail) + '</pre>';
+  }
+
+  line.innerHTML = html;
   $("log").appendChild(line);
   $("log").scrollTop = $("log").scrollHeight;
 }
@@ -839,6 +860,7 @@ const renderDecisionReasons = ${renderDecisionReasons.toString()};
 // Canonical source: packages/event-view/src/index.ts.
 const renderEvent = ${renderEvent.toString()};
 const formatTaskExecution = ${formatTaskExecution.toString()};
+const renderLogLine = ${renderLogLine.toString()};
 
 function renderRuns(payload) {
   const runs = payload.runs ?? [];

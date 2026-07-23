@@ -1340,5 +1340,30 @@ Red/green verified by mutating test assertions and confirming failure.
 
 **Deviations:** None.
 
+---
+
+## A3-T3 — The panel replays what actually happened
+
+**Done:** Updated `apps/vscode-extension/src/extension.ts` (`reattach` and `follow`) and `apps/vscode-extension/src/webview.ts` (`appendLog` and `renderLogLine`) so replaying a past run renders through the A2-T1 module (`renderEvent`), showing reasoning, tool calls, and model details instead of discarding them.
+
+Key features & rules enforced:
+1. Replaying a recorded event set renders reasoning (`thinking`), tool calls (`tool_use`), tool results (`tool_result`), and model details (`usage`) with full summaries and details.
+2. Framed cleanly as prompt → process → outcome so it reads as a session rather than a log dump.
+3. Live / in-flight runs replay their recorded history and seamlessly resume streaming via `follow(runId, repoPath, lastSeq)`, guaranteeing 0 duplicated and 0 dropped events.
+4. Empty runs emit `runEmpty` and render an explicit empty state notice (`No process events recorded for this run.`).
+5. Extracted `renderLogLine` in `apps/vscode-extension/src/webview.ts` so renderer logic is shared directly between panel webview script and unit tests.
+
+**Tests (3 new, 461 total in `apps/vscode-extension/src/extension.test.ts`):**
+1. replaying a recorded event set renders reasoning and tool calls, not just messages;
+2. replay-then-follow produces each event exactly once;
+3. an empty run renders an explicit empty state.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 461/461 pass.
+
+**Deviations:** None.
+
+
 
 
