@@ -451,7 +451,7 @@ async function reattach(runId: string): Promise<void> {
     for (const event of events) post({ type: "runEvent", event });
   }
 
-  if (detail.run.status === "running" || detail.run.status === "queued" || detail.run.status === "cancelling") {
+  if (detail.run.status === "running" || detail.run.status === "queued") {
     // Still live: pick the stream back up from where the replay ended.
     const lastSeq = events.at(-1)?.seq ?? 0;
     await follow(runId, repoPath, lastSeq);

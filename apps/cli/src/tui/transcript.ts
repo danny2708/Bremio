@@ -1,5 +1,20 @@
 import { renderEvent, type EventView } from "@bremio/event-view";
-import type { PersistedSession, SessionDetail, SessionTurn } from "@bremio/daemon";
+
+export interface SessionTurn {
+  turnIndex: number;
+  runId: string;
+  prompt: string;
+  status: string;
+  model?: string;
+  reasoningLevel?: string;
+}
+
+export interface SessionDetail {
+  id: string;
+  title: string;
+  repositoryPath: string;
+  turns: SessionTurn[];
+}
 
 export interface TranscriptEventView extends EventView {
   seq: number;
@@ -37,7 +52,7 @@ export function assembleTranscript(
     };
   }
 
-  const turns: TranscriptTurnView[] = (session.turns ?? []).map((turn) => {
+  const turns: TranscriptTurnView[] = (session.turns ?? []).map((turn: SessionTurn) => {
     const rawEvents = eventsMap.get(turn.runId) ?? [];
     const events: TranscriptEventView[] = rawEvents.map((ev) => {
       const seq = typeof ev.seq === "number" ? ev.seq : 0;

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assembleTranscript } from "./transcript";
-import type { SessionDetail } from "@bremio/daemon";
+import { assembleTranscript, type SessionDetail } from "./transcript";
 
 describe("A3-T2: Transcript Assembly", () => {
   it("1. a session with N turns assembles N turn blocks in order", () => {
@@ -8,8 +7,6 @@ describe("A3-T2: Transcript Assembly", () => {
       id: "ses-100",
       repositoryPath: "/tmp/repo",
       title: "multi-turn session",
-      createdAt: "2026-07-23T10:00:00Z",
-      updatedAt: "2026-07-23T10:05:00Z",
       turns: [
         {
           turnIndex: 0,
@@ -47,13 +44,13 @@ describe("A3-T2: Transcript Assembly", () => {
 
     expect(viewModel.sessionId).toBe("ses-100");
     expect(viewModel.turns).toHaveLength(2);
-    expect(viewModel.turns[0].turnIndex).toBe(0);
-    expect(viewModel.turns[0].prompt).toBe("first prompt");
-    expect(viewModel.turns[0].events[0].summary).toBe("step 1 finished");
+    expect(viewModel.turns[0]!.turnIndex).toBe(0);
+    expect(viewModel.turns[0]!.prompt).toBe("first prompt");
+    expect(viewModel.turns[0]!.events[0]!.summary).toBe("step 1 finished");
 
-    expect(viewModel.turns[1].turnIndex).toBe(1);
-    expect(viewModel.turns[1].prompt).toBe("second prompt");
-    expect(viewModel.turns[1].events[0].summary).toBe("step 2 finished");
+    expect(viewModel.turns[1]!.turnIndex).toBe(1);
+    expect(viewModel.turns[1]!.prompt).toBe("second prompt");
+    expect(viewModel.turns[1]!.events[0]!.summary).toBe("step 2 finished");
   });
 
   it("2. collapsed detail is present but marked, not lost", () => {
@@ -61,8 +58,6 @@ describe("A3-T2: Transcript Assembly", () => {
       id: "ses-200",
       repositoryPath: "/tmp/repo",
       title: "reasoning and tool calls session",
-      createdAt: "2026-07-23T10:00:00Z",
-      updatedAt: "2026-07-23T10:05:00Z",
       turns: [
         {
           turnIndex: 0,
@@ -98,25 +93,25 @@ describe("A3-T2: Transcript Assembly", () => {
 
     const viewModel = assembleTranscript(session, eventsMap);
 
-    const events = viewModel.turns[0].events;
+    const events = viewModel.turns[0]!.events;
     expect(events).toHaveLength(3);
 
     // Thinking event check
-    expect(events[0].kind).toBe("thinking");
-    expect(events[0].isCollapsible).toBe(true);
-    expect(events[0].defaultCollapsed).toBe(true);
-    expect(events[0].detail).toBe("analyzing complex data structure...");
+    expect(events[0]!.kind).toBe("thinking");
+    expect(events[0]!.isCollapsible).toBe(true);
+    expect(events[0]!.defaultCollapsed).toBe(true);
+    expect(events[0]!.detail).toBe("analyzing complex data structure...");
 
     // Tool call event check
-    expect(events[1].kind).toBe("tool_use");
-    expect(events[1].isCollapsible).toBe(true);
-    expect(events[1].defaultCollapsed).toBe(true);
-    expect(events[1].detail).toContain("npm test");
+    expect(events[1]!.kind).toBe("tool_use");
+    expect(events[1]!.isCollapsible).toBe(true);
+    expect(events[1]!.defaultCollapsed).toBe(true);
+    expect(events[1]!.detail).toContain("npm test");
 
     // Regular message event check
-    expect(events[2].kind).toBe("message");
-    expect(events[2].isCollapsible).toBe(false);
-    expect(events[2].defaultCollapsed).toBe(false);
+    expect(events[2]!.kind).toBe("message");
+    expect(events[2]!.isCollapsible).toBe(false);
+    expect(events[2]!.defaultCollapsed).toBe(false);
   });
 
   it("3. selecting an unknown/empty session shows an explicit empty state", () => {
@@ -128,8 +123,6 @@ describe("A3-T2: Transcript Assembly", () => {
       id: "ses-empty",
       repositoryPath: "/tmp/repo",
       title: "empty session",
-      createdAt: "2026-07-23T10:00:00Z",
-      updatedAt: "2026-07-23T10:05:00Z",
       turns: [],
     };
     const noTurnsModel = assembleTranscript(noTurnsSession, new Map());

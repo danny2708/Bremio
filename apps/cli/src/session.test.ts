@@ -74,7 +74,7 @@ describe("A3-T1: bremio session list and bremio session show", () => {
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((msg) => logs.push(String(msg)));
 
-    const code = await showSessionCommand({ id: run.sessionId, databasePath: dbPath });
+    const code = await showSessionCommand({ id: run.sessionId!, databasePath: dbPath });
     expect(code).toBe(0);
 
     const output = logs.join("\n");
@@ -126,18 +126,18 @@ describe("A3-T1: bremio session list and bremio session show", () => {
       ["session", "list"],
     );
     expect(codeList).toBe(0);
-    const jsonList = JSON.parse(logs[0]);
+    const jsonList = JSON.parse(logs[0]!);
     expect(jsonList.sessions).toHaveLength(1);
-    expect(jsonList.sessions[0].id).toBe(run.sessionId);
+    expect(jsonList.sessions[0].id).toBe(run.sessionId!);
 
     logs.length = 0;
     const codeShow = await sessionCommandFromCli(
       { json: true, db: dbPath },
-      ["session", "show", run.sessionId],
+      ["session", "show", run.sessionId!],
     );
     expect(codeShow).toBe(0);
-    const jsonShow = JSON.parse(logs[0]);
-    expect(jsonShow.session.id).toBe(run.sessionId);
+    const jsonShow = JSON.parse(logs[0]!);
+    expect(jsonShow.session.id).toBe(run.sessionId!);
     expect(jsonShow.session.turns[0].prompt).toBe("json prompt test");
   });
 });

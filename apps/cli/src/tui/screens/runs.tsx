@@ -128,7 +128,7 @@ export function RunsScreen({
       return (
         <Box flexDirection="column">
           <Header title="Session Transcript" subtitle={selectedSessionId} />
-          <Text color={theme.error}>  error: session not found or empty</Text>
+          <Text color={theme.danger}>  error: session not found or empty</Text>
           <Text color={theme.muted}>  press [esc] to return to session list</Text>
         </Box>
       );
@@ -157,7 +157,7 @@ export function RunsScreen({
                 {`  Turn ${turn.turnIndex + 1} `}
                 <Text color={theme.muted}>{`(run ${turn.runId})`}</Text>
               </Text>
-              <Text color={theme.secondary}>{`    Prompt: ${turn.prompt}`}</Text>
+              <Text color={theme.textSecondary}>{`    Prompt: ${turn.prompt}`}</Text>
 
               {turn.model || turn.reasoningLevel ? (
                 <Text color={theme.muted}>
@@ -181,7 +181,7 @@ export function RunsScreen({
                     }
                     return (
                       <Box key={`${ev.seq}-${idx}`} flexDirection="column" marginLeft={4}>
-                        <Text color={ev.severity === "error" ? theme.error : theme.foreground}>
+                        <Text color={ev.severity === "error" ? theme.danger : theme.text}>
                           {`${ev.isCollapsible ? "▾ " : "• "}${ev.summary}`}
                         </Text>
                         {ev.detail ? (
@@ -221,7 +221,6 @@ export function RunsScreen({
           const isSelected = idx === selectedIndex;
           const turnsText = `${s.turnCount ?? 1} turn${(s.turnCount ?? 1) === 1 ? "" : "s"}`;
           const updated = s.updatedAt ? new Date(s.updatedAt).toLocaleTimeString() : "";
-          const glyph = s.status ? statusGlyph(s.status) : "";
 
           return (
             <Box key={s.id}>
@@ -231,7 +230,7 @@ export function RunsScreen({
               <Text bold={isSelected} color={isSelected ? theme.accent : theme.primary}>
                 {`${s.id}  `}
               </Text>
-              <Text bold={isSelected} color={isSelected ? theme.foreground : theme.secondary}>
+              <Text bold={isSelected} color={isSelected ? theme.text : theme.textSecondary}>
                 {`${(s.title || "Untitled").slice(0, 40)}  `}
               </Text>
               <Text color={theme.muted}>{`[${turnsText}]  `}</Text>

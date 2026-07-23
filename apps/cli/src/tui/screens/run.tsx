@@ -112,8 +112,8 @@ export function RunScreen({
       }
       if (phase === "running" && input === "e") {
         const lanes = assembleTaskLanes(events);
-        if (lanes.length) {
-          setExpandedLane((prev) => (prev ? undefined : lanes[0].id));
+        if (lanes.length && lanes[0]) {
+          setExpandedLane((prev) => (prev ? undefined : lanes[0]!.id));
         }
       }
     },
