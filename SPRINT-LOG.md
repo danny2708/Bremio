@@ -1577,6 +1577,36 @@ Red/green verified by mutating test assertions and confirming failure.
 
 **Deviations:** None.
 
+---
+
+## B3 — The context budget
+
+**Done:** Implemented `enforceContextBudget` and `estimateTokens` in `packages/harness/src/context-budget.ts`.
+
+Key implementation details:
+1. **Per-Provider Budget Config**: Context budgets are resolved per provider/adapter from configuration (`ProviderBudgetConfig`), ensuring no model names exist in core (`docs/05`).
+2. **Over-budget Handling**:
+   - Phase 1: Summarises older turns (replaces prompt/finalText with turn summary).
+   - Phase 2: Elides/drops oldest turns (`elided: true`) if still over budget. Never silently truncates text mid-token.
+3. **Token Accounting Rules**:
+   - Uses `measuredInputTokens` where reported by the provider/adapter.
+   - Heuristic estimation is explicitly labelled with `isEstimate: true` and `accountingMethod: "estimated"`. It is never presented as measured.
+4. **Fail-Closed Guarantee**: Returns `allowed: false` with an explicit `failureReason` if the turn instruction + diff alone (or even after eliding all turns) exceeds the budget.
+
+**Tests (5 new, 491 total overall in `packages/harness/src/context-budget.test.ts`):**
+1. Resolves per-provider budgets from configuration without model names in core.
+2. Summarises older turns then drops them when over budget, never silently truncating.
+3. Prefers provider-reported measured token usage where present.
+4. Explicitly labels estimates as estimates (`isEstimate: true`, `accountingMethod: "estimated"`).
+5. Fails closed with an explicit named failure reason when the budget cannot be satisfied.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 491/491 pass.
+
+**Deviations:** None.
+
+
 
 
 
