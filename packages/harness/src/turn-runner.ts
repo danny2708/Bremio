@@ -1,5 +1,22 @@
+import { classifyAgentError } from "@bremio/adapter-sdk";
 import type { AgentAdapter, AgentRunRequest } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
+
+/**
+ * Whether a resume failure means "that session is gone" rather than something
+ * worth surfacing.
+ *
+ * The judgement is delegated to `classifyAgentError`, which exists precisely so
+ * that provider wording is matched in exactly one place — its own comment says
+ * a caller would otherwise "be matching strings against three unrelated error
+ * formats". This module used to carry its own copy of that regex; the two were
+ * identical on the day they were written, which is the only day duplicated
+ * patterns ever agree. A provider rewording its message would have silently
+ * turned a graceful fall-back into a hard failure, costing the user their turn.
+ */
+function isSessionGone(message: string): boolean {
+  return classifyAgentError(message).code === "session_not_found";
+}
 import { assembleTurnContext, type PriorTurnContext } from "./context-assembler";
 import { enforceContextBudget, type ProviderBudgetConfig, type TurnInputForBudget } from "./context-budget";
 
@@ -79,7 +96,7 @@ export async function prepareTurnExecution(options: TurnRunnerOptions): Promise<
           for await (const ev of stream) {
             if (ev.type === "completed" && ev.outcome.status === "failed") {
               const err = ev.outcome.error ?? "";
-              if (/session.*not found|no rollout|invalid session|not a uuid|unknown session|expired/i.test(err)) {
+              if (isSessionGone(err)) {
                 resumeFailed = true;
                 resumeError = err;
                 break;
@@ -89,7 +106,7 @@ export async function prepareTurnExecution(options: TurnRunnerOptions): Promise<
           }
         } catch (err: unknown) {
           const msg = (err as Error).message ?? String(err);
-          if (/session.*not found|no rollout|invalid session|not a uuid|unknown session|expired/i.test(msg)) {
+          if (isSessionGone(msg)) {
             resumeFailed = true;
             resumeError = msg;
           } else {

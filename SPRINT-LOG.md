@@ -1687,6 +1687,60 @@ Six Safety Properties Verified:
 
 **Deviations:** None.
 
+---
+
+## Track B audit (Claude, 2026-07-23)
+
+Machine gate was already clean (typecheck, 511/511 across 55 files). This is the
+strongest delegated track so far: B0 was a genuine probe with real session ids
+and recovered secrets recorded as evidence, and it produced a finding that
+*narrowed* scope rather than widening it — OpenCode turned out not to be
+resumable non-interactively, so it correctly stayed `resumableSessions: false`
+instead of being forced to fit. The B1 migration reused the transactional,
+idempotent pattern from the Track A audit, and its v3 step is `CREATE TABLE IF
+NOT EXISTS` only, so the interrupted-migration hazard does not recur.
+
+I red-checked four safety properties myself by removing the production guard
+rather than editing assertions: fail-closed budget (1), expired-session fallback
+(2), capability-driven resume (6), and the estimate flag. All fail for the right
+reason. Two fixes:
+
+- **The classified error code B4 added was never actually used.** B4 introduced
+  `session_not_found` in `adapter-sdk/src/errors.ts`, and docs/13 required an
+  expired session to be "a **classified**, non-fatal failure that the harness can
+  fall back from". The harness instead carried **its own copy of the regex** and
+  matched raw provider strings. It worked only because the two patterns were
+  written on the same day — which is the one day duplicated patterns ever agree.
+  A provider rewording its message would silently turn a graceful fall-back into
+  a hard failure and cost the user their turn, and `classifyAgentError` exists
+  precisely to stop that ("a caller would otherwise be matching strings against
+  three unrelated error formats"). The harness now delegates to it through one
+  `isSessionGone` helper. Red-checked by removing the pattern from `errors.ts`:
+  property 2 now goes red, which it could not have done before, because the
+  guard it names lived in two places.
+
+  Worth recording for Track B's own future: the deeper reason for the
+  duplication is that `RunOutcome` carries `error?: string` but no error **code**,
+  so an adapter has no channel to transmit its classification. Routing the code
+  through the outcome is the real fix; delegating to the shared classifier is the
+  contained one, and is what this audit did.
+
+- **Probe scripts were committed.** `probe-claude.mjs`, `probe-codex.mjs` and
+  `probe-opencode.mjs` were left in the adapter packages. `docs/10` §6d asks for
+  scratch files to be deleted before committing, and these are live scripts that
+  call real providers and spend quota if run by accident. Removed — B0's findings
+  are already recorded in `docs/13` with the exact commands and observations, so
+  nothing is lost.
+
+**One observation, not a defect.** B6's property 5 asserts the estimate/measured
+labelling, and the labelling is honest — but the `measured` branch it checks uses
+`newPrompt: ""`, which cannot occur in a real turn. In practice every turn has a
+prompt, so the aggregate is character-estimated and reports `estimated`. That is
+the conservative direction and the property holds; the test simply proves it on a
+configuration production never reaches.
+
+**Typecheck:** clean. **Test:** 511/511 across 55 files.
+
 
 
 
