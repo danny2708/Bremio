@@ -17,11 +17,15 @@ import { panelHtml } from "./webview";
 let panel: vscode.WebviewPanel | undefined;
 let daemonProcess: ChildProcess | undefined;
 let streamAbort: AbortController | undefined;
+let lastActiveEditor: vscode.TextEditor | undefined;
 const client = new BremioClient();
 const output = vscode.window.createOutputChannel("Bremio");
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (editor?.document.uri.scheme === "file") lastActiveEditor = editor;
+    }),
     vscode.commands.registerCommand("bremio.open", () => openPanel(context)),
     vscode.commands.registerCommand("bremio.startDaemon", () => ensureDaemon(true)),
     vscode.commands.registerCommand("bremio.stopDaemon", stopDaemon),
@@ -281,14 +285,37 @@ async function pickAttachments(): Promise<void> {
   if (picked?.length) post({ type: "attachments", files: picked.map(describeFile) });
 }
 
+export interface AttachmentFileEditor {
+  readonly document: {
+    readonly uri: { readonly scheme: string; readonly fsPath: string };
+  };
+}
+
+/** Pure decision: return the file to attach, or an error. */
+export function resolveActiveAttachment(
+  editor: AttachmentFileEditor | undefined,
+  lastEditor: AttachmentFileEditor | undefined,
+  repoPath: string | undefined,
+): { files: Array<{ path: string; label: string }> } | { error: string } {
+  const active = editor ?? lastEditor;
+  if (!active) return { error: "No file is open in the editor to attach." };
+  if (active.document.uri.scheme !== "file") return { error: "No file is open in the editor to attach." };
+  const full = active.document.uri.fsPath;
+  return { files: [{ path: full, label: repoPath ? path.relative(repoPath, full) || full : full }] };
+}
+
 /** Attach whatever is open in the editor — the most common case, one click. */
 function attachActiveFile(): void {
-  const active = vscode.window.activeTextEditor?.document.uri;
-  if (!active) {
-    post({ type: "error", message: "No file is open in the editor to attach." });
+  const result = resolveActiveAttachment(
+    vscode.window.activeTextEditor,
+    lastActiveEditor,
+    currentRepo(),
+  );
+  if ("error" in result) {
+    post({ type: "error", message: result.error });
     return;
   }
-  post({ type: "attachments", files: [describeFile(active)] });
+  post({ type: "attachments", files: result.files });
 }
 
 function describeFile(uri: vscode.Uri): { path: string; label: string } {

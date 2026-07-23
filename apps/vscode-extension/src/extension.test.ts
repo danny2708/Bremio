@@ -2,7 +2,22 @@ import { createServer, type Server } from "node:http";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("vscode", () => ({
+  window: {
+    createOutputChannel: vi.fn(() => ({ appendLine: vi.fn(), append: vi.fn() })),
+    onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
+    activeTextEditor: undefined,
+  },
+  workspace: {
+    workspaceFolders: undefined,
+    getConfiguration: vi.fn(() => ({ get: vi.fn(() => true) })),
+  },
+  commands: { registerCommand: vi.fn() },
+  Uri: { file: vi.fn((p: string) => ({ fsPath: p, scheme: "file", path: p })) },
+  ViewColumn: { Beside: 2 },
+}));
 import {
   BremioClient,
   CLIENT_PROTOCOL_VERSION,
@@ -12,6 +27,7 @@ import {
   readEndpoint,
 } from "./client";
 import { panelHtml, renderCapacityCards, renderDecisionReasons, type CapacityView } from "./webview";
+import { resolveActiveAttachment } from "./extension";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -346,5 +362,28 @@ describe("setup remedies", () => {
     const client = new BremioClient(await endpointFile(port));
 
     await expect(client.checkProtocol()).rejects.toThrow(/v0\.0\.9/);
+  });
+});
+
+describe("attachActiveFile (resolveActiveAttachment)", () => {
+  const WS = "/workspace";
+
+  it("returns the last remembered file when the active editor is gone", () => {
+    const file = { document: { uri: { scheme: "file", fsPath: `${WS}/src/main.ts` } } };
+    const result = resolveActiveAttachment(undefined, file, WS);
+    expect(result).toStrictEqual({
+      files: [{ path: `${WS}/src/main.ts`, label: `src${path.sep}main.ts` }],
+    });
+  });
+
+  it("returns the explicit error when no editor has ever been opened", () => {
+    const result = resolveActiveAttachment(undefined, undefined, undefined);
+    expect(result).toStrictEqual({ error: "No file is open in the editor to attach." });
+  });
+
+  it("refuses a non-file scheme (untitled / virtual) even when focused", () => {
+    const virtual = { document: { uri: { scheme: "untitled", fsPath: "Untitled-1" } } };
+    const result = resolveActiveAttachment(virtual, undefined, undefined);
+    expect(result).toStrictEqual({ error: "No file is open in the editor to attach." });
   });
 });

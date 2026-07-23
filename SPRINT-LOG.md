@@ -1115,3 +1115,29 @@ assertions state the hand-computed value, not a sign or a type.
 
 **Deviations:** S5-T4 (the v1.0 bump) is deliberately not started; the reasoning
 is recorded in `docs/08` rather than here, since it is a plan-level decision.
+
+---
+
+## A0-T1 — apps/vscode-extension
+
+**Done:** Fixed "Current file" never attaching anything — clicking the button
+moved focus to the webview, making `activeTextEditor` undefined. Added
+`lastActiveEditor` remembered via `onDidChangeActiveTextEditor` (ignoring
+undefined and non-file schemes), so focus moving to the panel does not erase
+it. Extracted `resolveActiveAttachment` — a pure, exported function — so the
+decision logic is testable without mocking VS Code. `attachActiveFile` now falls
+back to the remembered editor and rejects non-file schemes (untitled/virtual).
+
+**Tests (3):**
+1. Remembered editor yields that file when active editor is gone.
+2. Never having had an editor yields the explicit error, not an empty attach.
+3. A non-file scheme (untitled) is refused.
+
+Red/green verified: removed each guard and confirmed the corresponding test went
+red. 418/418 pass (30 extension tests, +3).
+
+**Deviations:** Added `vi.mock("vscode", ...)` to `extension.test.ts` — the
+first vscode mock in this file. Necessary because importing `extension.ts` (for
+the exported `resolveActiveAttachment`) triggers the module-level
+`vscode.window.createOutputChannel` call. The mock is inert for existing tests
+(they import only `./client` and `./webview`, which don't depend on vscode).
