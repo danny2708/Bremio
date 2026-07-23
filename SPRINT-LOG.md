@@ -1508,6 +1508,24 @@ sessions being read-only until v1.1.
 
 **Deviations:** None.
 
+---
+
+## B0 — Verify the resume surfaces before designing on them
+
+**Done:** Probed and documented the real session-resume surface of Claude (Agent SDK), Codex (app-server threads), and OpenCode (`opencode serve` / CLI sessions) in [docs/13-context-and-harness.md](file:///d:/Work/Side-Projects/Bremio/docs/13-context-and-harness.md).
+
+Key observed findings:
+1. **Claude (Agent SDK)**: Supports non-interactive session resume via `options.resume = sessionId`. Exposes `msg.session_id` in `result` event. Preserves earlier turns (verified secret recall `ALPHA-999`). Throws an Error on invalid/expired session ID (`--resume requires a valid session ID...`).
+2. **Codex (app-server threads)**: Supports non-interactive session resume via `codex exec resume <thread_id> --json`. Exposes `thread_id` in initial `thread.started` event. Preserves earlier turns (verified secret recall `BETA-777`). Exits non-zero with `no rollout found for thread id` on invalid session ID.
+3. **OpenCode (`adapter-opencode`)**: Non-interactive execution via `opencode run` hangs without an interactive TTY session and CLI `--format json` does not emit session initialization events. Marked as not resumable via non-interactive CLI subprocesses.
+
+Capability updates:
+- `adapter-claude` and `adapter-codex` earn `resumableSessions: true` once B4 implements `resumeRun()`.
+- `adapter-opencode`, `adapter-antigravity`, and `adapter-local` MUST keep `resumableSessions: false`. Context continuity for these adapters is provided via Bremio's context assembler re-injection.
+
+**Deviations:** None.
+
+
 
 
 

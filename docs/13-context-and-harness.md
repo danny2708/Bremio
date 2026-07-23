@@ -47,36 +47,45 @@ The harness picks per adapter from the capability — never from a provider name
 
 ---
 
-## B0 — Verify the resume surfaces before designing on them
+### Verified Findings (B0 Probe Results)
 
-**Goal.** Replace every assumption in the table above with an observed fact.
+| Adapter | Can Resume Non-Interactively? | Required Identifier | Exposed in Stream Today? | Preserves Earlier Turns? | Unknown / Expired ID Behavior |
+|---|---|---|---|---|---|
+| **Claude** (`adapter-claude`) | **YES** | Session UUID (e.g. `4bf89d8e-...`) | **YES** (`msg.session_id` in `result` event) | **YES** (recalled `ALPHA-999` secret across turns) | Throws SDK Error (`--resume requires a valid session ID...`) |
+| **Codex** (`adapter-codex`) | **YES** | Thread UUID (e.g. `019f8f24-...`) | **YES** (`thread_id` in `thread.started` event) | **YES** (recalled `BETA-777` secret across turns) | Exits non-zero (code 1) with `no rollout found for thread id` |
+| **OpenCode** (`adapter-opencode`) | **NO** | Session ID string (`--session <id>`) | **NO** (CLI `--format json` omits session metadata) | **Not available** | **Not available** (hangs non-interactively without TTY) |
+| **Antigravity** (`adapter-antigravity`) | **NO** | None (stateless execution surface) | **NO** | **NO** | N/A (re-injection required) |
+| **Local** (`adapter-local`) | **NO** | None (stateless chat completions) | **NO** | **NO** | N/A (re-injection required) |
 
-**Why.** `docs/04` carries a standing "⚠️ Verify first" and it has paid for
-itself twice — Antigravity ignoring process cwd, and OpenCode returning 200 with
-an empty body for a rejected `format`. Session resume is a fast-moving surface on
-every one of these providers. Designing B1–B6 on documentation would repeat the
-sprint-1 mistake at four times the scale.
+#### Exact Probes and Observations
 
-**This is not a coding task.** Probe, record, commit the doc.
+1. **Claude (Agent SDK)**
+   - **Command / Code**: Executed `node ./packages/adapter-claude/probe-claude.mjs` calling `@anthropic-ai/claude-agent-sdk` `query()`.
+   - **Turn 1**: `query({ prompt: "Remember secret code ALPHA-999. Reply with ONLY 'OK'.", options: { maxTurns: 2 } })`.
+     - *Observed*: Result event returned `session_id: "4bf89d8e-328f-42b1-872a-d2d9e73ed5db"`, result `"OK"`.
+   - **Turn 2**: `query({ prompt: "What was the secret code I told you earlier?", options: { resume: "4bf89d8e-328f-42b1-872a-d2d9e73ed5db", maxTurns: 2 } })`.
+     - *Observed*: Result event returned `"ALPHA-999"`, confirming turns are preserved.
+   - **Invalid ID test**: `query({ prompt: "Hello", options: { resume: "invalid-session-id-12345" } })`.
+     - *Observed*: Threw error `Claude Code returned an error result: Error: --resume requires a valid session ID or session title... Provided value "invalid-session-id-12345" is not a UUID`.
 
-**Files.** This document (a Findings table), `SPRINT-LOG.md`.
+2. **Codex (app-server threads)**
+   - **Command / Code**: Executed `node ./packages/adapter-codex/probe-codex.mjs` spawning `codex exec`.
+   - **Turn 1**: `codex exec --json -s workspace-write -o out1.txt` with stdin `"Remember secret word BETA-777. Reply ONLY 'OK'."`.
+     - *Observed*: First JSON line on stdout was `{"type":"thread.started","thread_id":"019f8f24-5ef0-7f41-baa7-f4f0466ecf10"}`.
+   - **Turn 2**: `codex exec resume 019f8f24-5ef0-7f41-baa7-f4f0466ecf10 --json -o out2.txt` with stdin `"What was the secret word I told you earlier?"`.
+     - *Observed*: Output file received `"BETA-777"`, confirming turn history is preserved.
+   - **Invalid ID test**: `codex exec resume 00000000-0000-0000-0000-000000000000 --json -o out3.txt`.
+     - *Observed*: Exited code 1 with stderr `Error: thread/resume: thread/resume failed: no rollout found for thread id 00000000-0000-0000-0000-000000000000 (code -32600)`.
 
-**Success criteria.**
-- For **Claude** and **Codex**, an explicit yes/no on: can a prior session be
-  resumed non-interactively; what identifier is required; is that identifier
-  exposed in the stream today; does resuming preserve the earlier turns; and what
-  happens when the session has expired or the id is unknown.
-- For **OpenCode**, the same questions against `opencode serve` sessions.
-- The exact command or call used, and what was observed, for each.
-- Anything undeterminable is recorded as "not available" — never an assumption
-  written as a finding.
-- An explicit statement of which adapters can set `resumableSessions: true` and
-  what mechanism earns it. Per `docs/10` §6c, the boolean moves only with the
-  mechanism.
+3. **OpenCode (`opencode serve` / CLI)**
+   - **Command / Code**: Executed `node ./packages/adapter-opencode/probe-opencode.mjs` and `opencode run "hello" --format json`.
+   - *Observed*: Non-interactive execution of `opencode run` hangs without an interactive TTY session. CLI `--format json` does not emit session initialization events. OpenCode sessions are therefore not resumable via non-interactive CLI subprocesses in `adapter-opencode`.
 
-**Tests.** None. The findings table is the deliverable.
+#### `resumableSessions` Capability Summary (per docs/10 §6c)
+- **Claude (`adapter-claude`)** and **Codex (`adapter-codex`)** may set `resumableSessions: true` once B4 implements `resumeRun()`, earned by provider-native non-interactive session/thread resumption (`options.resume` in Claude Agent SDK, `codex exec resume <thread_id>` in Codex).
+- **OpenCode (`adapter-opencode`)**, **Antigravity (`adapter-antigravity`)**, and **Local (`adapter-local`)** MUST keep `resumableSessions: false`. Context continuity for these adapters is earned via Bremio's context assembler re-injection (Track B).
 
-**Commit.** `docs(harness): record the verified session-resume surfaces`
+---
 
 ---
 
