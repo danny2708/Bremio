@@ -72,14 +72,19 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   async *startRun(req: AgentRunRequest): AsyncIterable<AgentEvent> {
+    yield* this.runInternal(req);
+  }
+
+  async *resumeRun(sessionId: string, req: AgentRunRequest): AsyncIterable<AgentEvent> {
+    yield* this.runInternal(req, sessionId);
+  }
+
+  private async *runInternal(req: AgentRunRequest, resumeSessionId?: string): AsyncIterable<AgentEvent> {
     const now = () => Date.now();
     yield { type: "started", runId: req.runId, ts: now() };
 
     const abort = new AbortController();
     this.controllers.set(req.runId, abort);
-    // The supervisor cannot kill an in-process SDK call, so this handle is the
-    // only proof the call actually ended. It must be invoked on every exit
-    // path, or a cancellation would never be confirmable.
     const markSettled = processSupervisor.registerCancellable(
       req.runId,
       abort,
@@ -87,7 +92,6 @@ export class ClaudeAdapter implements AgentAdapter {
     );
     const onExternalAbort = () => abort.abort();
     req.signal?.addEventListener("abort", onExternalAbort, { once: true });
-    // A signal already aborted before we attached the listener won't fire it.
     if (req.signal?.aborted) {
       this.cancelled.add(req.runId);
       abort.abort();
@@ -114,6 +118,7 @@ export class ClaudeAdapter implements AgentAdapter {
       systemPrompt: req.systemPrompt
         ? { type: "preset", preset: "claude_code", append: req.systemPrompt }
         : { type: "preset", preset: "claude_code" },
+      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
       ...(model ? { model } : {}),
       ...(req.reasoningLevel ? { effort: req.reasoningLevel } : {}),
       ...(req.maxTurns ? { maxTurns: req.maxTurns } : {}),
@@ -143,14 +148,14 @@ export class ClaudeAdapter implements AgentAdapter {
               ...(msg.structured_output !== undefined
                 ? { structured: msg.structured_output }
                 : {}),
-              sessionId: msg.session_id,
+              sessionId: msg.session_id ?? resumeSessionId,
               ...(msg.is_error ? { error: "run reported is_error" } : {}),
             };
           } else {
             outcome = {
               status: "failed",
               error: msg.errors?.join("; ") || msg.subtype,
-              sessionId: msg.session_id,
+              sessionId: msg.session_id ?? resumeSessionId,
             };
           }
           continue;
@@ -164,13 +169,10 @@ export class ClaudeAdapter implements AgentAdapter {
         (err as Error).name === "AbortError";
       outcome = aborted
         ? { status: "cancelled" }
-        : { status: "failed", error: (err as Error).message };
+        : { status: "failed", error: (err as Error).message, sessionId: resumeSessionId };
     } finally {
       req.signal?.removeEventListener("abort", onExternalAbort);
       this.controllers.delete(req.runId);
-      // Whether it completed, threw, or honoured the abort, the SDK call is
-      // over — this is what lets a cancellation be confirmed rather than
-      // assumed.
       markSettled();
     }
 
@@ -178,16 +180,12 @@ export class ClaudeAdapter implements AgentAdapter {
     if (!outcome) {
       outcome = wasCancelled
         ? { status: "cancelled" }
-        : { status: "failed", error: "run ended without a result" };
+        : { status: "failed", error: "run ended without a result", sessionId: resumeSessionId };
     } else if (wasCancelled && outcome.status !== "completed") {
       outcome = { ...outcome, status: "cancelled" };
     }
 
     yield { type: "completed", runId: req.runId, ts: now(), outcome };
-  }
-
-  resumeRun(): AsyncIterable<AgentEvent> {
-    throw new Error("resumeRun is not implemented in Phase 1");
   }
 
   /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRunRequest } from "@bremio/adapter-sdk";
-import { buildCodexExecArgs, sanitizeRunIdForFile } from "./codex-adapter";
+import { buildCodexExecArgs, buildCodexResumeArgs, CodexAdapter, sanitizeRunIdForFile } from "./codex-adapter";
 
 function request(overrides: Partial<AgentRunRequest> = {}): AgentRunRequest {
   return {
@@ -22,7 +22,7 @@ describe("buildCodexExecArgs", () => {
     );
 
     expect(args).toContain("gpt-test");
-    expect(args).toContain("model_reasoning_effort=\"high\"");
+    expect(args).toContain('model_reasoning_effort="high"');
     expect(args).toContain("schema.json");
   });
 
@@ -31,6 +31,28 @@ describe("buildCodexExecArgs", () => {
 
     expect(args).not.toContain("-m");
     expect(args).not.toContain("-c");
+  });
+});
+
+describe("buildCodexResumeArgs", () => {
+  it("builds argument vector containing exec resume and target thread ID", () => {
+    const args = buildCodexResumeArgs(
+      "019f8f24-5ef0-7f41-baa7-f4f0466ecf10",
+      request(),
+      "out.txt",
+    );
+
+    expect(args[0]).toBe("exec");
+    expect(args[1]).toBe("resume");
+    expect(args[2]).toBe("019f8f24-5ef0-7f41-baa7-f4f0466ecf10");
+  });
+});
+
+describe("CodexAdapter B4: Session Resume", () => {
+  it("reports resumableSessions: true capability", async () => {
+    const adapter = new CodexAdapter();
+    const caps = await adapter.getCapabilities();
+    expect(caps.resumableSessions).toBe(true);
   });
 });
 

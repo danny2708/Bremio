@@ -1606,6 +1606,33 @@ Red/green verified by mutating test assertions and confirming failure.
 
 **Deviations:** None.
 
+---
+
+## B4 — `resumeRun` for the adapters that earned it
+
+**Done:** Implemented `resumeRun` for `adapter-claude` and `adapter-codex` (the adapters cleared by B0 empirical probing).
+
+Key implementation details:
+1. **Capabilities & Routing**: `resumableSessions` is set to `true` strictly for `adapter-claude` and `adapter-codex`. Non-cleared adapters (`opencode`, `antigravity`, `local`) keep `resumableSessions: false` and explicitly reject `resumeRun`.
+2. **Session ID Emission**:
+   - `adapter-claude`: passes `resume: sessionId` to SDK `query()` and emits `outcome.sessionId = msg.session_id ?? sessionId`.
+   - `adapter-codex`: builds `buildCodexResumeArgs` invoking `codex exec resume <sessionId>` and captures `thread_id` from `thread.started` (or uses `sessionId`), emitting `outcome.sessionId`.
+3. **Classified Failure Handling**:
+   - An expired, unknown, or invalid provider session ID produces a classified, non-fatal failure (`outcome.status = "failed"` with classified error code `session_not_found`).
+   - The harness can fall back from this to full turn re-assembly without crashing or silently starting a new session pretending to be the old one.
+
+**Tests (8 new, 499 total overall across 53 test files):**
+1. `adapter-claude`: `resumableSessions: true`, `resumeRun` emits `outcome.sessionId`, and invalid session ID produces classified non-fatal failure with `sessionId` preserved.
+2. `adapter-codex`: `resumableSessions: true`, `buildCodexResumeArgs` formats `exec resume <sessionId>`.
+3. `adapter-opencode`, `adapter-antigravity`, `adapter-local`: `resumableSessions: false`, explicitly reject `resumeRun`.
+
+Red/green verified by mutating test assertions and confirming failure.
+
+**Typecheck:** clean. **Test:** 499/499 pass.
+
+**Deviations:** None.
+
+
 
 
 

@@ -254,7 +254,7 @@ export class AntigravityAdapter implements AgentAdapter {
     };
   }
 
-  resumeRun(): AsyncIterable<AgentEvent> {
+  resumeRun(_sessionId: string, _request: AgentRunRequest): AsyncIterable<AgentEvent> {
     throw new Error("Antigravity resumeRun is not implemented (agy --continue is not wired)");
   }
 

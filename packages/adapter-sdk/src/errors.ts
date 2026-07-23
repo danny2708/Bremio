@@ -16,6 +16,7 @@ export type AgentErrorCode =
   | "provider_unavailable"
   | "timeout"
   | "cancelled"
+  | "session_not_found"
   | "execution_failed"
   | "unknown";
 
@@ -46,6 +47,7 @@ export function isRetryableCode(code: AgentErrorCode): boolean {
 }
 
 const PATTERNS: ReadonlyArray<[RegExp, AgentErrorCode]> = [
+  [/session.*not found|no rollout found|invalid session|not a uuid|unknown session|expired session/i, "session_not_found"],
   [/rate.?limit|429|too many requests|slow down/i, "rate_limited"],
   [/quota|usage limit|credit|billing|insufficient funds/i, "quota_exhausted"],
   [/unauthor|forbidden|401|403|invalid api key|not logged in|authentication/i, "authentication_failed"],
