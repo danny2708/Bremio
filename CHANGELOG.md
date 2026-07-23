@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.1.0 — 2026-07-23
+
+Sessions stop being read-only. `bremio session continue <id> "<prompt>"` adds a
+turn to work you already did, and the agent still knows what happened in the
+earlier turns.
+
+### How a turn remembers the last one
+
+- Where the provider genuinely supports it, Bremio **resumes the provider's own
+  session** — the agent keeps its real context, not a retelling of it.
+- Where it does not, the prior turns are **re-assembled into a fresh prompt**.
+- Which of the two happens is decided by the adapter's `resumableSessions`
+  capability, never by the provider's name. Claude and Codex resume; OpenCode
+  was probed and genuinely cannot resume non-interactively, so it re-injects and
+  its capability says so.
+- The mechanism and the reason for it are recorded on every turn, so a session
+  that behaved differently than you expected can be explained afterwards.
+
+### Failing closed instead of quietly degrading
+
+- A turn whose context **does not fit the provider's budget is refused with the
+  number it exceeded**, rather than being truncated into something that looks
+  fine and has lost the middle.
+- Older turns are elided to summaries when space runs short, and a summary is
+  **labelled as one** — never presented as verbatim history.
+- Token accounting says `measured` only when the provider reported it, and
+  `estimated` otherwise. The two are never mixed into one unlabelled figure.
+- An **expired provider session falls back to re-injection** instead of starting
+  a blank session that would answer with no memory of the work so far. Expiry is
+  matched by the shared error classifier, so it survives a provider rewording
+  its message.
+
+### Known limitations
+
+- Re-injection is a reconstruction, not the provider's own state — a long
+  session on a non-resumable provider will drift from one on a resumable one.
+- `net_gain` and the calibration gate are per-run; they do not yet reason about
+  the cost of a multi-turn session as a whole.
+
 ## 1.0.0 — 2026-07-23
 
 First stable release. `0.1.0-alpha.1` could plan work, hand it to a second

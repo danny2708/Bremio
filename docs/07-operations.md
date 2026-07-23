@@ -51,7 +51,7 @@ From a source checkout:
 corepack pnpm install
 corepack pnpm release:check          # typecheck, full suite, build, packed-install smoke
 npm pack                             # produces bremio-<version>.tgz
-npm install --global .\bremio-1.0.0.tgz
+npm install --global .\bremio-1.1.0.tgz
 bremio --version
 bremio doctor
 ```
@@ -269,7 +269,7 @@ keep everything else.
   success. It narrows the failure from *silent* to *stated*; it does not close
   the race.
 - **No registry publication.** `npm i -g bremio` does not work for this alpha;
-  install `bremio-1.0.0.tgz` from the artifact you built.
+  install `bremio-1.1.0.tgz` from the artifact you built.
 - **Quota freshness depends on the provider.** Bremio reads AI-Quota-Tray's
   database, which only advances when the provider's own tooling runs. Stale
   readings are labelled with their age rather than presented as current.

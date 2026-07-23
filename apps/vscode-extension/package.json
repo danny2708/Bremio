@@ -2,7 +2,7 @@
   "name": "bremio-vscode",
   "displayName": "Bremio",
   "description": "Orchestrate AI coding agents — different minds, one team.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "publisher": "bremio",
   "engines": {
