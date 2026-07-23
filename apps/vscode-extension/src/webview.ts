@@ -164,6 +164,36 @@ export function renderCapacityCards(capacity: CapacityView): string {
   return banner + cards;
 }
 
+export interface DecisionReasonMessage {
+  fallbackReason?: string;
+  autoModeReason?: string;
+}
+
+/**
+ * Markup for *why* an automatic choice was made — a Team run falling back to
+ * Single, or Auto mode picking a flow.
+ *
+ * Self-contained and exported for the same reason `renderCapacityCards` is:
+ * `panelHtml` inlines its source into the webview script, so the panel and the
+ * test exercise one implementation. Asserting on the script *text* instead
+ * would pass even with the branch disabled, which is no assertion at all.
+ */
+export function renderDecisionReasons(message: DecisionReasonMessage): string {
+  const esc = (value: unknown): string =>
+    String(value ?? "").replace(
+      /[&<>"']/g,
+      (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }) as Record<string, string>)[c] ?? c,
+    );
+  let out = "";
+  if (message.fallbackReason) {
+    out += '<div class="banner warn"><strong>Team fallback</strong><br>' + esc(message.fallbackReason) + "</div>";
+  }
+  if (message.autoModeReason) {
+    out += '<div class="card"><span class="muted">auto mode: ' + esc(message.autoModeReason) + "</span></div>";
+  }
+  return out;
+}
+
 export function panelHtml(nonce: string, cspSource: string, iconUri = ""): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -638,12 +668,7 @@ window.addEventListener("message", (event) => {
     } else if (message.failureMessage) {
       panelHtmlOut += '<div class="banner bad">' + escapeHtml(message.failureMessage) + "</div>";
     }
-    if (message.fallbackReason) {
-      panelHtmlOut += '<div class="banner warn"><strong>Team fallback</strong><br>' + escapeHtml(message.fallbackReason) + "</div>";
-    }
-    if (message.autoModeReason) {
-      panelHtmlOut += '<div class="card"><span class="muted">auto mode: ' + escapeHtml(message.autoModeReason) + "</span></div>";
-    }
+    panelHtmlOut += renderDecisionReasons(message);
     if (message.gate) panelHtmlOut += renderGate(message.gate, message.runId);
     if (message.recovery?.canRetry) {
       panelHtmlOut += '<div class="row" style="margin-top:10px"><button class="ghost" data-action="retry" data-run="' + escapeHtml(message.runId) + '">Retry</button></div>';
@@ -681,6 +706,10 @@ function renderGate(gate, runId) {
 // Inlined from webview.ts so the panel and the unit test share one renderer.
 // Bound to a fixed name here regardless of how the source function is compiled.
 const renderCapacityCards = ${renderCapacityCards.toString()};
+
+// Same single-source-of-truth inlining: the panel and the unit test run this
+// exact function, so a test cannot pass while the branch is disabled.
+const renderDecisionReasons = ${renderDecisionReasons.toString()};
 
 function renderRuns(payload) {
   const runs = payload.runs ?? [];

@@ -7,7 +7,7 @@ import { resolveAutoMode } from "./auto-mode";
 import { evaluateCalibrationReadiness } from "./calibration";
 import { computeNetGain } from "./net-gain";
 import { assignAgents, type AssignAgentsOptions } from "./router";
-import { shouldEscalate, type SingleRunReport } from "./single-run";
+import { resolveEscalationApproval, shouldEscalate, type SingleRunReport } from "./single-run";
 
 // Shared helpers -----------------------------------------------------------
 
@@ -188,6 +188,37 @@ describe("fail-closed properties hold in combination", () => {
       workspace: { dirtyBefore: [], dirtyAfter: [] },
     };
     expect(shouldEscalate(passed)).toBe(false);
+
+    // Eligibility is not authority. A run that *does* qualify still must not
+    // escalate on its own — this is the half that actually guards the double
+    // pay in docs/05 R5, and the half a test of shouldEscalate alone misses.
+    const eligible: SingleRunReport = {
+      ...crashed,
+      runId: "r3",
+      result: { ...crashed.result, status: "completed", error: undefined },
+      verification: { status: "failed", reasons: ["verification command exited 1: pnpm test"] },
+    };
+    expect(shouldEscalate(eligible)).toBe(true);
+
+    // Fail closed: no flag and no terminal to ask in means no escalation.
+    const unattended = resolveEscalationApproval({ escalateFlag: false, interactive: false });
+    expect(unattended.approved).toBe(false);
+    if (!unattended.approved) expect(unattended.reason).toMatch(/--escalate/);
+
+    // A terminal alone is not approval either; silence and "n" both decline.
+    expect(resolveEscalationApproval({ escalateFlag: false, interactive: true }).approved).toBe(false);
+    expect(
+      resolveEscalationApproval({ escalateFlag: false, interactive: true, answer: "n" }).approved,
+    ).toBe(false);
+
+    // Only an explicit yes, or the explicit flag, authorises the second run.
+    expect(resolveEscalationApproval({ escalateFlag: true, interactive: false })).toEqual({
+      approved: true,
+      via: "flag",
+    });
+    expect(
+      resolveEscalationApproval({ escalateFlag: false, interactive: true, answer: "y" }),
+    ).toEqual({ approved: true, via: "prompt" });
   });
 
   // ── Property 5 ─────────────────────────────────────────────────────

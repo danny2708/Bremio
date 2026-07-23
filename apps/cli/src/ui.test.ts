@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { assessCapacity } from "@bremio/quota";
 import { redactDeep } from "./diagnostics";
 import { printReport } from "./ui";
 
@@ -94,7 +95,7 @@ describe("S4-T3: reasons for every automatic choice", () => {
     expect(output).toContain("exhausted at 2% remaining, fresh");
   });
 
-  it("a reason containing a token-like string is redacted", () => {
+  it("key-based redaction protects secret-named fields without mangling reasons", () => {
     const data = {
       autoModeReason: "healthy at 75% remaining",
       tasks: [
@@ -107,18 +108,48 @@ describe("S4-T3: reasons for every automatic choice", () => {
     };
 
     const redacted = redactDeep(data) as typeof data;
-    // The reason string itself is NOT a key — redactDeep only redacts
-    // values whose KEYS match SECRET_KEY. Reason values that happen to
-    // contain token-like strings are not caught by key-based redaction.
-    // The requirement is that reasons never contain secrets in the first
-    // place — this test verifies the redactor would catch it IF a
-    // producer accidentally stored a secret under a key named "tokenKey"
-    // or similar, and that the redactor does not corrupt reasons that
-    // are legitimately about token-quota or similar operational data.
+    // Key-based redaction still protects secret-named fields, and must not
+    // mangle a reason that legitimately talks about token quota.
     expect(redacted.autoModeReason).toBe("healthy at 75% remaining");
-    // key-based redaction: a key matching SECRET_KEY gets "[redacted]"
     const mixed = redactDeep({ tokenKey: "should-be-redacted", reason: "healthy" });
     expect((mixed as Record<string, unknown>).tokenKey).toBe("[redacted]");
     expect((mixed as Record<string, unknown>).reason).toBe("healthy");
+  });
+
+  it("a reason is generated from capacity data, never from the prompt or repo", () => {
+    // This is what actually keeps secrets out of reasons. `redactDeep` is
+    // key-based, so it could never scrub a credential embedded in a reason
+    // *value* — the guarantee has to come from the producer instead. Reasons
+    // are built by assessCapacity from status/percent/freshness alone, so no
+    // caller-supplied text can reach them.
+    const secret = "sk-live-ABCDEF123456";
+    const secretPath = "src/private/keys.ts";
+
+    const assessment = assessCapacity({
+      agentId: "codex",
+      availability: "idle",
+      status: "healthy",
+      confidence: "high",
+      source: { name: "AI-Quota-Tray", confidenceLabel: "high" },
+      lastContactAt: Math.floor(Date.now() / 1000),
+      contactFreshness: "fresh",
+      windows: [
+        {
+          id: "weekly",
+          label: "Weekly",
+          scope: "account",
+          capturedAt: Math.floor(Date.now() / 1000),
+          freshness: "fresh",
+          confidence: "high",
+          remainingPercent: 75,
+        },
+      ],
+    });
+
+    expect(assessment.reason).not.toContain(secret);
+    expect(assessment.reason).not.toContain(secretPath);
+    // It says the actual cause, in capacity vocabulary — "policy" would fail.
+    expect(assessment.reason).toMatch(/healthy|limited|critical|exhausted|last-known|unknown/);
+    expect(assessment.reason).toContain("75");
   });
 });

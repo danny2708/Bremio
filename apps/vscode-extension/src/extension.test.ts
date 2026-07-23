@@ -11,7 +11,7 @@ import {
   ProtocolMismatchError,
   readEndpoint,
 } from "./client";
-import { panelHtml, renderCapacityCards, type CapacityView } from "./webview";
+import { panelHtml, renderCapacityCards, renderDecisionReasons, type CapacityView } from "./webview";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -191,6 +191,33 @@ describe("webview", () => {
     // exactly what this task removed. Brand hexes are allowed only in the
     // :root token definitions, never as a `background:` value.
     expect(html).not.toMatch(/background:\s*#[0-9a-fA-F]{3,8}/);
+  });
+});
+
+describe("decision reasons in the panel (renderDecisionReasons)", () => {
+  // S4-T3: the panel is one of the three surfaces that must show *why* a flow
+  // was chosen or a Team run fell back. Exercised by calling the real renderer
+  // — asserting on the script text would pass even with the branch disabled.
+  it("renders the auto-mode reason", () => {
+    const out = renderDecisionReasons({ autoModeReason: "auto selected Team — calibration gate is ready" });
+    expect(out).toContain("auto mode:");
+    expect(out).toContain("auto selected Team — calibration gate is ready");
+  });
+
+  it("renders the fallback reason", () => {
+    const out = renderDecisionReasons({ fallbackReason: "coordination cost $0.9000 exceeded 30% of best Single baseline" });
+    expect(out).toContain("Team fallback");
+    expect(out).toContain("coordination cost $0.9000 exceeded");
+  });
+
+  it("renders nothing when a choice carried no reason", () => {
+    expect(renderDecisionReasons({})).toBe("");
+  });
+
+  it("escapes a reason rather than trusting it as markup", () => {
+    const out = renderDecisionReasons({ autoModeReason: '<img src=x onerror="alert(1)">' });
+    expect(out).not.toContain("<img");
+    expect(out).toContain("&lt;img");
   });
 });
 

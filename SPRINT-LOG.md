@@ -1020,3 +1020,57 @@ covers the intended property, not a self-confirming tautology.
 (was internal-only in `antigravity-models.ts`).
 
 **Typecheck:** clean. **Test:** 405/405 pass (47 files). No regressions.
+
+---
+
+## Sprint 4 audit (Claude, 2026-07-23)
+
+The machine gate on the branch was already clean (typecheck, 410/410). Three
+real problems, all in the *proving* rather than the implementing — the Sprint 4
+code itself is sound. Fixed on the branch before merge; suite now 415/415.
+
+- **S4-T4 Property 4 did not test its property.** The task names it "escalation
+  never runs without approval"; the test only asserted `shouldEscalate` returns
+  false for *ineligible* runs (crashed, already passing). The approval gate
+  itself — `--escalate`, or a `y` at a TTY prompt — lived inline in
+  `apps/cli/src/index.ts` and was never exercised, so **removing the approval
+  requirement left the test green**, which is exactly what S4-T4 forbids. The
+  log entry also quietly redefined the property's "guard" as `shouldEscalate`
+  eligibility. Extracted `resolveEscalationApproval` into `single-run.ts` beside
+  `shouldEscalate` (eligibility and authority are two halves of one policy),
+  pointed the CLI at it so the rule has one home, and extended the test to
+  assert that an *eligible* run still requires explicit approval, that a
+  non-interactive context fails closed, and that only `--escalate` or an
+  explicit yes authorises the second run. Red-checked: forcing the
+  non-interactive branch open turns it red on the right assertion.
+
+- **S4-T3 test 3 asserted the opposite of its name.** Titled "a reason
+  containing a token-like string is redacted", it set up a reason containing
+  `sk-auth-token-abc123`, never asserted anything about it, and carried a
+  comment explaining why it is *not* redacted. `redactDeep` is key-based, so it
+  structurally cannot scrub a secret embedded in a reason *value* — the
+  criterion's real guarantee is that reasons are **generated** from capacity
+  data and never carry caller input. Renamed the old test to what it actually
+  proves, and added one for the real property: an `assessCapacity` reason
+  contains no secret and no repo path, states the actual cause in capacity
+  vocabulary, and carries the percentage.
+
+- **S4-T3 shipped one rendering test, not one per surface.** The spec asks for
+  CLI, TUI and panel; only the CLI had one. Added the panel's — and hit the trap
+  directly on the way: a first attempt asserting on the generated script *text*
+  stayed green with the branch disabled, a test of source code rather than of
+  behaviour. Extracted `renderDecisionReasons` and inlined it into the webview
+  via `.toString()` (the `renderCapacityCards` pattern), so panel and test run
+  one implementation. Four assertions including escaping; red-checked.
+
+**Still open, declared rather than faked:** there is no TUI rendering test for
+the auto-mode reason. The repo has no Ink render harness, and adding
+`ink-testing-library` for one assertion is a dependency decision that belongs to
+the user, not to an audit. The TUI does render `report.autoModeReason`
+(`tui/screens/run.tsx`); it is covered by neither a test nor a claim.
+
+**One assertion that was fine:** the S4-T3 CLI test originally asserted
+`"auto mode: auto selected Team"`, failed, and was weakened to
+`"auto selected Team"`. That change is legitimate — the CLI prints
+`mode: auto  <reason>`, so the original encoded a label that never existed, and
+the surviving assertion still proves the reason reaches the surface.

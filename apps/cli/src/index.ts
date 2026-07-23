@@ -19,6 +19,7 @@ import {
   runBremio,
   runSingleAgent,
   shouldEscalate,
+  resolveEscalationApproval,
   type RunBremioHooks,
   type SingleRunHooks,
 } from "@bremio/orchestrator";
@@ -659,7 +660,9 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
           const rl = createInterface({ input: process.stdin, output: process.stdout });
           const answer = await rl.question(c.yellow("\nSingle run failed verification. Escalate to Team? (y/N) "));
           rl.close();
-          if (answer.toLowerCase() === "y" || answer.toLowerCase() === "yes") {
+          // The rule lives in resolveEscalationApproval so it can be proven,
+          // not restated here where a typo would silently widen it.
+          if (resolveEscalationApproval({ escalateFlag: false, interactive: true, answer }).approved) {
             console.log(c.yellow("Escalating to Team…"));
             const teamReport = await runBremio({
               leadId: "claude",
