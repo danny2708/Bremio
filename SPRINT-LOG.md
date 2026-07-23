@@ -827,3 +827,49 @@ tests), build, and clean packed installation.
 failure/cancellation. This is required by the stated cancellation-coherence
 criterion and fixes a pre-existing evidence gap; it does not change execution
 or retry behavior.
+
+---
+
+## S4-T1 — Calibration-gated automatic mode selection
+
+**Done:** Added `bremio run --mode auto` that resolves `single` or `team` based on
+calibration readiness evidence. The resolution is gated by
+`evaluateCalibrationReadiness`: when calibration is insufficient, always returns
+Single with a detailed blocker reason (fail-closed). When calibration is ready and
+the policy permits, returns Team.
+
+**Implementation:**
+
+1. **`packages/orchestrator/src/auto-mode.ts`** — Exports `resolveAutoMode(entries,
+   policy?, calibrationPolicyInput?)` returning `{ mode, reason }`. The default
+   policy (`DEFAULT_AUTO_MODE_POLICY`) prefers Team when ready. A
+   `preferTeamWhenReady: false` policy forces Single even when ready — controlled
+   by operator policy, not by task shape or flags.
+
+2. **CLI wiring (`apps/cli/src/index.ts`)** — `--mode` accepts `"auto"` alongside
+   `"single"` and `"team"`. When `isAuto` is true, the CLI reads the repo's ledger
+   (after path resolution), calls `resolveAutoMode`, sets `agent: "claude"` for
+   Single-resolution results and `lead: "claude"` for Team-resolution results, then
+   re-checks mode-specific validation post-resolution.
+
+3. **`net-gain.ts`** — `computeNetGain` gained an optional `multiRunId` parameter.
+   When provided, it narrows multi-agent analysis to that specific run instead of
+   collecting all multi-agent runs for the comparison ID. Fixes call-arity mismatches
+   in `compare.ts` and `stats.ts`.
+
+**Tests (4 new, 394 total):**
+
+1. Empty ledger → Single with calibration reason across task shapes
+2. 5 evaluable non-inferior paired comparisons → Team with readiness reason
+3. No evaluable comparisons → Single (calibration insufficient)
+4. `preferTeamWhenReady: false` → Single even when calibration is ready
+
+**Red/green verified:** Mutated "calibration" reason string → test 1 went red;
+mutated "ready" string → test 2 went red; restored both → green.
+
+**Typecheck:** clean. **Test:** 394/394 pass (44 files). No regressions.
+
+**Deviations:** `ExecutionModeSchema` in `packages/protocol/src/run.ts` remains
+`["single", "team"]` (intentionally — auto is resolved at the CLI level, not in
+protocol types). The `--mode auto` resolution is therefore a CLI concern only;
+orchestrator and protocol layers never see the string `"auto"`.

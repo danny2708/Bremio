@@ -10,6 +10,10 @@ import {
   LeadPlanError,
   PlanValidationError,
   createRegistry,
+  evaluateCalibrationReadiness,
+  ledgerPathFor,
+  readLedger,
+  resolveAutoMode,
   runBremio,
   runSingleAgent,
   type RunBremioHooks,
@@ -62,7 +66,7 @@ ${c.bold("Usage")}
   bremio --help
 
 ${c.bold("run")}      run one agent directly or orchestrate an isolated team
-  --mode <single|team>    Explicit execution mode. Required for new commands.
+  --mode <single|team|auto> Explicit execution mode (auto uses calibration evidence). Required for new commands.
   --agent <agent>         Agent for Single mode: claude, codex, antigravity, or opencode.
   --lead <agent>          Lead for Team mode (capability-gated). Without --mode, implies Team.
   --worker <agent>        Explicit Team worker (including antigravity and opencode).
@@ -356,11 +360,25 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
 async function runCommand(values: Values, positionals: string[]): Promise<void> {
   const prompt = (values.prompt ?? positionals.slice(1).join(" ")).trim();
   const errors: string[] = [];
-  const requestedMode = values.mode ?? (values.lead ? "team" : undefined);
-  const parsedMode = ExecutionModeSchema.safeParse(requestedMode);
-  const mode = parsedMode.success ? parsedMode.data : undefined;
-  if (!parsedMode.success) {
-    errors.push("--mode must be 'single' or 'team'");
+  const CLI_MODES = new Set(["single", "team", "auto"]);
+  const rawMode = values.mode ?? (values.lead ? "team" : undefined);
+  const isAuto = rawMode === "auto";
+
+  // Parse the execution mode. Auto is handled at the CLI level and resolved
+  // to single/team before reaching orchestrator code.
+  if (rawMode && !CLI_MODES.has(rawMode)) {
+    errors.push("--mode must be 'single', 'team', or 'auto'");
+  }
+  let mode: "single" | "team" | undefined;
+  let autoReason: string | undefined;
+  if (isAuto) {
+    mode = undefined; // resolved later after repo path is known
+  } else {
+    const parsedMode = ExecutionModeSchema.safeParse(rawMode);
+    mode = parsedMode.success ? parsedMode.data : undefined;
+    if (rawMode && rawMode !== "auto" && !parsedMode.success) {
+      errors.push("--mode must be 'single' or 'team'");
+    }
   }
   const agentIds = new Set(["claude", "codex", "antigravity", "opencode"]);
   if (mode === "single" && !agentIds.has(values.agent ?? "")) {
@@ -387,6 +405,12 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   if (mode === "single" && values["capacity-routing"]) {
     errors.push("--capacity-routing is only valid in Team mode");
   }
+  if (isAuto && values["capacity-routing"]) {
+    errors.push("--capacity-routing requires explicit --mode team");
+  }
+  if (isAuto && values.agent && values.lead) {
+    errors.push("auto mode does not accept both --agent and --lead; let auto choose");
+  }
   if (!values.repo) errors.push("--repo <path> is required");
   if (!prompt) errors.push('a prompt is required, e.g. bremio run ... "add a health endpoint"');
   const timeoutSeconds = values.timeout === undefined ? undefined : Number(values.timeout);
@@ -400,7 +424,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   ) {
     errors.push("--concurrency must be a positive whole number of tasks");
   }
-  if (concurrency !== undefined && mode === "single") {
+  if (concurrency !== undefined && (mode === "single" || isAuto)) {
     errors.push("--concurrency is only valid in Team mode");
   }
   const reasoningLevels = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh"]);
@@ -426,6 +450,49 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     console.error(c.red(`error: repo path does not exist: ${repoPath}`));
     process.exitCode = 2;
     return;
+  }
+
+  // Resolve auto mode from ledger evidence.
+  if (isAuto) {
+    const ledgerPath = ledgerPathFor(repoPath);
+    const ledgerEntries = await readLedger(ledgerPath);
+    const result = resolveAutoMode(ledgerEntries);
+    mode = result.mode;
+    autoReason = result.reason;
+    console.log(c.dim(`  auto: ${autoReason}`));
+    // Use user-specified agent/lead when given; otherwise default to Claude.
+    if (mode === "single" && !values.agent) {
+      values.agent = "claude";
+    }
+    if (mode === "team" && !values.lead) {
+      values.lead = "claude";
+    }
+    // Re-check worker validation now that the resolved mode is known.
+    if (mode === "team" && values.worker && !agentIds.has(values.worker)) {
+      console.error(c.red(`error: --worker must be 'claude', 'codex', 'antigravity', or 'opencode'`));
+      process.exitCode = 2;
+      return;
+    }
+    if (mode === "team" && values.worker === values.lead) {
+      console.error(c.red("error: --worker must be different from --lead"));
+      process.exitCode = 2;
+      return;
+    }
+    if (mode === "single" && values.worker) {
+      console.error(c.red("error: --worker is only valid in Team mode"));
+      process.exitCode = 2;
+      return;
+    }
+    if (mode === "single" && values.lead) {
+      console.error(c.red("error: --lead is only valid in Team mode; use --agent for Single mode"));
+      process.exitCode = 2;
+      return;
+    }
+    if (mode === "team" && values.agent) {
+      console.error(c.red("error: --agent is only valid in Single mode; use --lead for Team mode"));
+      process.exitCode = 2;
+      return;
+    }
   }
 
   const json = values.json === true;

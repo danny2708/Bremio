@@ -81,14 +81,18 @@ export function findBestSingleAgentBaseline(
 export function computeNetGain(
   entries: readonly LedgerEntry[],
   comparisonId: string,
+  multiRunId?: string,
 ): NetGainResult {
-  const multiRunIds = collectFlowRunIds(entries, comparisonId, "multi-agent");
+  const allMultiRunIds = collectFlowRunIds(entries, comparisonId, "multi-agent");
+  const multiRunIds = multiRunId
+    ? (allMultiRunIds.includes(multiRunId) ? [multiRunId] : [])
+    : allMultiRunIds;
   const firstMultiRun = multiRunIds[0];
   if (!firstMultiRun) {
     return {
       status: "unknown",
       comparisonId,
-      multiRunId: "",
+      multiRunId: multiRunId ?? "",
       reason: `no multi-agent run for comparison "${comparisonId}"`,
     };
   }

@@ -91,6 +91,12 @@ export {
 } from "./ledger";
 
 export {
+  resolveAutoMode,
+  type AutoModePolicy,
+  type AutoModeResult,
+  DEFAULT_AUTO_MODE_POLICY,
+} from "./auto-mode";
+export {
   computeNetGain,
   findBestSingleAgentBaseline,
   type KnownNetGain,
