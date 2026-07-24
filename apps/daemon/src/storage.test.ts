@@ -618,6 +618,184 @@ describe("session_context (B1)", () => {
   });
 });
 
+async function createV3Fixture(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-v3-"));
+  dirs.push(dir);
+  const file = path.join(dir, "bremio.db");
+  const db = new DatabaseSync(file);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec(`CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY, mode TEXT NOT NULL, status TEXT NOT NULL,
+    repository_path TEXT NOT NULL, prompt TEXT NOT NULL,
+    base_branch TEXT, started_at TEXT, completed_at TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    lead_provider TEXT, worker_providers TEXT,
+    orchestrator_run_id TEXT, final_summary TEXT,
+    failure_code TEXT, failure_message TEXT, retry_of_run_id TEXT,
+    session_id TEXT, turn_index INTEGER NOT NULL DEFAULT 0
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY, repository_path TEXT NOT NULL,
+    title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS session_context (
+    session_id TEXT NOT NULL, turn_index INTEGER NOT NULL,
+    summary TEXT, provider_session_ids TEXT, created_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, turn_index)
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS artifacts (
+    run_id TEXT NOT NULL, kind TEXT NOT NULL, path TEXT NOT NULL,
+    task_id TEXT, created_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, kind, path)
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS run_events (
+    run_id TEXT NOT NULL, seq INTEGER NOT NULL, type TEXT NOT NULL,
+    timestamp TEXT NOT NULL, payload TEXT NOT NULL,
+    PRIMARY KEY (run_id, seq)
+  )`);
+  db.exec("PRAGMA user_version = 3");
+
+  db.prepare(
+    "INSERT INTO sessions (id, repository_path, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run("ses-v3", "/tmp/repo", "v3 session", "2025-06-01T00:00:00.000Z", "2025-06-01T00:00:00.000Z");
+
+  db.prepare(
+    `INSERT INTO runs (id, mode, status, repository_path, prompt, created_at, updated_at,
+      lead_provider, worker_providers, session_id, turn_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "run-v3", "team", "completed", "/tmp/repo", "v3 task", "2025-06-01T00:00:00.000Z",
+    "2025-06-01T00:00:00.000Z", "claude", '["codex"]', "ses-v3", 0,
+  );
+
+  db.close();
+  return file;
+}
+
+describe("session_config (S1-T1/T2)", () => {
+  it("creates a config entry when a session is created implicitly", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "cfg-test",
+      mode: "team",
+      repositoryPath: "/tmp/repo",
+      prompt: "test",
+      leadProvider: "claude",
+    });
+
+    const cfg = s.getSessionConfig(run.sessionId!);
+    expect(cfg).toBeDefined();
+    expect(cfg?.sessionId).toBe(run.sessionId);
+    expect(cfg?.revision).toBe(1);
+    expect(cfg?.mode).toBe("team");
+    expect(cfg?.leadAgentId).toBe("claude");
+    expect(cfg?.createdAt).toBeDefined();
+  });
+
+  it("round-trips a full config and returns the latest revision", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "cfg-full",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "full config",
+    });
+
+    const cfg = s.getSessionConfig(run.sessionId!);
+    expect(cfg).toBeDefined();
+    expect(cfg?.mode).toBe("single");
+  });
+
+  it("getSessionConfig returns undefined for unknown session", async () => {
+    const s = await store();
+    expect(s.getSessionConfig("nonexistent-session")).toBeUndefined();
+    expect(s.listSessionConfigs("nonexistent-session")).toEqual([]);
+  });
+
+  it("upgrades a v3 fixture to v4 with session_config backfilled", async () => {
+    const file = await createV3Fixture();
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    // The v3 session must have a backfilled config.
+    const cfg = s.getSessionConfig("ses-v3");
+    expect(cfg).toBeDefined();
+    expect(cfg?.sessionId).toBe("ses-v3");
+    expect(cfg?.revision).toBe(1);
+    expect(cfg?.mode).toBe("team");
+    expect(cfg?.leadAgentId).toBe("claude");
+
+    // Original data must still be intact.
+    expect(s.getRun("run-v3")?.prompt).toBe("v3 task");
+    expect(s.listSessions("/tmp/repo")).toHaveLength(1);
+  });
+
+  it("pristine and migrated stores both report user_version = 4", async () => {
+    const fresh = await store();
+    const { user_version: freshVer } = fresh["db"]
+      .prepare("PRAGMA user_version")
+      .get() as { user_version: number };
+    expect(freshVer).toBe(4);
+
+    const file = await createV3Fixture();
+    const migrated = await RunStore.open(file);
+    stores.push(migrated);
+    const { user_version: migratedVer } = migrated["db"]
+      .prepare("PRAGMA user_version")
+      .get() as { user_version: number };
+    expect(migratedVer).toBe(4);
+  });
+
+  it("re-running migration on v4 is a no-op", async () => {
+    const file = await createV3Fixture();
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    // Table exists from the first open.
+    const info = s["db"].prepare("PRAGMA table_info(session_config)").all() as Array<{ name: string }>;
+    expect(info.length).toBeGreaterThan(0);
+
+    // Close and reopen — migration will run again but must succeed.
+    const s2 = await RunStore.open(file);
+    stores.push(s2);
+    expect(s2.getSessionConfig("ses-v3")?.mode).toBe("team");
+  });
+
+  it("stores multiple revisions for the same session", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "rev-test",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "revision test",
+    });
+    const sid = run.sessionId!;
+
+    const first = s.getSessionConfig(sid);
+    expect(first?.revision).toBe(1);
+
+    // Write a second revision directly.
+    s.createSessionConfig({
+      sessionId: sid,
+      mode: "team",
+      leadAgentId: "codex",
+      workerAgentId: "claude",
+      model: "gpt-4",
+      reasoningLevel: "high",
+    });
+
+    const second = s.getSessionConfig(sid);
+    expect(second?.revision).toBe(2);
+    expect(second?.mode).toBe("team");
+    expect(second?.leadAgentId).toBe("codex");
+
+    const all = s.listSessionConfigs(sid);
+    expect(all).toHaveLength(2);
+    expect(all[0]?.revision).toBe(1);
+    expect(all[1]?.revision).toBe(2);
+  });
+});
+
 describe("truncateTitle", () => {
   it("uses the first line when shorter than the limit", () => {
     expect(truncateTitle("hello world")).toBe("hello world");

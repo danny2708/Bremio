@@ -22,7 +22,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -163,6 +163,34 @@ export interface PersistedRunEvent {
   payload: unknown;
 }
 
+export interface SessionConfig {
+  sessionId: string;
+  revision: number;
+  mode?: "single" | "team";
+  leadAgentId?: string;
+  workerAgentId?: string;
+  model?: string;
+  reasoningLevel?: string;
+  permission?: string;
+  approvalMode?: string;
+  cwd?: string;
+  baseBranch?: string;
+  createdAt: string;
+}
+
+export interface CreateSessionConfigInput {
+  sessionId: string;
+  mode?: "single" | "team";
+  leadAgentId?: string;
+  workerAgentId?: string;
+  model?: string;
+  reasoningLevel?: string;
+  permission?: string;
+  approvalMode?: string;
+  cwd?: string;
+  baseBranch?: string;
+}
+
 export interface PersistedSessionContext {
   sessionId: string;
   turnIndex: number;
@@ -252,6 +280,12 @@ export class RunStore {
           "INSERT INTO sessions (id, repository_path, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
         )
         .run(sessionId, input.repositoryPath, truncateTitle(input.prompt), now, now);
+      this.createSessionConfig({
+        sessionId,
+        mode: input.mode,
+        leadAgentId: input.leadProvider,
+        ...(input.workerProviders?.length ? { workerAgentId: input.workerProviders[0] } : {}),
+      });
     } else {
       const last = this.db
         .prepare("SELECT COALESCE(MAX(turn_index), -1) + 1 AS next FROM runs WHERE session_id = ?")
@@ -634,6 +668,55 @@ export class RunStore {
       .get(sessionId) as Record<string, unknown> | undefined;
     return row ? toSessionContext(row) : undefined;
   }
+
+  createSessionConfig(input: CreateSessionConfigInput): SessionConfig {
+    const now = new Date().toISOString();
+    const revision = this.nextConfigRevision(input.sessionId);
+    this.db
+      .prepare(
+        `INSERT INTO session_config (session_id, revision, mode, lead_agent_id, worker_agent_id,
+          model, reasoning_level, permission, approval_mode, cwd, base_branch, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.sessionId,
+        revision,
+        input.mode ?? null,
+        input.leadAgentId ?? null,
+        input.workerAgentId ?? null,
+        input.model ?? null,
+        input.reasoningLevel ?? null,
+        input.permission ?? null,
+        input.approvalMode ?? null,
+        input.cwd ?? null,
+        input.baseBranch ?? null,
+        now,
+      );
+    return this.getSessionConfig(input.sessionId)!;
+  }
+
+  private nextConfigRevision(sessionId: string): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(MAX(revision), 0) + 1 AS next FROM session_config WHERE session_id = ?")
+      .get(sessionId) as { next: number };
+    return Number(row.next);
+  }
+
+  getSessionConfig(sessionId: string): SessionConfig | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM session_config WHERE session_id = ? ORDER BY revision DESC LIMIT 1",
+      )
+      .get(sessionId) as Record<string, unknown> | undefined;
+    return row ? toSessionConfig(row) : undefined;
+  }
+
+  listSessionConfigs(sessionId: string): SessionConfig[] {
+    const rows = this.db
+      .prepare("SELECT * FROM session_config WHERE session_id = ? ORDER BY revision ASC")
+      .all(sessionId) as Array<Record<string, unknown>>;
+    return rows.map(toSessionConfig);
+  }
 }
 
 export function truncateTitle(prompt: string, maxLen = 80): string {
@@ -747,6 +830,56 @@ function migrate(db: Database): void {
       `);
     }
 
+    if (Number(current) < 4) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_config (
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          revision INTEGER NOT NULL,
+          mode TEXT,
+          lead_agent_id TEXT,
+          worker_agent_id TEXT,
+          model TEXT,
+          reasoning_level TEXT,
+          permission TEXT,
+          approval_mode TEXT,
+          cwd TEXT,
+          base_branch TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (session_id, revision)
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_config_session ON session_config(session_id, revision DESC);
+      `);
+
+      // Backfill: derive config from each session's latest run's lead_provider and mode.
+      const sessions = db
+        .prepare(
+          `SELECT s.id, r.lead_provider, r.mode, r.worker_providers, r.created_at
+           FROM sessions s
+           LEFT JOIN runs r ON r.session_id = s.id
+           WHERE r.id IN (
+             SELECT r2.id FROM runs r2
+             WHERE r2.session_id = s.id
+             ORDER BY r2.turn_index DESC
+             LIMIT 1
+           )`,
+        )
+        .all() as Array<{ id: string; lead_provider: string | null; mode: string | null; worker_providers: string | null; created_at: string }>;
+      for (const s of sessions) {
+        const workerIds = s.worker_providers ? (JSON.parse(s.worker_providers) as string[]) : undefined;
+        db.prepare(
+          `INSERT OR IGNORE INTO session_config (session_id, revision, mode, lead_agent_id,
+            worker_agent_id, created_at)
+           VALUES (?, 1, ?, ?, ?, ?)`,
+        ).run(
+          s.id,
+          s.mode,
+          s.lead_provider,
+          workerIds?.[0] ?? null,
+          s.created_at,
+        );
+      }
+    }
+
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -782,6 +915,23 @@ function toSessionContext(row: Record<string, unknown>): PersistedSessionContext
     turnIndex: Number(row.turn_index),
     ...(row.summary !== null && row.summary !== undefined ? { summary: String(row.summary) } : {}),
     ...(providerSessionIds && Object.keys(providerSessionIds).length > 0 ? { providerSessionIds } : {}),
+    createdAt: String(row.created_at),
+  };
+}
+
+function toSessionConfig(row: Record<string, unknown>): SessionConfig {
+  return {
+    sessionId: String(row.session_id),
+    revision: Number(row.revision),
+    ...(row.mode ? { mode: row.mode as "single" | "team" } : {}),
+    ...(row.lead_agent_id ? { leadAgentId: String(row.lead_agent_id) } : {}),
+    ...(row.worker_agent_id ? { workerAgentId: String(row.worker_agent_id) } : {}),
+    ...(row.model ? { model: String(row.model) } : {}),
+    ...(row.reasoning_level ? { reasoningLevel: String(row.reasoning_level) } : {}),
+    ...(row.permission ? { permission: String(row.permission) } : {}),
+    ...(row.approval_mode ? { approvalMode: String(row.approval_mode) } : {}),
+    ...(row.cwd ? { cwd: String(row.cwd) } : {}),
+    ...(row.base_branch ? { baseBranch: String(row.base_branch) } : {}),
     createdAt: String(row.created_at),
   };
 }
