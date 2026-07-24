@@ -154,4 +154,32 @@ Rules:
 - `corepack pnpm test` — 573 passed / 58 files.
 - Committed: `998b466 feat(daemon): S1-T2 session config read/write API (revisions, not in-place mutation)`
 
+### S1-T3 — Legacy backfill with provenance + completeness
+- **agent:** Claude (opencode)
+- **time:** 2026-07-24T14:10 → 2026-07-24T14:30
+- **branch:** sprint/s1-t1-session-config-schema
+- **task(s):** S1-T3
+- **status:** done
+
+**Did**
+- Bumped `SCHEMA_VERSION` from 4 to 5 (`storage.ts`).
+- Added `RecordProvenance` type, `provenance`, `completeness`, `missingFields` to `SessionConfig` and `CreateSessionConfigInput` interfaces.
+- Updated `createSessionConfig` to compute `missingFields` dynamically and set `completeness` accordingly.
+- Added v4→v5 migration: adds `provenance`, `completeness`, `missing_fields` columns via `addColumnIfMissing`, then UPDATEs existing backfilled rows to `legacy-derived`/`partial` with the correct `missing_fields`.
+- Updated `toSessionConfig` helper to map the new columns (defaults to `legacy-derived`/`partial` for rows without the column).
+- Updated `createRun` to pass `provenance: "native"` when creating session config for new sessions.
+- Added test for explicit provenance (native + legacy-import) and completeness computation.
+
+**Decided**
+- Backfilled rows are `legacy-derived`/`partial` with `missingFields: ["model","reasoningLevel","permission","approvalMode","cwd","baseBranch"]` — the fields the v3→v4 backfill could not populate.
+- A native session created via `createRun` is `native`/`partial` (only `mode` + `leadAgentId` are set initially; user can POST a complete revision later).
+- `completeness` is computed from field presence, not from provenance — even a native config can be partial.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts` — 40 passed (+1 new provenance test, +3 test updates).
+- `corepack pnpm test` — 574 passed / 58 files.
+- Red-check: removed the v4→v5 migration block → migration test fails because columns are missing. Restored and tests pass.
+- Committed: `b6f05cc feat(daemon): S1-T3 legacy backfill with provenance + completeness`
+
 
