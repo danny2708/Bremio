@@ -26,6 +26,36 @@ export interface AntigravityAdapterOptions {
   defaultModel?: string;
   /** Fallback timeout when a request does not set one. */
   defaultTimeoutMs?: number;
+  /**
+   * Opt in to `--dangerously-skip-permissions`, which auto-approves **every**
+   * tool request `agy` makes — file writes, shell commands, network — with no
+   * prompt and no record of what was approved.
+   *
+   * Off by default, and deliberately not implied by `workspace-write`. Ordinary
+   * writable work used to enable it silently, so any task allowed to edit a file
+   * was also, unannounced, allowed to run any command.
+   *
+   * There is no safe middle ground on the CLI today: `agy 1.1.5`'s
+   * `--mode accept-edits` auto-*denies* in headless mode ("a tool required the
+   * write_file permission that headless mode cannot prompt for"). The scoped
+   * alternative agy documents is a `permissions.allow` rule in its settings,
+   * which Bremio does not yet manage — see docs/15 §1.4.
+   */
+  allowDangerousPermissionBypass?: boolean;
+}
+
+/**
+ * Raised before spawning when a writable run has no honest way to proceed.
+ *
+ * Failing here costs nothing: verified against agy 1.1.5, a writable run
+ * without the bypass returns in ~8s having auto-denied its own file write, so
+ * spawning would burn quota to accomplish nothing.
+ */
+export class AntigravityPermissionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AntigravityPermissionError";
+  }
 }
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
@@ -70,12 +100,20 @@ export interface AgyInvocation {
  *   workspace unless `--add-dir` names the target directory, so `--add-dir`
  *   is mandatory and the prompt restates the workspace root.
  * - read-only maps to `--mode plan`, which refuses writes but still returns
- *   prose; workspace-write maps to `--dangerously-skip-permissions`, since a
- *   non-interactive run cannot answer approval prompts.
+ *   prose. workspace-write has no safe CLI mapping: verified against agy 1.1.5,
+ *   `--mode accept-edits` auto-*denies* headlessly because it cannot prompt, so
+ *   the only flag that lets a write through is `--dangerously-skip-permissions`
+ *   — which approves shell and network too. It is therefore opt-in
+ *   (`allowDangerousPermissionBypass`) rather than implied by being writable,
+ *   and a writable run without it is refused before spawn. See docs/15 §1.4.
  */
 export function buildAgyInvocation(
   req: AgentRunRequest,
-  options: { defaultModel?: string; defaultTimeoutMs?: number } = {},
+  options: {
+    defaultModel?: string;
+    defaultTimeoutMs?: number;
+    allowDangerousPermissionBypass?: boolean;
+  } = {},
 ): AgyInvocation {
   const workspace = path.resolve(req.cwd);
   // `--print-timeout` is only a provider-side safety net; real cancellation and
@@ -98,7 +136,22 @@ export function buildAgyInvocation(
     "--print-timeout",
     formatPrintTimeout(timeoutMs),
   ];
-  args.push(...(readOnly ? ["--mode", "plan"] : ["--dangerously-skip-permissions"]));
+  if (readOnly) {
+    args.push("--mode", "plan");
+  } else if (options.allowDangerousPermissionBypass) {
+    args.push("--dangerously-skip-permissions");
+  } else {
+    // Refused rather than quietly downgraded to read-only: a caller that asked
+    // for a writable run and silently got a read-only one would read the
+    // agent's "I was unable to edit the file" as a capability problem.
+    throw new AntigravityPermissionError(
+      'antigravity cannot run with write access unless "--dangerously-skip-permissions" is ' +
+        "enabled, and that flag auto-approves every tool it uses — file writes, shell commands " +
+        "and network alike — not only the edits this task needs.\n" +
+        "Set allowDangerousPermissionBypass: true on the adapter to accept that, or run this " +
+        "task read-only. Scoped permissions are tracked in docs/15 §1.4.",
+    );
+  }
 
   const model = req.model ?? options.defaultModel;
   if (model) args.push("--model", model);
@@ -123,6 +176,7 @@ export class AntigravityAdapter implements AgentAdapter {
   private readonly agyArgs: string[];
   private readonly defaultModel: string | undefined;
   private readonly defaultTimeoutMs: number;
+  private readonly allowDangerousPermissionBypass: boolean;
   private readonly children = new Map<string, AgyChild>();
   private readonly cancelled = new Set<string>();
 
@@ -131,6 +185,9 @@ export class AntigravityAdapter implements AgentAdapter {
     this.agyArgs = options.agyArgs ?? [];
     this.defaultModel = options.defaultModel;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+    // Defaults to false: the dangerous flag must be asked for, never inherited
+    // from a task merely being writable.
+    this.allowDangerousPermissionBypass = options.allowDangerousPermissionBypass ?? false;
   }
 
   async getCapabilities(): Promise<AgentCapabilities> {
@@ -185,10 +242,26 @@ export class AntigravityAdapter implements AgentAdapter {
       return;
     }
 
-    const { args } = buildAgyInvocation(req, {
-      ...(this.defaultModel ? { defaultModel: this.defaultModel } : {}),
-      defaultTimeoutMs: this.defaultTimeoutMs,
-    });
+    // Built before the spawn so a refused permission combination is reported as
+    // a failed run rather than a rejected promise the caller cannot attribute.
+    let args: string[];
+    try {
+      ({ args } = buildAgyInvocation(req, {
+        ...(this.defaultModel ? { defaultModel: this.defaultModel } : {}),
+        defaultTimeoutMs: this.defaultTimeoutMs,
+        allowDangerousPermissionBypass: this.allowDangerousPermissionBypass,
+      }));
+    } catch (err) {
+      if (!(err instanceof AntigravityPermissionError)) throw err;
+      yield { type: "started", runId: req.runId, ts: Date.now() };
+      yield {
+        type: "completed",
+        runId: req.runId,
+        ts: Date.now(),
+        outcome: { status: "failed", error: err.message },
+      };
+      return;
+    }
 
     let spawnError: Error | undefined;
     let stderr = "";

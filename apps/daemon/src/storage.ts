@@ -124,8 +124,26 @@ export interface SessionTurn {
   runId: string;
   prompt: string;
   status: RunStatus;
+  /**
+   * Provider-*confirmed* model, scraped from the turn's last `usage` event.
+   *
+   * This is a runtime fact, not the user's intent. It must never be used to
+   * work out which agent to run — see `leadProvider` below.
+   */
   model?: string;
   reasoningLevel?: string;
+  /**
+   * The agent this turn actually ran on, as recorded when the run was created.
+   *
+   * `runs.lead_provider` has been stored since the first schema; it simply was
+   * not projected here, so resume had nothing authoritative to read and fell
+   * back to parsing `model`. That parse could not work: `model` comes from
+   * `usage` events, and providers here emit none.
+   */
+  leadProvider?: string;
+  workerProviders?: string[];
+  /** `single` | `team` as persisted. The session's collaboration mode. */
+  mode?: PersistedRun["mode"];
 }
 
 export interface SessionDetail {
@@ -558,6 +576,9 @@ export class RunStore {
         status: run.status,
         ...(usagePayload?.model ? { model: usagePayload.model } : {}),
         ...(usagePayload?.reasoningLevel ? { reasoningLevel: usagePayload.reasoningLevel } : {}),
+        ...(run.leadProvider ? { leadProvider: run.leadProvider } : {}),
+        ...(run.workerProviders ? { workerProviders: run.workerProviders } : {}),
+        mode: run.mode,
       };
     });
 

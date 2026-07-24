@@ -259,6 +259,90 @@ async function showSessionFromStore(id: string, dbPath?: string) {
   }
 }
 
+/** A turn, reduced to the fields that identify how it ran. */
+export interface SessionIdentityTurn {
+  leadProvider?: string;
+  workerProviders?: string[];
+  mode?: "single" | "team";
+  /** Provider-confirmed model. Present only to be *ignored* — see below. */
+  model?: string;
+}
+
+export type SessionIdentity =
+  | { ok: true; mode: "single" | "team"; primaryAgent: string; workerAgent?: string }
+  | { ok: false; error: string };
+
+/**
+ * Work out which agent and collaboration mode a session must resume on.
+ *
+ * This exists because the previous expression was
+ * `latestTurn?.model?.split("/")[0] ?? "claude"`, which is wrong twice over.
+ * `model` is a provider-*confirmed* runtime fact, not the agent that was
+ * requested, so parsing it conflates the two. And it is never populated: it is
+ * read from `usage` events, of which the real database contains zero across 897
+ * events. The parse therefore never ran, and every session — Antigravity,
+ * Codex, OpenCode, Team — silently resumed on Claude.
+ *
+ * The rule now: identity comes only from what was persisted at creation, and
+ * anything unknown stops the resume rather than guessing. A wrong provider is
+ * worse than a refusal, because the user is billed for it and the answer looks
+ * legitimate.
+ */
+export function resolveSessionIdentity(input: {
+  sessionId: string;
+  turns: readonly SessionIdentityTurn[];
+  availableAgentIds: readonly string[];
+}): SessionIdentity {
+  const { sessionId, turns, availableAgentIds } = input;
+  const latest = turns.at(-1);
+
+  if (!latest) {
+    return { ok: false, error: `cannot resume session ${sessionId}: it has no recorded turns.` };
+  }
+
+  const mode = latest.mode;
+  if (mode !== "single" && mode !== "team") {
+    return {
+      ok: false,
+      error:
+        `cannot resume session ${sessionId}: collaboration mode is missing from the stored run. ` +
+        `Start a new run and choose Single or Team explicitly.`,
+    };
+  }
+
+  const primaryAgent = latest.leadProvider;
+  if (!primaryAgent) {
+    return {
+      ok: false,
+      error:
+        `cannot resume session ${sessionId}: the agent it originally ran on was not recorded. ` +
+        `Start a new run and choose the agent explicitly — it was not switched to another provider.`,
+    };
+  }
+
+  if (!availableAgentIds.includes(primaryAgent)) {
+    return {
+      ok: false,
+      error:
+        `cannot resume session ${sessionId}: agent "${primaryAgent}" is not available ` +
+        `(registered: ${[...availableAgentIds].sort().join(", ") || "none"}). ` +
+        `The session was not switched to another provider.`,
+    };
+  }
+
+  const workerAgent = latest.workerProviders?.[0];
+  if (mode === "team" && workerAgent && !availableAgentIds.includes(workerAgent)) {
+    return {
+      ok: false,
+      error:
+        `cannot resume session ${sessionId}: worker agent "${workerAgent}" is not available. ` +
+        `The session was not switched to another provider.`,
+    };
+  }
+
+  return { ok: true, mode, primaryAgent, ...(workerAgent ? { workerAgent } : {}) };
+}
+
 export async function continueSessionCommand(options: {
   id: string;
   prompt: string;
@@ -306,11 +390,19 @@ export async function continueSessionCommand(options: {
     new OpenCodeAdapter(),
   ]);
 
-  const mode = detail.mode === "team" ? "team" : "single";
-  const primaryAgent = latestTurn?.model?.split("/")[0] ?? "claude";
+  const resolved = resolveSessionIdentity({
+    sessionId: id,
+    turns: detail.turns ?? [],
+    availableAgentIds: [...registry.keys()],
+  });
+  if (!resolved.ok) {
+    console.error(c.red(`error: ${resolved.error}`));
+    return 1;
+  }
+  const { mode, primaryAgent } = resolved;
   const turnIndex = (detail.turns ?? []).length;
 
-  console.log(`Continuing session ${id} (turn ${turnIndex}) in ${mode} mode...`);
+  console.log(`Continuing session ${id} (turn ${turnIndex}) in ${mode} mode on ${primaryAgent}...`);
 
   if (mode === "single") {
     const report = await runSingleAgent({
@@ -330,6 +422,9 @@ export async function continueSessionCommand(options: {
   } else {
     const report = await runBremio({
       leadId: primaryAgent,
+      // Carried forward for the same reason as the lead: the worker was chosen
+      // once and must not be re-picked from whatever happens to be registered.
+      ...(resolved.workerAgent ? { workerId: resolved.workerAgent } : {}),
       repoPath,
       prompt,
       registry,

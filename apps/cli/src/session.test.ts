@@ -3,7 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunStore } from "@bremio/daemon";
-import { listSessionsCommand, sessionCommandFromCli, showSessionCommand } from "./session";
+import {
+  listSessionsCommand,
+  resolveSessionIdentity,
+  sessionCommandFromCli,
+  showSessionCommand,
+} from "./session";
 
 describe("A3-T1: bremio session list and bremio session show", () => {
   let tmpDir: string;
@@ -156,5 +161,116 @@ describe("A3-T1: bremio session list and bremio session show", () => {
     );
     expect(code).toBe(1);
     expect(errorLogs.join("\n")).toContain("session not found: unknown-session-id");
+  });
+});
+
+describe("resuming a session must not change which agent runs it", () => {
+  const AGENTS = ["claude", "codex", "antigravity", "opencode"];
+
+  it.each(["antigravity", "codex", "opencode", "claude"])(
+    "resumes a session recorded as %s on that same agent",
+    (agent) => {
+      const result = resolveSessionIdentity({
+        sessionId: "ses-1",
+        turns: [{ leadProvider: agent, mode: "single" }],
+        availableAgentIds: AGENTS,
+      });
+      expect(result).toEqual({ ok: true, mode: "single", primaryAgent: agent });
+    },
+  );
+
+  it("never derives the agent from a provider-reported model string", () => {
+    // The old code was `latestTurn?.model?.split("/")[0] ?? "claude"`. A turn
+    // carrying a model but no recorded agent must refuse, not parse it.
+    const result = resolveSessionIdentity({
+      sessionId: "ses-2",
+      turns: [{ mode: "single", model: "gemini-3.5-flash" }],
+      availableAgentIds: AGENTS,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("was not recorded");
+    // The model string must not leak into the outcome in any form.
+    expect(JSON.stringify(result)).not.toContain("gemini");
+  });
+
+  it("does not fall back to claude when the agent is unknown", () => {
+    const result = resolveSessionIdentity({
+      sessionId: "ses-3",
+      turns: [{ mode: "single" }],
+      availableAgentIds: AGENTS,
+    });
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty("primaryAgent");
+  });
+
+  it("keeps a Team session in Team mode instead of degrading it to Single", () => {
+    const result = resolveSessionIdentity({
+      sessionId: "ses-4",
+      turns: [{ leadProvider: "codex", mode: "team", workerProviders: ["antigravity"] }],
+      availableAgentIds: AGENTS,
+    });
+    expect(result).toEqual({
+      ok: true,
+      mode: "team",
+      primaryAgent: "codex",
+      workerAgent: "antigravity",
+    });
+  });
+
+  it("refuses rather than guessing when collaboration mode was never recorded", () => {
+    const result = resolveSessionIdentity({
+      sessionId: "ses-5",
+      turns: [{ leadProvider: "codex" }],
+      availableAgentIds: AGENTS,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("collaboration mode is missing");
+  });
+
+  it("refuses when the original provider is unavailable, and says it did not substitute", () => {
+    const result = resolveSessionIdentity({
+      sessionId: "ses-6",
+      turns: [{ leadProvider: "antigravity", mode: "single" }],
+      availableAgentIds: ["claude", "codex"],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("antigravity");
+    expect(result.error).toContain("not available");
+    expect(result.error).toContain("not switched to another provider");
+  });
+
+  it("refuses when the Team worker is no longer available", () => {
+    const result = resolveSessionIdentity({
+      sessionId: "ses-7",
+      turns: [{ leadProvider: "codex", mode: "team", workerProviders: ["antigravity"] }],
+      availableAgentIds: ["claude", "codex"],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("worker agent");
+  });
+
+  it("refuses a session with no turns rather than inventing a starting point", () => {
+    const result = resolveSessionIdentity({
+      sessionId: "ses-8",
+      turns: [],
+      availableAgentIds: AGENTS,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("resolves from the latest turn", () => {
+    const result = resolveSessionIdentity({
+      sessionId: "ses-9",
+      turns: [
+        { leadProvider: "antigravity", mode: "single" },
+        { leadProvider: "codex", mode: "single" },
+      ],
+      availableAgentIds: AGENTS,
+    });
+    expect(result).toMatchObject({ ok: true, primaryAgent: "codex" });
   });
 });
