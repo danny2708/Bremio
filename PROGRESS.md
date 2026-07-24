@@ -333,5 +333,5 @@ Rules:
 - `corepack pnpm vitest run packages/policy/src/policy.test.ts` — 31 passed.
 - `corepack pnpm test` — 614 passed / 59 files (+1 file, +31 tests).
 - Red-check: `plan → read` rule flipped to `allowed: false` → test fails with correct message. Restored.
-- Committed: (pending)
+- Committed: `2831b95 feat(policy): S2-T1 ControlMode x ActionClass matrix + pure evaluate()`
 
