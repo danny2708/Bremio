@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluate } from "./policy";
+import { evaluate, validateCombination } from "./policy";
 import type { ActionClass, ControlMode } from "./policy";
 
 const ALL_CONTROL_MODES: ControlMode[] = ["plan", "approve", "autopilot"];
@@ -78,5 +78,40 @@ describe("ControlMode × ActionClass matrix", () => {
         expect(typeof result.reason).toBe("string");
       }
     }
+  });
+});
+
+describe("validateCombination (docs/15 §2.3)", () => {
+  it("allows solo + direct-workspace for plan and autopilot", () => {
+    expect(validateCombination("solo", "plan", "direct-workspace")).toEqual({ valid: true, granularity: "none" });
+    expect(validateCombination("solo", "autopilot", "direct-workspace")).toEqual({ valid: true, granularity: "none" });
+  });
+
+  it("allows solo + isolated-worktree for all control modes", () => {
+    expect(validateCombination("solo", "plan", "isolated-worktree")).toEqual({ valid: true, granularity: "none" });
+    expect(validateCombination("solo", "approve", "isolated-worktree")).toEqual({ valid: true, granularity: "before-apply" });
+    expect(validateCombination("solo", "autopilot", "isolated-worktree")).toEqual({ valid: true, granularity: "none" });
+  });
+
+  it("rejects colab + direct-workspace", () => {
+    const res = validateCombination("colab", "autopilot", "direct-workspace");
+    expect(res.valid).toBe(false);
+    expect(res.reason).toContain("Co-lab mode requires isolated-worktree");
+  });
+
+  it("allows colab + isolated-worktree", () => {
+    expect(validateCombination("colab", "autopilot", "isolated-worktree")).toEqual({ valid: true, granularity: "none" });
+  });
+
+  it("rejects solo + approve + direct-workspace without per-action seam", () => {
+    const res = validateCombination("solo", "approve", "direct-workspace", { hasPerActionSeam: false });
+    expect(res.valid).toBe(false);
+    expect(res.reason).toContain("Approve control mode requires isolated-worktree");
+  });
+
+  it("allows solo + approve + direct-workspace when transport has per-action seam", () => {
+    const res = validateCombination("solo", "approve", "direct-workspace", { hasPerActionSeam: true });
+    expect(res.valid).toBe(true);
+    expect(res.granularity).toBe("per-action");
   });
 });

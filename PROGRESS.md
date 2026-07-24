@@ -335,3 +335,30 @@ Rules:
 - Red-check: `plan → read` rule flipped to `allowed: false` → test fails with correct message. Restored.
 - Committed: `2831b95 feat(policy): S2-T1 ControlMode x ActionClass matrix + pure evaluate()`
 
+### S2-T2 — WorkspaceStrategy becomes explicit; Solo may run isolated
+- **agent:** Antigravity
+- **time:** 2026-07-24T17:11:00Z → 2026-07-24T21:43:00Z
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T2
+- **status:** done
+
+**Did**
+- Added `CollaborationMode` (`solo` | `colab`), `WorkspaceStrategy` (`direct-workspace` | `isolated-worktree`), `CombinationValidation` interface, and `validateCombination` function to `packages/policy`.
+- Updated `RunSingleAgentOptions` and `SingleRunReport` in `packages/orchestrator` to accept and report `workspaceStrategy`.
+- Supported isolated single-agent runs in a dedicated git worktree when `workspaceStrategy === "isolated-worktree"` using `WorktreeManager`.
+- Updated `RunReport` in `packages/orchestrator` to include `workspaceStrategy`.
+- Added `--workspace-strategy <direct-workspace|isolated-worktree>` and `--isolated` options to `bremio run` CLI.
+- Added 6 combination validation tests in `policy.test.ts` and 1 isolated-worktree single-run test in `single-run.test.ts`.
+
+**Decided**
+- `WorkspaceStrategy` is an independent axis from `CollaborationMode` per `docs/15` §2.1.
+- `validateCombination` enforces that `colab` requires `isolated-worktree` and `approve` requires `isolated-worktree` unless transport has a per-action seam.
+- `workspaceStrategy` on `SingleRunReport` and `RunReport` is optional (`workspaceStrategy?: WorkspaceStrategy`) for backward compatibility with existing report fixtures.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 621 passed across 59 test files (+7 new tests).
+- Red-check: removed `targetCwd = taskWorktree.path` in `single-run.ts` → `isolated-worktree` test failed (`expected [] to include 'DIRECT.txt'`) because edits landed in main repo instead of worktree. Restored and test passed.
+
+
+

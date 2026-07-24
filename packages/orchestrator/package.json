@@ -11,6 +11,7 @@
   "dependencies": {
     "@bremio/adapter-sdk": "workspace:*",
     "@bremio/harness": "workspace:*",
+    "@bremio/policy": "workspace:*",
     "@bremio/protocol": "workspace:*",
     "@bremio/quota": "workspace:*",
     "@bremio/workspace": "workspace:*",

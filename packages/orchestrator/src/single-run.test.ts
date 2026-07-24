@@ -337,4 +337,27 @@ describe("runSingleAgent", () => {
     expect(turn1.mechanismDecision?.mechanism).toBe("resume");
     expect(turn1.mechanismDecision?.reason).toContain("resumableSessions is true");
   });
+
+  it("runs a Single agent in an isolated worktree when workspaceStrategy is isolated-worktree", async () => {
+    const adapter = new SingleMockAdapter();
+    const registry = createRegistry([adapter]);
+
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "isolated edit",
+      registry,
+      workspaceStrategy: "isolated-worktree",
+    });
+
+    expect(report.result.status).toBe("completed");
+    expect(report.workspaceStrategy).toBe("isolated-worktree");
+    expect(report.worktree).toBeDefined();
+    expect(report.worktree?.branch).toMatch(/^bremio\/SOLO-codex/);
+    expect(report.result.filesChanged).toContain("DIRECT.txt");
+
+    // Main workspace remains clean because the edit landed in the isolated worktree
+    await expect(fs.access(path.join(repoPath, "DIRECT.txt"))).rejects.toThrow();
+    await expect(fs.access(path.join(report.worktree!.path, "DIRECT.txt"))).resolves.toBeUndefined();
+  });
 });

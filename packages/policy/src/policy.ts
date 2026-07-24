@@ -1,4 +1,45 @@
+export type CollaborationMode = "solo" | "colab";
+
 export type ControlMode = "plan" | "approve" | "autopilot";
+
+export type WorkspaceStrategy = "direct-workspace" | "isolated-worktree";
+
+export interface CombinationValidation {
+  valid: boolean;
+  reason?: string;
+  granularity?: "per-action" | "before-apply" | "none";
+}
+
+export function validateCombination(
+  collaboration: CollaborationMode,
+  control: ControlMode,
+  workspace: WorkspaceStrategy,
+  options?: { hasPerActionSeam?: boolean },
+): CombinationValidation {
+  if (collaboration === "colab" && workspace === "direct-workspace") {
+    return {
+      valid: false,
+      reason: "Co-lab mode requires isolated-worktree strategy to isolate workers",
+    };
+  }
+
+  if (control === "approve" && workspace === "direct-workspace" && !options?.hasPerActionSeam) {
+    return {
+      valid: false,
+      reason: "Approve control mode requires isolated-worktree strategy unless transport provides a per-action seam",
+    };
+  }
+
+  let granularity: CombinationValidation["granularity"] = "none";
+  if (control === "approve") {
+    granularity = options?.hasPerActionSeam && workspace === "direct-workspace" ? "per-action" : "before-apply";
+  }
+
+  return {
+    valid: true,
+    granularity,
+  };
+}
 
 export type ActionClass =
   | "read"
