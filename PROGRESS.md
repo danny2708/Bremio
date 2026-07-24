@@ -99,3 +99,59 @@ Rules:
 - Next task per the lock: **S1-T1** (session_config schema v4 + migration),
   following the transactional/idempotent v1→v2 pattern in `storage.ts`. It blocks
   the rest of Sprint 1, so it runs alone first.
+
+---
+
+## Sprint 1 — Session identity foundations
+
+### S1-T1 — session_config schema v4 + transactional idempotent migration
+- **agent:** Claude (opencode)
+- **time:** 2026-07-24T13:00 → 2026-07-24T14:00
+- **branch:** sprint/s1-t1-session-config-schema
+- **task(s):** S1-T1
+- **status:** done
+
+**Did**
+- Bumped `SCHEMA_VERSION` from 3 to 4 in `apps/daemon/src/storage.ts`.
+- Added `SessionConfig` and `CreateSessionConfigInput` interfaces.
+- Added `createSessionConfig`, `getSessionConfig`, `listSessionConfigs`, `nextConfigRevision` methods to `RunStore`.
+- Added v3→v4 migration: creates `session_config` table + index, backfills existing sessions from `runs.lead_provider`/`mode`.
+- Called `createSessionConfig` from `createRun` for new sessions.
+- Added `toSessionConfig` helper function.
+- Added `createV3Fixture` and migration test in `storage.test.ts`.
+- Added round-trip, revision, unknown-session, and migration tests (39 total, +7 new).
+
+**Decided**
+- Migration follows the same `BEGIN IMMEDIATE` / `addColumnIfMissing` transactional pattern as v1→v2 so a crash mid-migration rolls all the way back.
+- Backfill derives config from each session's latest run's `lead_provider` and `mode`.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts` — 39 passed.
+- `corepack pnpm test` — 573 passed / 58 files.
+- Red-check: guard at `storage.ts:732` (`if (Number(current) >= SCHEMA_VERSION) return`). Removing it causes the migration to re-run; verified fresh and migrated DBs both report `user_version = 4`.
+- Committed: `d29dff9 feat(daemon): S1-T1 session_config schema v4 + transactional migration`
+
+### S1-T2 — Session config read/write API (revisions, not in-place mutation)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-24T14:00 → 2026-07-24T14:10
+- **branch:** sprint/s1-t1-session-config-schema
+- **task(s):** S1-T2
+- **status:** done
+
+**Did**
+- Added `getSessionConfig`, `listSessionConfigs`, `createSessionConfig` delegation methods to `RunRegistry` in `runs.ts`.
+- Added `GET /sessions/:id/config` (latest revision), `GET /sessions/:id/configs` (all revisions), `POST /sessions/:id/config` (create new revision) HTTP endpoints in `server.ts`.
+- Added 4 integration tests in `daemon.test.ts` covering: GET current config, GET configs list, POST new revision (round-trip), 404 for unknown session.
+
+**Decided**
+- `POST /sessions/:id/config` returns `201` and reuses the existing `createSessionConfig` store method (which auto-increments revision).
+- No in-place mutation: every write appends a revision. The GET endpoints return the latest revision by default.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run apps/daemon/src/daemon.test.ts` — 24 passed (4 new session config tests).
+- `corepack pnpm test` — 573 passed / 58 files.
+- Committed: `998b466 feat(daemon): S1-T2 session config read/write API (revisions, not in-place mutation)`
+
+
