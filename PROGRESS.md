@@ -231,5 +231,5 @@ Rules:
 - `corepack pnpm vitest run apps/daemon/src/daemon.test.ts apps/daemon/src/storage.test.ts apps/cli/src/session.test.ts` — 86 passed.
 - `corepack pnpm test` — 579 passed / 58 files.
 - Red-check: temporarily removed the legacy-derived check → prompt is skipped for native config; restored and prompt fires correctly.
-- Committed: `2537a4c feat(daemon): S1-T5 resume reads persisted config; confirm-before-continue for partial legacy config`
+- Committed: `509ccc9 feat(daemon): S1-T5 resume reads persisted config; confirm-before-continue for partial legacy config`
 
