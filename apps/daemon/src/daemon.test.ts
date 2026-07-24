@@ -322,6 +322,12 @@ describe("sessions", () => {
     expect(body.session.turns[1]?.prompt).toBe("second turn");
     expect(body.session.turns[1]?.model).toBe("gpt-4");
     expect(body.session.turns[1]?.reasoningLevel).toBe("high");
+
+    // S1-T5: session detail includes config with provenance.
+    expect(body.session.config).toBeDefined();
+    const cfg = body.session.config!;
+    expect(cfg.provenance).toBe("native");
+    expect(cfg.completeness).toBe("partial");
   });
 
   it("404s an unknown session id", async () => {

@@ -210,4 +210,26 @@ Rules:
 - Red-check: removed the v5→v6 migration block → binding table not created → `recordBinding` tests fail (SQLITE_ERROR). Restored and tests pass.
 - Committed: `e671000 feat(daemon): S1-T4 ProviderSessionBinding schema + lost/expired states`
 
+### S1-T5 — Resume reads persisted config; confirm-before-continue for partial legacy config
+- **agent:** Claude (opencode)
+- **time:** 2026-07-24T14:30 → 2026-07-24T14:40
+- **branch:** sprint/s1-t1-session-config-schema
+- **task(s):** S1-T5
+- **status:** done
+
+**Did**
+- Added `config?: SessionConfig` to `SessionDetail` interface in `storage.ts`, projected in `sessionDetail()`.
+- Updated `continueSessionCommand` in `cli/src/session.ts`: opens store before identity resolution, checks `provenance === "legacy-derived" && completeness === "partial"`, prints derived config + missing fields, prompts `Y/n` via `readline/promises`, writes a complete native revision on confirm, then closes store before proceeding.
+- Added daemon integration test verifying `body.session.config.provenance` and `completeness` in session detail response.
+
+**Decided**
+- Prompt uses `readline/promises` (lightweight, no TUI dependency surge).
+- Store is opened early and closed only after config handling to avoid an extra open/close cycle.
+- `createSessionConfig({ provenance: "native" })` records the confirm as a full revision; subsequent `createRun` calls already set `provenance: "native"` so the config stays native.
+
+**Verification**
+- `corepack pnpm vitest run apps/daemon/src/daemon.test.ts apps/daemon/src/storage.test.ts apps/cli/src/session.test.ts` — 86 passed.
+- `corepack pnpm test` — 579 passed / 58 files.
+- Red-check: temporarily removed the legacy-derived check → prompt is skipped for native config; restored and prompt fires correctly.
+- Committed: `2537a4c feat(daemon): S1-T5 resume reads persisted config; confirm-before-continue for partial legacy config`
 

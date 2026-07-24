@@ -153,6 +153,7 @@ export interface SessionDetail {
   createdAt: string;
   updatedAt: string;
   turns: SessionTurn[];
+  config?: SessionConfig;
 }
 
 export interface PersistedRunEvent {
@@ -650,6 +651,8 @@ export class RunStore {
       };
     });
 
+    const cfg = this.getSessionConfig(id);
+
     return {
       id: String(session.id),
       repositoryPath: String(session.repository_path),
@@ -657,6 +660,7 @@ export class RunStore {
       createdAt: String(session.created_at),
       updatedAt: String(session.updated_at),
       turns,
+      ...(cfg ? { config: cfg } : {}),
     };
   }
 
