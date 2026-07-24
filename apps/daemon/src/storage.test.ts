@@ -673,7 +673,7 @@ async function createV3Fixture(): Promise<string> {
 }
 
 describe("session_config (S1-T1/T2)", () => {
-  it("creates a config entry when a session is created implicitly", async () => {
+  it("creates a native, complete config entry when a session is created implicitly", async () => {
     const s = await store();
     const run = s.createRun({
       id: "cfg-test",
@@ -689,6 +689,9 @@ describe("session_config (S1-T1/T2)", () => {
     expect(cfg?.revision).toBe(1);
     expect(cfg?.mode).toBe("team");
     expect(cfg?.leadAgentId).toBe("claude");
+    expect(cfg?.provenance).toBe("native");
+    expect(cfg?.completeness).toBe("partial");
+    expect(cfg?.missingFields).not.toEqual([]);
     expect(cfg?.createdAt).toBeDefined();
   });
 
@@ -704,6 +707,8 @@ describe("session_config (S1-T1/T2)", () => {
     const cfg = s.getSessionConfig(run.sessionId!);
     expect(cfg).toBeDefined();
     expect(cfg?.mode).toBe("single");
+    expect(cfg?.provenance).toBe("native");
+    expect(cfg?.completeness).toBe("partial");
   });
 
   it("getSessionConfig returns undefined for unknown session", async () => {
@@ -712,30 +717,34 @@ describe("session_config (S1-T1/T2)", () => {
     expect(s.listSessionConfigs("nonexistent-session")).toEqual([]);
   });
 
-  it("upgrades a v3 fixture to v4 with session_config backfilled", async () => {
+  it("upgrades a v3 fixture to v5 with session_config backfilled and provenance", async () => {
     const file = await createV3Fixture();
     const s = await RunStore.open(file);
     stores.push(s);
 
-    // The v3 session must have a backfilled config.
+    // The v3 session must have a backfilled config with provenance.
     const cfg = s.getSessionConfig("ses-v3");
     expect(cfg).toBeDefined();
     expect(cfg?.sessionId).toBe("ses-v3");
     expect(cfg?.revision).toBe(1);
     expect(cfg?.mode).toBe("team");
     expect(cfg?.leadAgentId).toBe("claude");
+    expect(cfg?.provenance).toBe("legacy-derived");
+    expect(cfg?.completeness).toBe("partial");
+    expect(cfg?.missingFields).toContain("model");
+    expect(cfg?.missingFields).toContain("reasoningLevel");
 
     // Original data must still be intact.
     expect(s.getRun("run-v3")?.prompt).toBe("v3 task");
     expect(s.listSessions("/tmp/repo")).toHaveLength(1);
   });
 
-  it("pristine and migrated stores both report user_version = 4", async () => {
+  it("pristine and migrated stores both report user_version = 5", async () => {
     const fresh = await store();
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(4);
+    expect(freshVer).toBe(5);
 
     const file = await createV3Fixture();
     const migrated = await RunStore.open(file);
@@ -743,10 +752,10 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(4);
+    expect(migratedVer).toBe(5);
   });
 
-  it("re-running migration on v4 is a no-op", async () => {
+  it("re-running migration on v5 is a no-op", async () => {
     const file = await createV3Fixture();
     const s = await RunStore.open(file);
     stores.push(s);
@@ -758,7 +767,38 @@ describe("session_config (S1-T1/T2)", () => {
     // Close and reopen — migration will run again but must succeed.
     const s2 = await RunStore.open(file);
     stores.push(s2);
-    expect(s2.getSessionConfig("ses-v3")?.mode).toBe("team");
+    expect(s2.getSessionConfig("ses-v3")?.provenance).toBe("legacy-derived");
+  });
+
+  it("createSessionConfig respects explicit provenance and computes completeness", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "prov-test",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "provenance test",
+    });
+    const sid = run.sessionId!;
+
+    // First revision (implicit from createRun) is native/partial (only mode + leadAgentId).
+    const first = s.getSessionConfig(sid);
+    expect(first?.provenance).toBe("native");
+    expect(first?.completeness).toBe("partial");
+
+    // Write a partial revision explicitly as legacy-import.
+    s.createSessionConfig({
+      sessionId: sid,
+      mode: "single",
+      leadAgentId: "claude",
+      provenance: "legacy-import",
+    });
+
+    const second = s.getSessionConfig(sid);
+    expect(second?.revision).toBe(2);
+    expect(second?.provenance).toBe("legacy-import");
+    expect(second?.completeness).toBe("partial");
+    expect(second?.missingFields).toContain("model");
+    expect(second?.missingFields).toContain("reasoningLevel");
   });
 
   it("stores multiple revisions for the same session", async () => {

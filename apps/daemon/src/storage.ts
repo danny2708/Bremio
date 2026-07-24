@@ -22,7 +22,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -163,6 +163,8 @@ export interface PersistedRunEvent {
   payload: unknown;
 }
 
+export type RecordProvenance = "native" | "legacy-derived" | "legacy-import";
+
 export interface SessionConfig {
   sessionId: string;
   revision: number;
@@ -175,6 +177,9 @@ export interface SessionConfig {
   approvalMode?: string;
   cwd?: string;
   baseBranch?: string;
+  provenance: RecordProvenance;
+  completeness: "complete" | "partial";
+  missingFields: string[];
   createdAt: string;
 }
 
@@ -189,6 +194,7 @@ export interface CreateSessionConfigInput {
   approvalMode?: string;
   cwd?: string;
   baseBranch?: string;
+  provenance?: RecordProvenance;
 }
 
 export interface PersistedSessionContext {
@@ -285,6 +291,7 @@ export class RunStore {
         mode: input.mode,
         leadAgentId: input.leadProvider,
         ...(input.workerProviders?.length ? { workerAgentId: input.workerProviders[0] } : {}),
+        provenance: "native",
       });
     } else {
       const last = this.db
@@ -672,11 +679,25 @@ export class RunStore {
   createSessionConfig(input: CreateSessionConfigInput): SessionConfig {
     const now = new Date().toISOString();
     const revision = this.nextConfigRevision(input.sessionId);
+    const provenance = input.provenance ?? "native";
+    const missingFields = [
+      ...(!input.mode ? ["mode" as const] : []),
+      ...(!input.leadAgentId ? ["leadAgentId" as const] : []),
+      ...(!input.workerAgentId ? ["workerAgentId" as const] : []),
+      ...(!input.model ? ["model" as const] : []),
+      ...(!input.reasoningLevel ? ["reasoningLevel" as const] : []),
+      ...(!input.permission ? ["permission" as const] : []),
+      ...(!input.approvalMode ? ["approvalMode" as const] : []),
+      ...(!input.cwd ? ["cwd" as const] : []),
+      ...(!input.baseBranch ? ["baseBranch" as const] : []),
+    ];
+    const completeness = missingFields.length === 0 ? "complete" : "partial";
     this.db
       .prepare(
         `INSERT INTO session_config (session_id, revision, mode, lead_agent_id, worker_agent_id,
-          model, reasoning_level, permission, approval_mode, cwd, base_branch, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          model, reasoning_level, permission, approval_mode, cwd, base_branch,
+          provenance, completeness, missing_fields, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.sessionId,
@@ -690,6 +711,9 @@ export class RunStore {
         input.approvalMode ?? null,
         input.cwd ?? null,
         input.baseBranch ?? null,
+        provenance,
+        completeness,
+        JSON.stringify(missingFields),
         now,
       );
     return this.getSessionConfig(input.sessionId)!;
@@ -880,6 +904,22 @@ function migrate(db: Database): void {
       }
     }
 
+    if (Number(current) < 5) {
+      addColumnIfMissing(db, "session_config", "provenance", "TEXT NOT NULL DEFAULT 'legacy-derived'");
+      addColumnIfMissing(db, "session_config", "completeness", "TEXT NOT NULL DEFAULT 'partial'");
+      addColumnIfMissing(db, "session_config", "missing_fields", "TEXT NOT NULL DEFAULT '[]'");
+      // Mark all existing backfilled rows as legacy-derived/partial with computed missing fields.
+      // Columns that backfill never populated: model, reasoning_level, permission, approval_mode,
+      // cwd, base_branch.
+      db.exec(
+        `UPDATE session_config SET
+           provenance = 'legacy-derived',
+           completeness = 'partial',
+           missing_fields = '["model","reasoningLevel","permission","approvalMode","cwd","baseBranch"]'
+         WHERE provenance IS NULL OR provenance = 'legacy-derived'`,
+      );
+    }
+
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -932,6 +972,11 @@ function toSessionConfig(row: Record<string, unknown>): SessionConfig {
     ...(row.approval_mode ? { approvalMode: String(row.approval_mode) } : {}),
     ...(row.cwd ? { cwd: String(row.cwd) } : {}),
     ...(row.base_branch ? { baseBranch: String(row.base_branch) } : {}),
+    provenance: (row.provenance ?? "legacy-derived") as RecordProvenance,
+    completeness: (row.completeness ?? "partial") as "complete" | "partial",
+    missingFields: row.missing_fields
+      ? (JSON.parse(String(row.missing_fields)) as string[])
+      : [],
     createdAt: String(row.created_at),
   };
 }
