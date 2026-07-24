@@ -739,12 +739,12 @@ describe("session_config (S1-T1/T2)", () => {
     expect(s.listSessions("/tmp/repo")).toHaveLength(1);
   });
 
-  it("pristine and migrated stores both report user_version = 5", async () => {
+  it("pristine and migrated stores both report user_version = 6", async () => {
     const fresh = await store();
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(5);
+    expect(freshVer).toBe(6);
 
     const file = await createV3Fixture();
     const migrated = await RunStore.open(file);
@@ -752,7 +752,7 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(5);
+    expect(migratedVer).toBe(6);
   });
 
   it("re-running migration on v5 is a no-op", async () => {
@@ -848,5 +848,109 @@ describe("truncateTitle", () => {
 
   it("handles multi-line prompts", () => {
     expect(truncateTitle("first line\nsecond line", 80)).toBe("first line");
+  });
+});
+
+describe("ProviderSessionBinding (S1-T4)", () => {
+  it("records a binding when a run is created with a lead provider", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "bind-lead",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "binding test",
+      leadProvider: "claude",
+    });
+    const sid = run.sessionId!;
+
+    const bindings = s.getBindings(sid);
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]?.agentId).toBe("claude");
+    expect(bindings[0]?.transport).toBe("claude");
+    expect(bindings[0]?.status).toBe("active");
+    expect(bindings[0]?.turnIndex).toBe(0);
+  });
+
+  it("records bindings for both lead and worker providers", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "bind-both",
+      mode: "team",
+      repositoryPath: "/tmp/repo",
+      prompt: "team binding",
+      leadProvider: "claude",
+      workerProviders: ["codex"],
+    });
+    const sid = run.sessionId!;
+
+    const bindings = s.getBindings(sid);
+    expect(bindings).toHaveLength(2);
+    const agents = bindings.map((b) => b.agentId).sort();
+    expect(agents).toEqual(["claude", "codex"]);
+  });
+
+  it("setBindingStatus updates status and native_session_id", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "bind-status",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "status test",
+      leadProvider: "claude",
+    });
+    const sid = run.sessionId!;
+
+    const updated = s.setBindingStatus({
+      bremioSessionId: sid,
+      agentId: "claude",
+      status: "active",
+      nativeSessionId: "claude-native-ses-1",
+    });
+    expect(updated?.nativeSessionId).toBe("claude-native-ses-1");
+    expect(updated?.status).toBe("active");
+
+    const lost = s.setBindingStatus({
+      bremioSessionId: sid,
+      agentId: "claude",
+      status: "lost",
+    });
+    expect(lost?.status).toBe("lost");
+    expect(lost?.nativeSessionId).toBe("claude-native-ses-1"); // preserved
+  });
+
+  it("getActiveBindings returns only active bindings", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "bind-active",
+      mode: "team",
+      repositoryPath: "/tmp/repo",
+      prompt: "active test",
+      leadProvider: "claude",
+      workerProviders: ["codex"],
+    });
+    const sid = run.sessionId!;
+
+    expect(s.getActiveBindings(sid)).toHaveLength(2);
+
+    s.setBindingStatus({
+      bremioSessionId: sid,
+      agentId: "claude",
+      status: "lost",
+    });
+    const active = s.getActiveBindings(sid);
+    expect(active).toHaveLength(1);
+    expect(active[0]?.agentId).toBe("codex");
+  });
+
+  it("upgrades a v3 fixture to v6 with provider_session_binding backfilled", async () => {
+    const file = await createV3Fixture();
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    // The v3 session "ses-v3" has run "run-v3" with lead_provider="claude".
+    const bindings = s.getBindings("ses-v3");
+    expect(bindings.length).toBeGreaterThanOrEqual(1);
+    expect(bindings[0]?.agentId).toBe("claude");
+    expect(bindings[0]?.status).toBe("active");
   });
 });

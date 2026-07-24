@@ -22,7 +22,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -212,9 +212,27 @@ export interface SaveSessionContextInput {
   providerSessionIds?: Record<string, string>;
 }
 
+export interface ProviderSessionBinding {
+  bremioSessionId: string;
+  agentId: string;
+  transport: string;
+  nativeSessionId?: string;
+  status: "active" | "lost" | "expired";
+  turnIndex: number;
+  createdAt: string;
+  lastUsedAt: string;
+}
+
+export interface SetBindingStatusInput {
+  bremioSessionId: string;
+  agentId: string;
+  status: "active" | "lost" | "expired";
+  nativeSessionId?: string;
+}
+
 export interface PersistedArtifact {
   runId: string;
-  kind: "report" | "diff" | "worktree" | "log" | "merge";
+  kind: string;
   path: string;
   taskId?: string;
   createdAt: string;
@@ -319,6 +337,15 @@ export class RunStore {
         sessionId,
         turnIndex,
       );
+
+    // Record provider session bindings for the lead agent and each worker agent.
+    if (input.leadProvider) {
+      this.recordBinding(sessionId, input.leadProvider, input.leadProvider, turnIndex);
+    }
+    for (const w of input.workerProviders ?? []) {
+      this.recordBinding(sessionId, w, w, turnIndex);
+    }
+
     return this.getRun(input.id) as PersistedRun;
   }
 
@@ -741,6 +768,68 @@ export class RunStore {
       .all(sessionId) as Array<Record<string, unknown>>;
     return rows.map(toSessionConfig);
   }
+
+  recordBinding(
+    bremioSessionId: string,
+    agentId: string,
+    transport: string,
+    turnIndex: number,
+  ): ProviderSessionBinding {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO provider_session_binding
+           (bremio_session_id, agent_id, transport, status, turn_index, created_at, last_used_at)
+         VALUES (?, ?, ?, 'active', ?, ?, ?)`,
+      )
+      .run(bremioSessionId, agentId, transport, turnIndex, now, now);
+    return this.getBindings(bremioSessionId).find((b) => b.agentId === agentId)!;
+  }
+
+  setBindingStatus(input: SetBindingStatusInput): ProviderSessionBinding | undefined {
+    const now = new Date().toISOString();
+    if (input.nativeSessionId !== undefined) {
+      this.db
+        .prepare(
+          `UPDATE provider_session_binding
+           SET status = ?, native_session_id = ?, last_used_at = ?
+           WHERE bremio_session_id = ? AND agent_id = ?`,
+        )
+        .run(input.status, input.nativeSessionId, now, input.bremioSessionId, input.agentId);
+    } else {
+      this.db
+        .prepare(
+          `UPDATE provider_session_binding
+           SET status = ?, last_used_at = ?
+           WHERE bremio_session_id = ? AND agent_id = ?`,
+        )
+        .run(input.status, now, input.bremioSessionId, input.agentId);
+    }
+    const row = this.db
+      .prepare(
+        "SELECT * FROM provider_session_binding WHERE bremio_session_id = ? AND agent_id = ?",
+      )
+      .get(input.bremioSessionId, input.agentId) as Record<string, unknown> | undefined;
+    return row ? toProviderSessionBinding(row) : undefined;
+  }
+
+  getBindings(bremioSessionId: string): ProviderSessionBinding[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM provider_session_binding WHERE bremio_session_id = ? ORDER BY created_at ASC",
+      )
+      .all(bremioSessionId) as Array<Record<string, unknown>>;
+    return rows.map(toProviderSessionBinding);
+  }
+
+  getActiveBindings(bremioSessionId: string): ProviderSessionBinding[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM provider_session_binding WHERE bremio_session_id = ? AND status = 'active' ORDER BY created_at ASC",
+      )
+      .all(bremioSessionId) as Array<Record<string, unknown>>;
+    return rows.map(toProviderSessionBinding);
+  }
 }
 
 export function truncateTitle(prompt: string, maxLen = 80): string {
@@ -920,6 +1009,58 @@ function migrate(db: Database): void {
       );
     }
 
+    if (Number(current) < 6) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS provider_session_binding (
+          bremio_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          agent_id TEXT NOT NULL,
+          transport TEXT NOT NULL,
+          native_session_id TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          turn_index INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT NOT NULL,
+          PRIMARY KEY (bremio_session_id, agent_id)
+        );
+      `);
+
+      // Backfill bindings for existing sessions from their runs' providers.
+      const backfillBindings = db
+        .prepare(
+          `SELECT r.session_id, r.lead_provider, r.worker_providers, r.turn_index, r.created_at
+           FROM runs r
+           WHERE r.session_id IS NOT NULL
+           ORDER BY r.turn_index ASC`,
+        )
+        .all() as Array<{
+          session_id: string;
+          lead_provider: string | null;
+          worker_providers: string | null;
+          turn_index: number;
+          created_at: string;
+        }>;
+      const seen = new Set<string>();
+      for (const b of backfillBindings) {
+        const agents: Array<{ id: string }> = [];
+        if (b.lead_provider) agents.push({ id: b.lead_provider });
+        if (b.worker_providers) {
+          for (const w of JSON.parse(b.worker_providers) as string[]) {
+            agents.push({ id: w });
+          }
+        }
+        for (const a of agents) {
+          const key = `${b.session_id}:${a.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          db.prepare(
+            `INSERT OR IGNORE INTO provider_session_binding
+               (bremio_session_id, agent_id, transport, status, turn_index, created_at, last_used_at)
+             VALUES (?, ?, ?, 'active', ?, ?, ?)`,
+          ).run(b.session_id, a.id, a.id, b.turn_index, b.created_at, b.created_at);
+        }
+      }
+    }
+
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -978,6 +1119,19 @@ function toSessionConfig(row: Record<string, unknown>): SessionConfig {
       ? (JSON.parse(String(row.missing_fields)) as string[])
       : [],
     createdAt: String(row.created_at),
+  };
+}
+
+function toProviderSessionBinding(row: Record<string, unknown>): ProviderSessionBinding {
+  return {
+    bremioSessionId: String(row.bremio_session_id),
+    agentId: String(row.agent_id),
+    transport: String(row.transport),
+    ...(row.native_session_id ? { nativeSessionId: String(row.native_session_id) } : {}),
+    status: row.status as "active" | "lost" | "expired",
+    turnIndex: Number(row.turn_index),
+    createdAt: String(row.created_at),
+    lastUsedAt: String(row.last_used_at),
   };
 }
 
