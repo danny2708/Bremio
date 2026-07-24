@@ -303,3 +303,35 @@ Rules:
 - `corepack pnpm test` — 583 passed / 58 files (+1 worktree test).
 - Real-data migration probe: v3→v7 clean, idempotent (scratch script, not committed).
 
+---
+
+## Sprint 2 — Policy and enforcement
+
+### S2-T1 — packages/policy: ControlMode × ActionClass matrix, pure evaluate()
+- **agent:** Claude (opencode)
+- **time:** 2026-07-24T15:10 → 2026-07-24T15:20
+- **branch:** sprint/s2-t1-policy-matrix
+- **task(s):** S2-T1
+- **status:** done
+
+**Did**
+- Created `packages/policy/` with `package.json`, `tsconfig.json`, `src/index.ts`, `src/policy.ts`, `src/policy.test.ts`.
+- Defined `ControlMode` (`plan | approve | autopilot`), `ActionClass` (10 classes: read, write, create, delete, command, network, mcp-tool, git-destructive, outside-workspace, user-config), `ApprovalRequirement` (`none | per-action | before-apply`), `PolicyEvaluation` (allowed + approvalRequired + reason).
+- Implemented pure `evaluate(controlMode, action)` function backed by a `ControlMode × ActionClass` matrix.
+  - **plan**: only `read` allowed; everything else denied with mode-specific reason.
+  - **approve**: everything allowed; `write`/`create`/`network` need `before-apply`; `delete`/`command`/`mcp-tool`/`git-destructive`/`outside-workspace`/`user-config` need `per-action`.
+  - **autopilot**: everything allowed, no approval required.
+- 31 tests covering every cell of the matrix + exhaustive reachability check.
+- Red-check: flipped `plan → read` to `allowed: false` → the "plan mode allows read" test failed correctly.
+
+**Decided**
+- `approvalRequired: ApprovalRequirement` (three-valued: none / per-action / before-apply) so the caller can distinguish "no approval needed" from "approve each action individually" from "approve the batch before apply".
+- Matrix is static data, not computed — total size is 3×10=30 cells; a data-driven table is simpler to audit than computed rules.
+- Pure function: no side effects, no IO, no dependencies.
+
+**Verification**
+- `corepack pnpm vitest run packages/policy/src/policy.test.ts` — 31 passed.
+- `corepack pnpm test` — 614 passed / 59 files (+1 file, +31 tests).
+- Red-check: `plan → read` rule flipped to `allowed: false` → test fails with correct message. Restored.
+- Committed: (pending)
+

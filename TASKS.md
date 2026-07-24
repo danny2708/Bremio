@@ -67,7 +67,7 @@ its recorded mode, model and reasoning; a legacy session asks before continuing;
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S2-T1 | `packages/policy`: `ControlMode` × `ActionClass` matrix, pure `evaluate()` | M | — | ‖ S1 |
+| [x] | S2-T1 | `packages/policy`: `ControlMode` × `ActionClass` matrix, pure `evaluate()` | M | — | ‖ S1 |
 | [ ] | S2-T2 | `WorkspaceStrategy` becomes explicit; Solo may run isolated | L | S2-T1 | — |
 | [ ] | S2-T3 | Plan mode enforced per transport, guarantee declared honestly (`docs/15` §2.2) | L | S2-T1, S2-T2 | — |
 | [ ] | S2-T4 | `AdapterRuntimeCapabilities` replaces name-based capability checks | M | S2-T1 | ‖ S2-T2 |
