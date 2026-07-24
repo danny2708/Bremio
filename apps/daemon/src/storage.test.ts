@@ -527,6 +527,40 @@ describe("RepositoryIdentity (S1-T6)", () => {
     expect(identity.repositoryId).toBe(normalizeRepositoryPath(path.resolve(dir, ".git")));
     expect(identity.canonicalRoot).toBe(canonicalRoot);
     expect(identity.gitCommonDir).toBe(normalizeRepositoryPath(path.resolve(dir, ".git")));
+    // The main worktree is not a linked worktree, so it carries no worktreeId.
+    expect(identity.worktreeId).toBeUndefined();
+  });
+
+  it("gives a linked worktree the same repositoryId as its main worktree, but a distinct worktreeId", async () => {
+    // This is the whole reason the identity is derived from the common git dir
+    // rather than the path: two worktrees of one repo must resolve to the same
+    // repository, or a run started in a worktree would look like a different
+    // project's history. Without this test the worktree half of S1-T6 — the
+    // half the task is named for — was unproven.
+    const main = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-id-wt-main-"));
+    dirs.push(main);
+    const { execSync: exec } = await import("node:child_process");
+    exec("git init", { cwd: main, stdio: "ignore" });
+    exec('git config user.email "test@test" && git config user.name "Test"', { cwd: main, stdio: "ignore" });
+    exec("git commit --allow-empty -m init", { cwd: main, stdio: "ignore" });
+
+    const linked = path.join(os.tmpdir(), `bremio-id-wt-linked-${Date.now()}`);
+    dirs.push(linked);
+    exec(`git worktree add "${linked}" -b feature`, { cwd: main, stdio: "ignore" });
+
+    const mainId = resolveRepositoryIdentity(main);
+    const linkedId = resolveRepositoryIdentity(linked);
+
+    // Same logical repository.
+    expect(linkedId.repositoryId).toBe(mainId.repositoryId);
+    // Distinct working directories.
+    expect(linkedId.canonicalRoot).not.toBe(mainId.canonicalRoot);
+    // Only the linked one is a worktree, and its id is its own directory.
+    expect(linkedId.worktreeId).toBe(normalizeRepositoryPath(path.resolve(linked)));
+    expect(mainId.worktreeId).toBeUndefined();
+
+    // Leave no worktree registration behind for the temp-dir cleanup.
+    exec(`git worktree remove "${linked}" --force`, { cwd: main, stdio: "ignore" });
   });
 });
 

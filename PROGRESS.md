@@ -259,3 +259,47 @@ Rules:
 - Red-check: removed the v6→v7 migration block → `repository_id` not backfilled → migration test fails. Restored and passes.
 - Committed: `51b12f3 feat(daemon): S1-T6 canonical repository/worktree identity`
 
+### S1-REVIEW — tech-lead audit of Sprint 1
+- **agent:** Claude (Opus 4.8), acting as tech lead
+- **time:** 2026-07-24 → 2026-07-24
+- **branch:** sprint/s1-t1-session-config-schema
+- **task(s):** S1-T1..T6 (review), fixes to S1-T5 and S1-T6
+- **status:** done
+
+**Did**
+- Ran the full gate on the branch: typecheck clean, 582 tests. Then verified
+  claims by execution rather than trusting the log.
+- Migrated a realistic v3 fixture (2 sessions incl. the antigravity→claude
+  multi-turn shape, 3 runs, 1 event) through `RunStore.open` to v7: all rows
+  preserved, `session_config` backfilled from the latest turn, provenance
+  `legacy-derived`/`partial` with correct `missing_fields`,
+  `provider_session_binding` captured the full per-turn lineage (ses-A bound to
+  BOTH antigravity and claude), `repository_id` normalized, and reopen was
+  idempotent (no doubled rows).
+- Red-checked two load-bearing guards: `getActiveBindings`' `status = 'active'`
+  filter (removed → count stayed 2, test failed correctly) and worktree
+  detection (forced off → new worktree test failed correctly). Both restored.
+
+**Found & fixed**
+- **S1-T6 was missing its worktree test** — the exact property the task is named
+  for. Code was correct (verified via a live `git worktree add` probe: main and
+  linked share `repositoryId`, linked gets a distinct `worktreeId`), but nothing
+  proved it. Added the test; red-checked it.
+- **S1-T5 forged a provenance record non-interactively.** The confirm prompt had
+  no TTY guard, so a piped `session continue` got EOF, treated it as "yes", and
+  wrote a `provenance: "native"` revision — falsely stamping a confirmation the
+  user never gave, corrupting the S1-T3 signal. Guarded with
+  `process.stdin.isTTY`: non-interactive now proceeds (provider identity is
+  authoritative, only defaultable fields are missing) but leaves the config
+  `legacy-derived` rather than forging a native revision.
+
+**Decided**
+- Merged rather than bounced: both issues were a missing test and a
+  non-interactive edge case, not defects in the core schema/migration, which are
+  solid. The provider-identity P0 from Sprint 0 is intact throughout.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 583 passed / 58 files (+1 worktree test).
+- Real-data migration probe: v3→v7 clean, idempotent (scratch script, not committed).
+
