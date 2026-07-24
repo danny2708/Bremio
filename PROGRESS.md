@@ -257,5 +257,5 @@ Rules:
 - `corepack pnpm vitest run apps/daemon/src/storage.test.ts` — 48 passed (3 new).
 - `corepack pnpm test` — 582 passed / 58 files.
 - Red-check: removed the v6→v7 migration block → `repository_id` not backfilled → migration test fails. Restored and passes.
-- Committed: `01049d2 feat(daemon): S1-T6 canonical repository/worktree identity`
+- Committed: `51b12f3 feat(daemon): S1-T6 canonical repository/worktree identity`
 
