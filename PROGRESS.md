@@ -182,4 +182,32 @@ Rules:
 - Red-check: removed the v4→v5 migration block → migration test fails because columns are missing. Restored and tests pass.
 - Committed: `b6f05cc feat(daemon): S1-T3 legacy backfill with provenance + completeness`
 
+### S1-T4 — ProviderSessionBinding schema + lost/expired states
+- **agent:** Claude (opencode)
+- **time:** 2026-07-24T14:20 → 2026-07-24T14:35
+- **branch:** sprint/s1-t1-session-config-schema
+- **task(s):** S1-T4
+- **status:** done
+
+**Did**
+- Bumped `SCHEMA_VERSION` from 5 to 6 (`storage.ts`).
+- Added `ProviderSessionBinding` and `SetBindingStatusInput` interfaces.
+- Added `recordBinding`, `setBindingStatus`, `getBindings`, `getActiveBindings` methods to `RunStore`.
+- Added `toProviderSessionBinding` helper.
+- Added v5→v6 migration: creates `provider_session_binding` table with PK `(bremio_session_id, agent_id)`, status `"active"`, `"lost"`, or `"expired"`, plus `turn_index` and `native_session_id`.
+- Backfill: for every existing run, inserts bindings for lead_provider and each worker_provider (de-duped by session+agent).
+- Updated `createRun` to call `recordBinding` for lead and worker providers on every new run.
+
+**Decided**
+- `INSERT OR IGNORE` prevents duplicate bindings for the same session+agent, so multiple turns by the same provider don't create duplicate rows.
+- `setBindingStatus` optionally sets `native_session_id` (populated later by `saveSessionContext`).
+- `transport` field is set to the agent id for now (the adapter name); in the future it could carry a protocol/version string.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts` — 45 passed (+5 new binding tests).
+- `corepack pnpm test` — 579 passed / 58 files.
+- Red-check: removed the v5→v6 migration block → binding table not created → `recordBinding` tests fail (SQLITE_ERROR). Restored and tests pass.
+- Committed: `e671000 feat(daemon): S1-T4 ProviderSessionBinding schema + lost/expired states`
+
 
