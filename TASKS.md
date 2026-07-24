@@ -55,7 +55,7 @@ other three read the schema it creates.
 | [x] | S1-T3 | Legacy backfill with `provenance` + `completeness` (`docs/15` §4.4) | M | S1-T1 | ‖ S1-T4 |
 | [x] | S1-T4 | `ProviderSessionBinding` schema + lost/expired states (`docs/15` §4.3) | M | S1-T1 | ‖ S1-T3 |
 | [x] | S1-T5 | Resume reads persisted config; confirm-before-continue for partial legacy config | M | S1-T2, S1-T3 | — |
-| [ ] | S1-T6 | Canonical repository/worktree identity (`docs/15` §4.5) | L | — | ‖ everything |
+| [x] | S1-T6 | Canonical repository/worktree identity (`docs/15` §4.5) | L | — | ‖ everything |
 
 **Sprint gate:** a session created on any provider resumes on that provider with
 its recorded mode, model and reasoning; a legacy session asks before continuing;

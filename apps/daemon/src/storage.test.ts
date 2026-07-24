@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MAX_PAYLOAD_BYTES,
   normalizeRepositoryPath,
+  resolveRepositoryIdentity,
   RunStore,
   capPayload,
   isTerminal,
@@ -504,6 +505,31 @@ describe("sessions", () => {
   });
 });
 
+describe("RepositoryIdentity (S1-T6)", () => {
+  it("resolves identity for a non-git directory", () => {
+    const identity = resolveRepositoryIdentity("/tmp/nonexistent-repo");
+    expect(identity.repositoryId).toBe(normalizeRepositoryPath(path.resolve("/tmp/nonexistent-repo")));
+    expect(identity.canonicalRoot).toBe(normalizeRepositoryPath(path.resolve("/tmp/nonexistent-repo")));
+    expect(identity.gitCommonDir).toBeUndefined();
+    expect(identity.worktreeId).toBeUndefined();
+  });
+
+  it("resolves identity for a git repo", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-id-git-"));
+    dirs.push(dir);
+    const { execSync: exec } = await import("node:child_process");
+    exec("git init", { cwd: dir, stdio: "ignore" });
+    exec('git config user.email "test@test" && git config user.name "Test"', { cwd: dir, stdio: "ignore" });
+    exec("git commit --allow-empty -m init", { cwd: dir, stdio: "ignore" });
+
+    const canonicalRoot = normalizeRepositoryPath(path.resolve(dir));
+    const identity = resolveRepositoryIdentity(dir);
+    expect(identity.repositoryId).toBe(normalizeRepositoryPath(path.resolve(dir, ".git")));
+    expect(identity.canonicalRoot).toBe(canonicalRoot);
+    expect(identity.gitCommonDir).toBe(normalizeRepositoryPath(path.resolve(dir, ".git")));
+  });
+});
+
 describe("session_context (B1)", () => {
   it("stores and retrieves session context per turn without overwriting earlier turns", async () => {
     const s = await store();
@@ -744,7 +770,7 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(6);
+    expect(freshVer).toBe(7);
 
     const file = await createV3Fixture();
     const migrated = await RunStore.open(file);
@@ -752,7 +778,7 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(6);
+    expect(migratedVer).toBe(7);
   });
 
   it("re-running migration on v5 is a no-op", async () => {
@@ -940,6 +966,20 @@ describe("ProviderSessionBinding (S1-T4)", () => {
     const active = s.getActiveBindings(sid);
     expect(active).toHaveLength(1);
     expect(active[0]?.agentId).toBe("codex");
+  });
+
+  it("upgrades a v3 fixture to v7 with repository_id backfilled", async () => {
+    const file = await createV3Fixture();
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    // v6→v7 adds repository_id and backfills from repository_path.
+    const detail = s.sessionDetail("ses-v3");
+    expect(detail).toBeDefined();
+    expect(detail!.repositoryIdentity).toBeDefined();
+    // repository_id should equal the normalized repository_path /tmp/repo.
+    expect(detail!.repositoryIdentity!.repositoryId).toBe(normalizeRepositoryPath("/tmp/repo"));
+    expect(detail!.repositoryIdentity!.canonicalRoot).toBe("/tmp/repo");
   });
 
   it("upgrades a v3 fixture to v6 with provider_session_binding backfilled", async () => {

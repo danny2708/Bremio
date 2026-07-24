@@ -233,3 +233,29 @@ Rules:
 - Red-check: temporarily removed the legacy-derived check → prompt is skipped for native config; restored and prompt fires correctly.
 - Committed: `509ccc9 feat(daemon): S1-T5 resume reads persisted config; confirm-before-continue for partial legacy config`
 
+### S1-T6 — Canonical repository/worktree identity
+- **agent:** Claude (opencode)
+- **time:** 2026-07-24T14:40 → 2026-07-24T14:50
+- **branch:** sprint/s1-t1-session-config-schema
+- **task(s):** S1-T6
+- **status:** done
+
+**Did**
+- Added `RepositoryIdentity` interface (`repositoryId`, `canonicalRoot`, `gitCommonDir`, `worktreeId`) to `storage.ts`.
+- Added `resolveRepositoryIdentity(path)` function: resolves via `git rev-parse --git-common-dir`, falls back to normalized path for non-git dirs; detects linked worktrees via `.git` file check.
+- Bumped `SCHEMA_VERSION` 6→7, added v6→v7 migration: `repository_id` column on `sessions`, backfilled from `repository_path`.
+- Hooked `resolveRepositoryIdentity` into `createRun`: stores `repository_id` on session creation.
+- Added `repositoryIdentity` to `SessionDetail`, projected in `sessionDetail()`.
+- 3 new tests: non-git fallback, git repo resolution, v3→v7 migration backfill.
+
+**Decided**
+- `repositoryId` = normalized git-common-dir (stable across worktrees); for non-git dirs = normalized canonical root.
+- Migration backfill uses the SQL normalization expression (same as `normalizeRepositoryPath`) rather than re-running `git rev-parse` for every existing session.
+- `cross-env` path concerns handled by `path.resolve()` + `normalizeRepositoryPath` (separator + case folding); worktree detection via `statSync`.
+
+**Verification**
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts` — 48 passed (3 new).
+- `corepack pnpm test` — 582 passed / 58 files.
+- Red-check: removed the v6→v7 migration block → `repository_id` not backfilled → migration test fails. Restored and passes.
+- Committed: `01049d2 feat(daemon): S1-T6 canonical repository/worktree identity`
+

@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { execSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -22,7 +24,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -43,6 +45,58 @@ export function normalizeRepositoryPath(repositoryPath: string): string {
     .replaceAll("\\", "/")
     .replace(/[A-Z]/g, (ch) => ch.toLowerCase())
     .replace(/\/+$/, "");
+}
+
+/**
+ * Resolve the canonical identity of the repository at `repositoryPath`.
+ *
+ * Derives the identity from `git rev-parse --git-common-dir` when the path is
+ * inside a git repository, which is stable across worktrees, symlinks, and
+ * path variants. For non-git directories, `repositoryId` falls back to the
+ * normalised path itself.
+ */
+export function resolveRepositoryIdentity(repositoryPath: string): RepositoryIdentity {
+  const canonicalRoot = normalizeRepositoryPath(path.resolve(repositoryPath));
+
+  try {
+    const stdout = execSync("git rev-parse --git-common-dir", {
+      cwd: repositoryPath,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+
+    const gitCommonDir = stdout ? normalizeRepositoryPath(path.resolve(repositoryPath, stdout)) : undefined;
+
+    if (!gitCommonDir) {
+      return { repositoryId: canonicalRoot, canonicalRoot };
+    }
+
+    let worktreeId: string | undefined;
+
+    // Check if this is a linked worktree by examining .git.
+    const gitLinkPath = path.join(repositoryPath, ".git");
+    let isWorktree = false;
+    try {
+      const st = statSync(gitLinkPath);
+      // If .git is a file (contains "gitdir: ..."), this is a linked worktree.
+      isWorktree = st.isFile();
+    } catch {
+      // statSync throws if .git doesn't exist; treat as non-worktree.
+    }
+
+    if (isWorktree) {
+      // The worktree id is the canonical root itself (the worktree dir).
+      worktreeId = canonicalRoot;
+    }
+
+    const repositoryId = gitCommonDir;
+
+    return { repositoryId, canonicalRoot, gitCommonDir, ...(worktreeId ? { worktreeId } : {}) };
+  } catch {
+    // Not a git repository or git is unavailable; fall back to canonical path.
+    return { repositoryId: canonicalRoot, canonicalRoot };
+  }
 }
 
 /**
@@ -154,6 +208,7 @@ export interface SessionDetail {
   updatedAt: string;
   turns: SessionTurn[];
   config?: SessionConfig;
+  repositoryIdentity?: RepositoryIdentity;
 }
 
 export interface PersistedRunEvent {
@@ -211,6 +266,25 @@ export interface SaveSessionContextInput {
   turnIndex: number;
   summary?: string;
   providerSessionIds?: Record<string, string>;
+}
+
+/**
+ * Canonical identity for a repository, designed to survive symlinks, git
+ * worktrees, and cross-platform path variance (Windows vs WSL).
+ *
+ * - `repositoryId` is stable for the same logical repo across worktrees.
+ * - `canonicalRoot` is the input path after normalisation.
+ * - `gitCommonDir` is the output of `git rev-parse --git-common-dir` when the
+ *   path is inside a git repository, normalised and resolved to an absolute
+ *   path. It is *not* set for bare repos or non-git directories.
+ * - `worktreeId` distinguishes worktree directories under the same repo (the
+ *   *linked* worktree path, not the main worktree).
+ */
+export interface RepositoryIdentity {
+  repositoryId: string;
+  canonicalRoot: string;
+  gitCommonDir?: string;
+  worktreeId?: string;
 }
 
 export interface ProviderSessionBinding {
@@ -300,11 +374,12 @@ export class RunStore {
     let turnIndex = 0;
     if (!sessionId) {
       sessionId = crypto.randomUUID();
+      const identity = resolveRepositoryIdentity(input.repositoryPath);
       this.db
         .prepare(
-          "INSERT INTO sessions (id, repository_path, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO sessions (id, repository_path, repository_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .run(sessionId, input.repositoryPath, truncateTitle(input.prompt), now, now);
+        .run(sessionId, input.repositoryPath, identity.repositoryId, truncateTitle(input.prompt), now, now);
       this.createSessionConfig({
         sessionId,
         mode: input.mode,
@@ -653,6 +728,14 @@ export class RunStore {
 
     const cfg = this.getSessionConfig(id);
 
+    // Build repository identity from session columns.
+    const repositoryIdentity: RepositoryIdentity | undefined = session.repository_id
+      ? {
+          repositoryId: String(session.repository_id),
+          canonicalRoot: String(session.repository_path),
+        }
+      : undefined;
+
     return {
       id: String(session.id),
       repositoryPath: String(session.repository_path),
@@ -661,6 +744,7 @@ export class RunStore {
       updatedAt: String(session.updated_at),
       turns,
       ...(cfg ? { config: cfg } : {}),
+      ...(repositoryIdentity ? { repositoryIdentity } : {}),
     };
   }
 
@@ -1063,6 +1147,18 @@ function migrate(db: Database): void {
           ).run(b.session_id, a.id, a.id, b.turn_index, b.created_at, b.created_at);
         }
       }
+    }
+
+    if (Number(current) < 7) {
+      addColumnIfMissing(db, "sessions", "repository_id", "TEXT");
+      // Backfill: set repository_id to the normalized repository_path for all
+      // existing sessions, so existing sessions get a stable identity even
+      // without re-deriving from git. A future online operation can refine
+      // this by resolving the actual git identity.
+      db.exec(
+        `UPDATE sessions SET repository_id = RTRIM(LOWER(REPLACE(repository_path, '\\', '/')), '/')
+         WHERE repository_id IS NULL`,
+      );
     }
 
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
