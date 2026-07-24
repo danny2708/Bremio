@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { execSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -22,7 +24,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 7;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -43,6 +45,58 @@ export function normalizeRepositoryPath(repositoryPath: string): string {
     .replaceAll("\\", "/")
     .replace(/[A-Z]/g, (ch) => ch.toLowerCase())
     .replace(/\/+$/, "");
+}
+
+/**
+ * Resolve the canonical identity of the repository at `repositoryPath`.
+ *
+ * Derives the identity from `git rev-parse --git-common-dir` when the path is
+ * inside a git repository, which is stable across worktrees, symlinks, and
+ * path variants. For non-git directories, `repositoryId` falls back to the
+ * normalised path itself.
+ */
+export function resolveRepositoryIdentity(repositoryPath: string): RepositoryIdentity {
+  const canonicalRoot = normalizeRepositoryPath(path.resolve(repositoryPath));
+
+  try {
+    const stdout = execSync("git rev-parse --git-common-dir", {
+      cwd: repositoryPath,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+
+    const gitCommonDir = stdout ? normalizeRepositoryPath(path.resolve(repositoryPath, stdout)) : undefined;
+
+    if (!gitCommonDir) {
+      return { repositoryId: canonicalRoot, canonicalRoot };
+    }
+
+    let worktreeId: string | undefined;
+
+    // Check if this is a linked worktree by examining .git.
+    const gitLinkPath = path.join(repositoryPath, ".git");
+    let isWorktree = false;
+    try {
+      const st = statSync(gitLinkPath);
+      // If .git is a file (contains "gitdir: ..."), this is a linked worktree.
+      isWorktree = st.isFile();
+    } catch {
+      // statSync throws if .git doesn't exist; treat as non-worktree.
+    }
+
+    if (isWorktree) {
+      // The worktree id is the canonical root itself (the worktree dir).
+      worktreeId = canonicalRoot;
+    }
+
+    const repositoryId = gitCommonDir;
+
+    return { repositoryId, canonicalRoot, gitCommonDir, ...(worktreeId ? { worktreeId } : {}) };
+  } catch {
+    // Not a git repository or git is unavailable; fall back to canonical path.
+    return { repositoryId: canonicalRoot, canonicalRoot };
+  }
 }
 
 /**
@@ -153,6 +207,8 @@ export interface SessionDetail {
   createdAt: string;
   updatedAt: string;
   turns: SessionTurn[];
+  config?: SessionConfig;
+  repositoryIdentity?: RepositoryIdentity;
 }
 
 export interface PersistedRunEvent {
@@ -161,6 +217,40 @@ export interface PersistedRunEvent {
   type: string;
   timestamp: string;
   payload: unknown;
+}
+
+export type RecordProvenance = "native" | "legacy-derived" | "legacy-import";
+
+export interface SessionConfig {
+  sessionId: string;
+  revision: number;
+  mode?: "single" | "team";
+  leadAgentId?: string;
+  workerAgentId?: string;
+  model?: string;
+  reasoningLevel?: string;
+  permission?: string;
+  approvalMode?: string;
+  cwd?: string;
+  baseBranch?: string;
+  provenance: RecordProvenance;
+  completeness: "complete" | "partial";
+  missingFields: string[];
+  createdAt: string;
+}
+
+export interface CreateSessionConfigInput {
+  sessionId: string;
+  mode?: "single" | "team";
+  leadAgentId?: string;
+  workerAgentId?: string;
+  model?: string;
+  reasoningLevel?: string;
+  permission?: string;
+  approvalMode?: string;
+  cwd?: string;
+  baseBranch?: string;
+  provenance?: RecordProvenance;
 }
 
 export interface PersistedSessionContext {
@@ -178,9 +268,46 @@ export interface SaveSessionContextInput {
   providerSessionIds?: Record<string, string>;
 }
 
+/**
+ * Canonical identity for a repository, designed to survive symlinks, git
+ * worktrees, and cross-platform path variance (Windows vs WSL).
+ *
+ * - `repositoryId` is stable for the same logical repo across worktrees.
+ * - `canonicalRoot` is the input path after normalisation.
+ * - `gitCommonDir` is the output of `git rev-parse --git-common-dir` when the
+ *   path is inside a git repository, normalised and resolved to an absolute
+ *   path. It is *not* set for bare repos or non-git directories.
+ * - `worktreeId` distinguishes worktree directories under the same repo (the
+ *   *linked* worktree path, not the main worktree).
+ */
+export interface RepositoryIdentity {
+  repositoryId: string;
+  canonicalRoot: string;
+  gitCommonDir?: string;
+  worktreeId?: string;
+}
+
+export interface ProviderSessionBinding {
+  bremioSessionId: string;
+  agentId: string;
+  transport: string;
+  nativeSessionId?: string;
+  status: "active" | "lost" | "expired";
+  turnIndex: number;
+  createdAt: string;
+  lastUsedAt: string;
+}
+
+export interface SetBindingStatusInput {
+  bremioSessionId: string;
+  agentId: string;
+  status: "active" | "lost" | "expired";
+  nativeSessionId?: string;
+}
+
 export interface PersistedArtifact {
   runId: string;
-  kind: "report" | "diff" | "worktree" | "log" | "merge";
+  kind: string;
   path: string;
   taskId?: string;
   createdAt: string;
@@ -247,11 +374,19 @@ export class RunStore {
     let turnIndex = 0;
     if (!sessionId) {
       sessionId = crypto.randomUUID();
+      const identity = resolveRepositoryIdentity(input.repositoryPath);
       this.db
         .prepare(
-          "INSERT INTO sessions (id, repository_path, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO sessions (id, repository_path, repository_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .run(sessionId, input.repositoryPath, truncateTitle(input.prompt), now, now);
+        .run(sessionId, input.repositoryPath, identity.repositoryId, truncateTitle(input.prompt), now, now);
+      this.createSessionConfig({
+        sessionId,
+        mode: input.mode,
+        leadAgentId: input.leadProvider,
+        ...(input.workerProviders?.length ? { workerAgentId: input.workerProviders[0] } : {}),
+        provenance: "native",
+      });
     } else {
       const last = this.db
         .prepare("SELECT COALESCE(MAX(turn_index), -1) + 1 AS next FROM runs WHERE session_id = ?")
@@ -278,6 +413,15 @@ export class RunStore {
         sessionId,
         turnIndex,
       );
+
+    // Record provider session bindings for the lead agent and each worker agent.
+    if (input.leadProvider) {
+      this.recordBinding(sessionId, input.leadProvider, input.leadProvider, turnIndex);
+    }
+    for (const w of input.workerProviders ?? []) {
+      this.recordBinding(sessionId, w, w, turnIndex);
+    }
+
     return this.getRun(input.id) as PersistedRun;
   }
 
@@ -582,6 +726,16 @@ export class RunStore {
       };
     });
 
+    const cfg = this.getSessionConfig(id);
+
+    // Build repository identity from session columns.
+    const repositoryIdentity: RepositoryIdentity | undefined = session.repository_id
+      ? {
+          repositoryId: String(session.repository_id),
+          canonicalRoot: String(session.repository_path),
+        }
+      : undefined;
+
     return {
       id: String(session.id),
       repositoryPath: String(session.repository_path),
@@ -589,6 +743,8 @@ export class RunStore {
       createdAt: String(session.created_at),
       updatedAt: String(session.updated_at),
       turns,
+      ...(cfg ? { config: cfg } : {}),
+      ...(repositoryIdentity ? { repositoryIdentity } : {}),
     };
   }
 
@@ -633,6 +789,134 @@ export class RunStore {
       .prepare("SELECT * FROM session_context WHERE session_id = ? ORDER BY turn_index DESC LIMIT 1")
       .get(sessionId) as Record<string, unknown> | undefined;
     return row ? toSessionContext(row) : undefined;
+  }
+
+  createSessionConfig(input: CreateSessionConfigInput): SessionConfig {
+    const now = new Date().toISOString();
+    const revision = this.nextConfigRevision(input.sessionId);
+    const provenance = input.provenance ?? "native";
+    const missingFields = [
+      ...(!input.mode ? ["mode" as const] : []),
+      ...(!input.leadAgentId ? ["leadAgentId" as const] : []),
+      ...(!input.workerAgentId ? ["workerAgentId" as const] : []),
+      ...(!input.model ? ["model" as const] : []),
+      ...(!input.reasoningLevel ? ["reasoningLevel" as const] : []),
+      ...(!input.permission ? ["permission" as const] : []),
+      ...(!input.approvalMode ? ["approvalMode" as const] : []),
+      ...(!input.cwd ? ["cwd" as const] : []),
+      ...(!input.baseBranch ? ["baseBranch" as const] : []),
+    ];
+    const completeness = missingFields.length === 0 ? "complete" : "partial";
+    this.db
+      .prepare(
+        `INSERT INTO session_config (session_id, revision, mode, lead_agent_id, worker_agent_id,
+          model, reasoning_level, permission, approval_mode, cwd, base_branch,
+          provenance, completeness, missing_fields, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.sessionId,
+        revision,
+        input.mode ?? null,
+        input.leadAgentId ?? null,
+        input.workerAgentId ?? null,
+        input.model ?? null,
+        input.reasoningLevel ?? null,
+        input.permission ?? null,
+        input.approvalMode ?? null,
+        input.cwd ?? null,
+        input.baseBranch ?? null,
+        provenance,
+        completeness,
+        JSON.stringify(missingFields),
+        now,
+      );
+    return this.getSessionConfig(input.sessionId)!;
+  }
+
+  private nextConfigRevision(sessionId: string): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(MAX(revision), 0) + 1 AS next FROM session_config WHERE session_id = ?")
+      .get(sessionId) as { next: number };
+    return Number(row.next);
+  }
+
+  getSessionConfig(sessionId: string): SessionConfig | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM session_config WHERE session_id = ? ORDER BY revision DESC LIMIT 1",
+      )
+      .get(sessionId) as Record<string, unknown> | undefined;
+    return row ? toSessionConfig(row) : undefined;
+  }
+
+  listSessionConfigs(sessionId: string): SessionConfig[] {
+    const rows = this.db
+      .prepare("SELECT * FROM session_config WHERE session_id = ? ORDER BY revision ASC")
+      .all(sessionId) as Array<Record<string, unknown>>;
+    return rows.map(toSessionConfig);
+  }
+
+  recordBinding(
+    bremioSessionId: string,
+    agentId: string,
+    transport: string,
+    turnIndex: number,
+  ): ProviderSessionBinding {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO provider_session_binding
+           (bremio_session_id, agent_id, transport, status, turn_index, created_at, last_used_at)
+         VALUES (?, ?, ?, 'active', ?, ?, ?)`,
+      )
+      .run(bremioSessionId, agentId, transport, turnIndex, now, now);
+    return this.getBindings(bremioSessionId).find((b) => b.agentId === agentId)!;
+  }
+
+  setBindingStatus(input: SetBindingStatusInput): ProviderSessionBinding | undefined {
+    const now = new Date().toISOString();
+    if (input.nativeSessionId !== undefined) {
+      this.db
+        .prepare(
+          `UPDATE provider_session_binding
+           SET status = ?, native_session_id = ?, last_used_at = ?
+           WHERE bremio_session_id = ? AND agent_id = ?`,
+        )
+        .run(input.status, input.nativeSessionId, now, input.bremioSessionId, input.agentId);
+    } else {
+      this.db
+        .prepare(
+          `UPDATE provider_session_binding
+           SET status = ?, last_used_at = ?
+           WHERE bremio_session_id = ? AND agent_id = ?`,
+        )
+        .run(input.status, now, input.bremioSessionId, input.agentId);
+    }
+    const row = this.db
+      .prepare(
+        "SELECT * FROM provider_session_binding WHERE bremio_session_id = ? AND agent_id = ?",
+      )
+      .get(input.bremioSessionId, input.agentId) as Record<string, unknown> | undefined;
+    return row ? toProviderSessionBinding(row) : undefined;
+  }
+
+  getBindings(bremioSessionId: string): ProviderSessionBinding[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM provider_session_binding WHERE bremio_session_id = ? ORDER BY created_at ASC",
+      )
+      .all(bremioSessionId) as Array<Record<string, unknown>>;
+    return rows.map(toProviderSessionBinding);
+  }
+
+  getActiveBindings(bremioSessionId: string): ProviderSessionBinding[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM provider_session_binding WHERE bremio_session_id = ? AND status = 'active' ORDER BY created_at ASC",
+      )
+      .all(bremioSessionId) as Array<Record<string, unknown>>;
+    return rows.map(toProviderSessionBinding);
   }
 }
 
@@ -747,6 +1031,136 @@ function migrate(db: Database): void {
       `);
     }
 
+    if (Number(current) < 4) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_config (
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          revision INTEGER NOT NULL,
+          mode TEXT,
+          lead_agent_id TEXT,
+          worker_agent_id TEXT,
+          model TEXT,
+          reasoning_level TEXT,
+          permission TEXT,
+          approval_mode TEXT,
+          cwd TEXT,
+          base_branch TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (session_id, revision)
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_config_session ON session_config(session_id, revision DESC);
+      `);
+
+      // Backfill: derive config from each session's latest run's lead_provider and mode.
+      const sessions = db
+        .prepare(
+          `SELECT s.id, r.lead_provider, r.mode, r.worker_providers, r.created_at
+           FROM sessions s
+           LEFT JOIN runs r ON r.session_id = s.id
+           WHERE r.id IN (
+             SELECT r2.id FROM runs r2
+             WHERE r2.session_id = s.id
+             ORDER BY r2.turn_index DESC
+             LIMIT 1
+           )`,
+        )
+        .all() as Array<{ id: string; lead_provider: string | null; mode: string | null; worker_providers: string | null; created_at: string }>;
+      for (const s of sessions) {
+        const workerIds = s.worker_providers ? (JSON.parse(s.worker_providers) as string[]) : undefined;
+        db.prepare(
+          `INSERT OR IGNORE INTO session_config (session_id, revision, mode, lead_agent_id,
+            worker_agent_id, created_at)
+           VALUES (?, 1, ?, ?, ?, ?)`,
+        ).run(
+          s.id,
+          s.mode,
+          s.lead_provider,
+          workerIds?.[0] ?? null,
+          s.created_at,
+        );
+      }
+    }
+
+    if (Number(current) < 5) {
+      addColumnIfMissing(db, "session_config", "provenance", "TEXT NOT NULL DEFAULT 'legacy-derived'");
+      addColumnIfMissing(db, "session_config", "completeness", "TEXT NOT NULL DEFAULT 'partial'");
+      addColumnIfMissing(db, "session_config", "missing_fields", "TEXT NOT NULL DEFAULT '[]'");
+      // Mark all existing backfilled rows as legacy-derived/partial with computed missing fields.
+      // Columns that backfill never populated: model, reasoning_level, permission, approval_mode,
+      // cwd, base_branch.
+      db.exec(
+        `UPDATE session_config SET
+           provenance = 'legacy-derived',
+           completeness = 'partial',
+           missing_fields = '["model","reasoningLevel","permission","approvalMode","cwd","baseBranch"]'
+         WHERE provenance IS NULL OR provenance = 'legacy-derived'`,
+      );
+    }
+
+    if (Number(current) < 6) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS provider_session_binding (
+          bremio_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          agent_id TEXT NOT NULL,
+          transport TEXT NOT NULL,
+          native_session_id TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          turn_index INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT NOT NULL,
+          PRIMARY KEY (bremio_session_id, agent_id)
+        );
+      `);
+
+      // Backfill bindings for existing sessions from their runs' providers.
+      const backfillBindings = db
+        .prepare(
+          `SELECT r.session_id, r.lead_provider, r.worker_providers, r.turn_index, r.created_at
+           FROM runs r
+           WHERE r.session_id IS NOT NULL
+           ORDER BY r.turn_index ASC`,
+        )
+        .all() as Array<{
+          session_id: string;
+          lead_provider: string | null;
+          worker_providers: string | null;
+          turn_index: number;
+          created_at: string;
+        }>;
+      const seen = new Set<string>();
+      for (const b of backfillBindings) {
+        const agents: Array<{ id: string }> = [];
+        if (b.lead_provider) agents.push({ id: b.lead_provider });
+        if (b.worker_providers) {
+          for (const w of JSON.parse(b.worker_providers) as string[]) {
+            agents.push({ id: w });
+          }
+        }
+        for (const a of agents) {
+          const key = `${b.session_id}:${a.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          db.prepare(
+            `INSERT OR IGNORE INTO provider_session_binding
+               (bremio_session_id, agent_id, transport, status, turn_index, created_at, last_used_at)
+             VALUES (?, ?, ?, 'active', ?, ?, ?)`,
+          ).run(b.session_id, a.id, a.id, b.turn_index, b.created_at, b.created_at);
+        }
+      }
+    }
+
+    if (Number(current) < 7) {
+      addColumnIfMissing(db, "sessions", "repository_id", "TEXT");
+      // Backfill: set repository_id to the normalized repository_path for all
+      // existing sessions, so existing sessions get a stable identity even
+      // without re-deriving from git. A future online operation can refine
+      // this by resolving the actual git identity.
+      db.exec(
+        `UPDATE sessions SET repository_id = RTRIM(LOWER(REPLACE(repository_path, '\\', '/')), '/')
+         WHERE repository_id IS NULL`,
+      );
+    }
+
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -783,6 +1197,41 @@ function toSessionContext(row: Record<string, unknown>): PersistedSessionContext
     ...(row.summary !== null && row.summary !== undefined ? { summary: String(row.summary) } : {}),
     ...(providerSessionIds && Object.keys(providerSessionIds).length > 0 ? { providerSessionIds } : {}),
     createdAt: String(row.created_at),
+  };
+}
+
+function toSessionConfig(row: Record<string, unknown>): SessionConfig {
+  return {
+    sessionId: String(row.session_id),
+    revision: Number(row.revision),
+    ...(row.mode ? { mode: row.mode as "single" | "team" } : {}),
+    ...(row.lead_agent_id ? { leadAgentId: String(row.lead_agent_id) } : {}),
+    ...(row.worker_agent_id ? { workerAgentId: String(row.worker_agent_id) } : {}),
+    ...(row.model ? { model: String(row.model) } : {}),
+    ...(row.reasoning_level ? { reasoningLevel: String(row.reasoning_level) } : {}),
+    ...(row.permission ? { permission: String(row.permission) } : {}),
+    ...(row.approval_mode ? { approvalMode: String(row.approval_mode) } : {}),
+    ...(row.cwd ? { cwd: String(row.cwd) } : {}),
+    ...(row.base_branch ? { baseBranch: String(row.base_branch) } : {}),
+    provenance: (row.provenance ?? "legacy-derived") as RecordProvenance,
+    completeness: (row.completeness ?? "partial") as "complete" | "partial",
+    missingFields: row.missing_fields
+      ? (JSON.parse(String(row.missing_fields)) as string[])
+      : [],
+    createdAt: String(row.created_at),
+  };
+}
+
+function toProviderSessionBinding(row: Record<string, unknown>): ProviderSessionBinding {
+  return {
+    bremioSessionId: String(row.bremio_session_id),
+    agentId: String(row.agent_id),
+    transport: String(row.transport),
+    ...(row.native_session_id ? { nativeSessionId: String(row.native_session_id) } : {}),
+    status: row.status as "active" | "lost" | "expired",
+    turnIndex: Number(row.turn_index),
+    createdAt: String(row.created_at),
+    lastUsedAt: String(row.last_used_at),
   };
 }
 

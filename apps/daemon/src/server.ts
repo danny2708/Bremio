@@ -237,6 +237,32 @@ async function handle(
     return sendJson(res, 200, { session });
   }
 
+  const sessionConfigGet = /^\/sessions\/([^/]+)\/config$/.exec(route);
+  if (method === "GET" && sessionConfigGet) {
+    const id = decodeURIComponent(sessionConfigGet[1] ?? "");
+    const cfg = registry.getSessionConfig(id);
+    if (!cfg) return sendJson(res, 404, { error: `no config for session: ${id}` });
+    return sendJson(res, 200, { config: cfg });
+  }
+
+  const sessionConfigsList = /^\/sessions\/([^/]+)\/configs$/.exec(route);
+  if (method === "GET" && sessionConfigsList) {
+    const id = decodeURIComponent(sessionConfigsList[1] ?? "");
+    return sendJson(res, 200, { configs: registry.listSessionConfigs(id) });
+  }
+
+  const sessionConfigPost = /^\/sessions\/([^/]+)\/config$/.exec(route);
+  if (method === "POST" && sessionConfigPost) {
+    const id = decodeURIComponent(sessionConfigPost[1] ?? "");
+    try {
+      const input = (await readJsonBody(req)) as Record<string, unknown>;
+      const cfg = registry.createSessionConfig({ sessionId: id, ...input });
+      return sendJson(res, 201, { config: cfg });
+    } catch (err) {
+      return sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
   const runDetail = /^\/runs\/([^/]+)$/.exec(route);
   if (method === "GET" && runDetail) {
     const id = decodeURIComponent(runDetail[1] ?? "");

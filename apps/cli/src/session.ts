@@ -1,3 +1,4 @@
+import { createInterface } from "node:readline/promises";
 import path from "node:path";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
@@ -364,7 +365,7 @@ export async function continueSessionCommand(options: {
   try {
     detail = store.sessionDetail(id);
   } finally {
-    store.close();
+    if (!detail) store.close();
   }
 
   if (!detail) {
@@ -396,11 +397,52 @@ export async function continueSessionCommand(options: {
     availableAgentIds: [...registry.keys()],
   });
   if (!resolved.ok) {
+    store.close();
     console.error(c.red(`error: ${resolved.error}`));
     return 1;
   }
   const { mode, primaryAgent } = resolved;
   const turnIndex = (detail.turns ?? []).length;
+
+  // S1-T5: check session config provenance and prompt if partial/legacy.
+  const cfg = detail.config;
+  if (cfg && cfg.provenance === "legacy-derived" && cfg.completeness === "partial") {
+    console.log(c.yellow(`\n⚠ Session ${id} was created from legacy data. Its configuration was derived:`));
+    console.log(`   Mode:          ${cfg.mode ?? c.dim("unknown")}`);
+    console.log(`   Lead agent:    ${cfg.leadAgentId ?? c.dim("unknown")}`);
+    if (cfg.workerAgentId) console.log(`   Worker agent:  ${cfg.workerAgentId}`);
+    if (cfg.missingFields.length > 0) {
+      console.log(`   Missing:       ${cfg.missingFields.join(", ")}`);
+    }
+    console.log(`   To fill these gaps, update the session config via the HTTP API.`);
+
+    if (process.stdin.isTTY) {
+      // Prompt for confirmation before continuing with the derived config.
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = (await rl.question(c.yellow("\nContinue with this configuration? (Y/n) "))).trim().toLowerCase();
+      rl.close();
+      if (answer === "n" || answer === "no") {
+        store.close();
+        console.log(c.yellow("Session continuation cancelled by user."));
+        return 0;
+      }
+
+      // Record the confirmation as a native revision so this session stops
+      // being treated as legacy-derived on the next resume.
+      store.createSessionConfig({ sessionId: id, mode: cfg.mode, leadAgentId: cfg.leadAgentId, provenance: "native" });
+      console.log(c.green("✓ Configuration confirmed and recorded.\n"));
+    } else {
+      // No terminal to ask. Proceed — the provider identity is authoritative
+      // and only defaultable fields are missing — but do NOT stamp a native
+      // revision, because the user has not actually confirmed anything. Writing
+      // one would forge the provenance signal that S1-T3 exists to keep honest.
+      console.log(
+        c.yellow("Non-interactive: continuing with the derived configuration (still marked legacy-derived).\n"),
+      );
+    }
+  }
+
+  store.close();
 
   console.log(`Continuing session ${id} (turn ${turnIndex}) in ${mode} mode on ${primaryAgent}...`);
 

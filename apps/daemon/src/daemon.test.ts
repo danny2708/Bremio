@@ -322,6 +322,12 @@ describe("sessions", () => {
     expect(body.session.turns[1]?.prompt).toBe("second turn");
     expect(body.session.turns[1]?.model).toBe("gpt-4");
     expect(body.session.turns[1]?.reasoningLevel).toBe("high");
+
+    // S1-T5: session detail includes config with provenance.
+    expect(body.session.config).toBeDefined();
+    const cfg = body.session.config!;
+    expect(cfg.provenance).toBe("native");
+    expect(cfg.completeness).toBe("partial");
   });
 
   it("404s an unknown session id", async () => {
@@ -330,6 +336,71 @@ describe("sessions", () => {
     expect(response.status).toBe(404);
     const body = (await response.json()) as { error: string };
     expect(body.error).toContain("unknown session");
+  });
+});
+
+describe("session config", () => {
+  it("GET /sessions/:id/config returns the current config", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+    const run = store.createRun({ id: "cfg-endpoint", mode: "team", repositoryPath: "/tmp/repo", prompt: "cfg test" });
+    const sid = run.sessionId!;
+
+    const handle = await daemon(registry);
+    const response = await call(handle, `/sessions/${sid}/config`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { config: Record<string, unknown> };
+    expect(body.config.revision).toBe(1);
+    expect(body.config.mode).toBe("team");
+  });
+
+  it("GET /sessions/:id/configs lists all revisions", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+    const run = store.createRun({ id: "cfg-list", mode: "single", repositoryPath: "/tmp/repo", prompt: "list cfg" });
+    const sid = run.sessionId!;
+    store.createSessionConfig({ sessionId: sid, mode: "team", leadAgentId: "codex" });
+
+    const handle = await daemon(registry);
+    const response = await call(handle, `/sessions/${sid}/configs`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { configs: Array<Record<string, unknown>> };
+    expect(body.configs).toHaveLength(2);
+    expect(body.configs[0]?.revision).toBe(1);
+    expect(body.configs[1]?.revision).toBe(2);
+  });
+
+  it("POST /sessions/:id/config creates a new revision", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+    const run = store.createRun({ id: "cfg-post", mode: "single", repositoryPath: "/tmp/repo", prompt: "post cfg" });
+    const sid = run.sessionId!;
+
+    const handle = await daemon(registry);
+    const response = await call(handle, `/sessions/${sid}/config`, {
+      method: "POST",
+      body: JSON.stringify({ mode: "team", leadAgentId: "claude", model: "gpt-4" }),
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { config: Record<string, unknown> };
+    expect(body.config.revision).toBe(2);
+    expect(body.config.mode).toBe("team");
+    expect(body.config.leadAgentId).toBe("claude");
+    expect(body.config.model).toBe("gpt-4");
+
+    // Verify the latest config was updated.
+    const getResponse = await call(handle, `/sessions/${sid}/config`);
+    expect(getResponse.status).toBe(200);
+    const getBody = (await getResponse.json()) as { config: Record<string, unknown> };
+    expect(getBody.config.revision).toBe(2);
+    expect(getBody.config.mode).toBe("team");
+  });
+
+  it("GET /sessions/:id/config 404s an unknown session", async () => {
+    const handle = await daemon();
+    const response = await call(handle, "/sessions/nonexistent/config");
+    expect(response.status).toBe(404);
   });
 });
 

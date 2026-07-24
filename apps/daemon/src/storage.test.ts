@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MAX_PAYLOAD_BYTES,
   normalizeRepositoryPath,
+  resolveRepositoryIdentity,
   RunStore,
   capPayload,
   isTerminal,
@@ -504,6 +505,65 @@ describe("sessions", () => {
   });
 });
 
+describe("RepositoryIdentity (S1-T6)", () => {
+  it("resolves identity for a non-git directory", () => {
+    const identity = resolveRepositoryIdentity("/tmp/nonexistent-repo");
+    expect(identity.repositoryId).toBe(normalizeRepositoryPath(path.resolve("/tmp/nonexistent-repo")));
+    expect(identity.canonicalRoot).toBe(normalizeRepositoryPath(path.resolve("/tmp/nonexistent-repo")));
+    expect(identity.gitCommonDir).toBeUndefined();
+    expect(identity.worktreeId).toBeUndefined();
+  });
+
+  it("resolves identity for a git repo", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-id-git-"));
+    dirs.push(dir);
+    const { execSync: exec } = await import("node:child_process");
+    exec("git init", { cwd: dir, stdio: "ignore" });
+    exec('git config user.email "test@test" && git config user.name "Test"', { cwd: dir, stdio: "ignore" });
+    exec("git commit --allow-empty -m init", { cwd: dir, stdio: "ignore" });
+
+    const canonicalRoot = normalizeRepositoryPath(path.resolve(dir));
+    const identity = resolveRepositoryIdentity(dir);
+    expect(identity.repositoryId).toBe(normalizeRepositoryPath(path.resolve(dir, ".git")));
+    expect(identity.canonicalRoot).toBe(canonicalRoot);
+    expect(identity.gitCommonDir).toBe(normalizeRepositoryPath(path.resolve(dir, ".git")));
+    // The main worktree is not a linked worktree, so it carries no worktreeId.
+    expect(identity.worktreeId).toBeUndefined();
+  });
+
+  it("gives a linked worktree the same repositoryId as its main worktree, but a distinct worktreeId", async () => {
+    // This is the whole reason the identity is derived from the common git dir
+    // rather than the path: two worktrees of one repo must resolve to the same
+    // repository, or a run started in a worktree would look like a different
+    // project's history. Without this test the worktree half of S1-T6 — the
+    // half the task is named for — was unproven.
+    const main = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-id-wt-main-"));
+    dirs.push(main);
+    const { execSync: exec } = await import("node:child_process");
+    exec("git init", { cwd: main, stdio: "ignore" });
+    exec('git config user.email "test@test" && git config user.name "Test"', { cwd: main, stdio: "ignore" });
+    exec("git commit --allow-empty -m init", { cwd: main, stdio: "ignore" });
+
+    const linked = path.join(os.tmpdir(), `bremio-id-wt-linked-${Date.now()}`);
+    dirs.push(linked);
+    exec(`git worktree add "${linked}" -b feature`, { cwd: main, stdio: "ignore" });
+
+    const mainId = resolveRepositoryIdentity(main);
+    const linkedId = resolveRepositoryIdentity(linked);
+
+    // Same logical repository.
+    expect(linkedId.repositoryId).toBe(mainId.repositoryId);
+    // Distinct working directories.
+    expect(linkedId.canonicalRoot).not.toBe(mainId.canonicalRoot);
+    // Only the linked one is a worktree, and its id is its own directory.
+    expect(linkedId.worktreeId).toBe(normalizeRepositoryPath(path.resolve(linked)));
+    expect(mainId.worktreeId).toBeUndefined();
+
+    // Leave no worktree registration behind for the temp-dir cleanup.
+    exec(`git worktree remove "${linked}" --force`, { cwd: main, stdio: "ignore" });
+  });
+});
+
 describe("session_context (B1)", () => {
   it("stores and retrieves session context per turn without overwriting earlier turns", async () => {
     const s = await store();
@@ -618,6 +678,224 @@ describe("session_context (B1)", () => {
   });
 });
 
+async function createV3Fixture(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-v3-"));
+  dirs.push(dir);
+  const file = path.join(dir, "bremio.db");
+  const db = new DatabaseSync(file);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec(`CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY, mode TEXT NOT NULL, status TEXT NOT NULL,
+    repository_path TEXT NOT NULL, prompt TEXT NOT NULL,
+    base_branch TEXT, started_at TEXT, completed_at TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    lead_provider TEXT, worker_providers TEXT,
+    orchestrator_run_id TEXT, final_summary TEXT,
+    failure_code TEXT, failure_message TEXT, retry_of_run_id TEXT,
+    session_id TEXT, turn_index INTEGER NOT NULL DEFAULT 0
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY, repository_path TEXT NOT NULL,
+    title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS session_context (
+    session_id TEXT NOT NULL, turn_index INTEGER NOT NULL,
+    summary TEXT, provider_session_ids TEXT, created_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, turn_index)
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS artifacts (
+    run_id TEXT NOT NULL, kind TEXT NOT NULL, path TEXT NOT NULL,
+    task_id TEXT, created_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, kind, path)
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS run_events (
+    run_id TEXT NOT NULL, seq INTEGER NOT NULL, type TEXT NOT NULL,
+    timestamp TEXT NOT NULL, payload TEXT NOT NULL,
+    PRIMARY KEY (run_id, seq)
+  )`);
+  db.exec("PRAGMA user_version = 3");
+
+  db.prepare(
+    "INSERT INTO sessions (id, repository_path, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run("ses-v3", "/tmp/repo", "v3 session", "2025-06-01T00:00:00.000Z", "2025-06-01T00:00:00.000Z");
+
+  db.prepare(
+    `INSERT INTO runs (id, mode, status, repository_path, prompt, created_at, updated_at,
+      lead_provider, worker_providers, session_id, turn_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "run-v3", "team", "completed", "/tmp/repo", "v3 task", "2025-06-01T00:00:00.000Z",
+    "2025-06-01T00:00:00.000Z", "claude", '["codex"]', "ses-v3", 0,
+  );
+
+  db.close();
+  return file;
+}
+
+describe("session_config (S1-T1/T2)", () => {
+  it("creates a native, complete config entry when a session is created implicitly", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "cfg-test",
+      mode: "team",
+      repositoryPath: "/tmp/repo",
+      prompt: "test",
+      leadProvider: "claude",
+    });
+
+    const cfg = s.getSessionConfig(run.sessionId!);
+    expect(cfg).toBeDefined();
+    expect(cfg?.sessionId).toBe(run.sessionId);
+    expect(cfg?.revision).toBe(1);
+    expect(cfg?.mode).toBe("team");
+    expect(cfg?.leadAgentId).toBe("claude");
+    expect(cfg?.provenance).toBe("native");
+    expect(cfg?.completeness).toBe("partial");
+    expect(cfg?.missingFields).not.toEqual([]);
+    expect(cfg?.createdAt).toBeDefined();
+  });
+
+  it("round-trips a full config and returns the latest revision", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "cfg-full",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "full config",
+    });
+
+    const cfg = s.getSessionConfig(run.sessionId!);
+    expect(cfg).toBeDefined();
+    expect(cfg?.mode).toBe("single");
+    expect(cfg?.provenance).toBe("native");
+    expect(cfg?.completeness).toBe("partial");
+  });
+
+  it("getSessionConfig returns undefined for unknown session", async () => {
+    const s = await store();
+    expect(s.getSessionConfig("nonexistent-session")).toBeUndefined();
+    expect(s.listSessionConfigs("nonexistent-session")).toEqual([]);
+  });
+
+  it("upgrades a v3 fixture to v5 with session_config backfilled and provenance", async () => {
+    const file = await createV3Fixture();
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    // The v3 session must have a backfilled config with provenance.
+    const cfg = s.getSessionConfig("ses-v3");
+    expect(cfg).toBeDefined();
+    expect(cfg?.sessionId).toBe("ses-v3");
+    expect(cfg?.revision).toBe(1);
+    expect(cfg?.mode).toBe("team");
+    expect(cfg?.leadAgentId).toBe("claude");
+    expect(cfg?.provenance).toBe("legacy-derived");
+    expect(cfg?.completeness).toBe("partial");
+    expect(cfg?.missingFields).toContain("model");
+    expect(cfg?.missingFields).toContain("reasoningLevel");
+
+    // Original data must still be intact.
+    expect(s.getRun("run-v3")?.prompt).toBe("v3 task");
+    expect(s.listSessions("/tmp/repo")).toHaveLength(1);
+  });
+
+  it("pristine and migrated stores both report user_version = 6", async () => {
+    const fresh = await store();
+    const { user_version: freshVer } = fresh["db"]
+      .prepare("PRAGMA user_version")
+      .get() as { user_version: number };
+    expect(freshVer).toBe(7);
+
+    const file = await createV3Fixture();
+    const migrated = await RunStore.open(file);
+    stores.push(migrated);
+    const { user_version: migratedVer } = migrated["db"]
+      .prepare("PRAGMA user_version")
+      .get() as { user_version: number };
+    expect(migratedVer).toBe(7);
+  });
+
+  it("re-running migration on v5 is a no-op", async () => {
+    const file = await createV3Fixture();
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    // Table exists from the first open.
+    const info = s["db"].prepare("PRAGMA table_info(session_config)").all() as Array<{ name: string }>;
+    expect(info.length).toBeGreaterThan(0);
+
+    // Close and reopen — migration will run again but must succeed.
+    const s2 = await RunStore.open(file);
+    stores.push(s2);
+    expect(s2.getSessionConfig("ses-v3")?.provenance).toBe("legacy-derived");
+  });
+
+  it("createSessionConfig respects explicit provenance and computes completeness", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "prov-test",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "provenance test",
+    });
+    const sid = run.sessionId!;
+
+    // First revision (implicit from createRun) is native/partial (only mode + leadAgentId).
+    const first = s.getSessionConfig(sid);
+    expect(first?.provenance).toBe("native");
+    expect(first?.completeness).toBe("partial");
+
+    // Write a partial revision explicitly as legacy-import.
+    s.createSessionConfig({
+      sessionId: sid,
+      mode: "single",
+      leadAgentId: "claude",
+      provenance: "legacy-import",
+    });
+
+    const second = s.getSessionConfig(sid);
+    expect(second?.revision).toBe(2);
+    expect(second?.provenance).toBe("legacy-import");
+    expect(second?.completeness).toBe("partial");
+    expect(second?.missingFields).toContain("model");
+    expect(second?.missingFields).toContain("reasoningLevel");
+  });
+
+  it("stores multiple revisions for the same session", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "rev-test",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "revision test",
+    });
+    const sid = run.sessionId!;
+
+    const first = s.getSessionConfig(sid);
+    expect(first?.revision).toBe(1);
+
+    // Write a second revision directly.
+    s.createSessionConfig({
+      sessionId: sid,
+      mode: "team",
+      leadAgentId: "codex",
+      workerAgentId: "claude",
+      model: "gpt-4",
+      reasoningLevel: "high",
+    });
+
+    const second = s.getSessionConfig(sid);
+    expect(second?.revision).toBe(2);
+    expect(second?.mode).toBe("team");
+    expect(second?.leadAgentId).toBe("codex");
+
+    const all = s.listSessionConfigs(sid);
+    expect(all).toHaveLength(2);
+    expect(all[0]?.revision).toBe(1);
+    expect(all[1]?.revision).toBe(2);
+  });
+});
+
 describe("truncateTitle", () => {
   it("uses the first line when shorter than the limit", () => {
     expect(truncateTitle("hello world")).toBe("hello world");
@@ -630,5 +908,123 @@ describe("truncateTitle", () => {
 
   it("handles multi-line prompts", () => {
     expect(truncateTitle("first line\nsecond line", 80)).toBe("first line");
+  });
+});
+
+describe("ProviderSessionBinding (S1-T4)", () => {
+  it("records a binding when a run is created with a lead provider", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "bind-lead",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "binding test",
+      leadProvider: "claude",
+    });
+    const sid = run.sessionId!;
+
+    const bindings = s.getBindings(sid);
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]?.agentId).toBe("claude");
+    expect(bindings[0]?.transport).toBe("claude");
+    expect(bindings[0]?.status).toBe("active");
+    expect(bindings[0]?.turnIndex).toBe(0);
+  });
+
+  it("records bindings for both lead and worker providers", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "bind-both",
+      mode: "team",
+      repositoryPath: "/tmp/repo",
+      prompt: "team binding",
+      leadProvider: "claude",
+      workerProviders: ["codex"],
+    });
+    const sid = run.sessionId!;
+
+    const bindings = s.getBindings(sid);
+    expect(bindings).toHaveLength(2);
+    const agents = bindings.map((b) => b.agentId).sort();
+    expect(agents).toEqual(["claude", "codex"]);
+  });
+
+  it("setBindingStatus updates status and native_session_id", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "bind-status",
+      mode: "single",
+      repositoryPath: "/tmp/repo",
+      prompt: "status test",
+      leadProvider: "claude",
+    });
+    const sid = run.sessionId!;
+
+    const updated = s.setBindingStatus({
+      bremioSessionId: sid,
+      agentId: "claude",
+      status: "active",
+      nativeSessionId: "claude-native-ses-1",
+    });
+    expect(updated?.nativeSessionId).toBe("claude-native-ses-1");
+    expect(updated?.status).toBe("active");
+
+    const lost = s.setBindingStatus({
+      bremioSessionId: sid,
+      agentId: "claude",
+      status: "lost",
+    });
+    expect(lost?.status).toBe("lost");
+    expect(lost?.nativeSessionId).toBe("claude-native-ses-1"); // preserved
+  });
+
+  it("getActiveBindings returns only active bindings", async () => {
+    const s = await store();
+    const run = s.createRun({
+      id: "bind-active",
+      mode: "team",
+      repositoryPath: "/tmp/repo",
+      prompt: "active test",
+      leadProvider: "claude",
+      workerProviders: ["codex"],
+    });
+    const sid = run.sessionId!;
+
+    expect(s.getActiveBindings(sid)).toHaveLength(2);
+
+    s.setBindingStatus({
+      bremioSessionId: sid,
+      agentId: "claude",
+      status: "lost",
+    });
+    const active = s.getActiveBindings(sid);
+    expect(active).toHaveLength(1);
+    expect(active[0]?.agentId).toBe("codex");
+  });
+
+  it("upgrades a v3 fixture to v7 with repository_id backfilled", async () => {
+    const file = await createV3Fixture();
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    // v6→v7 adds repository_id and backfills from repository_path.
+    const detail = s.sessionDetail("ses-v3");
+    expect(detail).toBeDefined();
+    expect(detail!.repositoryIdentity).toBeDefined();
+    // repository_id should equal the normalized repository_path /tmp/repo.
+    expect(detail!.repositoryIdentity!.repositoryId).toBe(normalizeRepositoryPath("/tmp/repo"));
+    expect(detail!.repositoryIdentity!.canonicalRoot).toBe("/tmp/repo");
+  });
+
+  it("upgrades a v3 fixture to v6 with provider_session_binding backfilled", async () => {
+    const file = await createV3Fixture();
+    const s = await RunStore.open(file);
+    stores.push(s);
+
+    // The v3 session "ses-v3" has run "run-v3" with lead_provider="claude".
+    const bindings = s.getBindings("ses-v3");
+    expect(bindings.length).toBeGreaterThanOrEqual(1);
+    expect(bindings[0]?.agentId).toBe("claude");
+    expect(bindings[0]?.status).toBe("active");
   });
 });

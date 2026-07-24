@@ -50,12 +50,12 @@ other three read the schema it creates.
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S1-T1 | `session_config` schema v4 + transactional idempotent migration | M | — | no — blocks the rest |
-| [ ] | S1-T2 | Session config read/write API (revisions, not in-place mutation) | M | S1-T1 | — |
-| [ ] | S1-T3 | Legacy backfill with `provenance` + `completeness` (`docs/15` §4.4) | M | S1-T1 | ‖ S1-T4 |
-| [ ] | S1-T4 | `ProviderSessionBinding` schema + lost/expired states (`docs/15` §4.3) | M | S1-T1 | ‖ S1-T3 |
-| [ ] | S1-T5 | Resume reads persisted config; confirm-before-continue for partial legacy config | M | S1-T2, S1-T3 | — |
-| [ ] | S1-T6 | Canonical repository/worktree identity (`docs/15` §4.5) | L | — | ‖ everything |
+| [x] | S1-T1 | `session_config` schema v4 + transactional idempotent migration | M | — | no — blocks the rest |
+| [x] | S1-T2 | Session config read/write API (revisions, not in-place mutation) | M | S1-T1 | — |
+| [x] | S1-T3 | Legacy backfill with `provenance` + `completeness` (`docs/15` §4.4) | M | S1-T1 | ‖ S1-T4 |
+| [x] | S1-T4 | `ProviderSessionBinding` schema + lost/expired states (`docs/15` §4.3) | M | S1-T1 | ‖ S1-T3 |
+| [x] | S1-T5 | Resume reads persisted config; confirm-before-continue for partial legacy config | M | S1-T2, S1-T3 | — |
+| [x] | S1-T6 | Canonical repository/worktree identity (`docs/15` §4.5) | L | — | ‖ everything |
 
 **Sprint gate:** a session created on any provider resumes on that provider with
 its recorded mode, model and reasoning; a legacy session asks before continuing;

@@ -19,11 +19,13 @@ import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
 import {
   isTerminal,
+  type CreateSessionConfigInput,
   type PersistedRun,
   type PersistedRunEvent,
   type PersistedSession,
   type RunStatus,
   type RunStore,
+  type SessionConfig,
   type SessionDetail,
 } from "./storage";
 
@@ -186,6 +188,18 @@ export class RunRegistry {
 
   sessionDetail(id: string): SessionDetail | undefined {
     return this.store.sessionDetail(id);
+  }
+
+  getSessionConfig(sessionId: string): SessionConfig | undefined {
+    return this.store.getSessionConfig(sessionId);
+  }
+
+  listSessionConfigs(sessionId: string): SessionConfig[] {
+    return this.store.listSessionConfigs(sessionId);
+  }
+
+  createSessionConfig(input: CreateSessionConfigInput): SessionConfig {
+    return this.store.createSessionConfig(input);
   }
 
   /**
