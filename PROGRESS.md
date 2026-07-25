@@ -72,6 +72,31 @@ what blocked, what was learned.
 - `corepack pnpm test` — 621 passed / 59 files.
 - Committed: `30210c9 feat(adapter-sdk, policy, adapters): S2-T4 AdapterRuntimeCapabilities replaces name-based capability checks`
 
+### S2-T5 — OpenCode `--auto` opt-in, mirroring S0-T4
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T10:15 → 2026-07-25T10:25
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T5
+- **status:** done
+
+**Did**
+- Added `allowAutoPermissionBypass` option (default `false`) to `OpenCodeAdapterOptions`.
+- Added `OpenCodePermissionError` class (same defect class as Antigravity's `AntigravityPermissionError`).
+- Refuse writable runs without the opt-in before spawn — yield a `completed` event with `status: "failed"` and an actionable message naming the opt-in flag.
+- Only pass `--auto` when both `!readOnly` AND `allowAutoPermissionBypass` are true.
+- Added 3 new tests: refusal without bypass, success with bypass, read-only allowed regardless.
+- Updated 5 existing tests to use a `writableAdapter()` helper with `allowAutoPermissionBypass: true`.
+
+**Decided**
+- Same shape as Antigravity's `allowDangerousPermissionBypass` (S0-T4): off by default, must be asked for.
+- Refusal happens before spawn and yields a failed outcome (not a thrown error) so the caller can attribute the failure to the adapter rather than a configuration crash.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/adapter-opencode/src/opencode-adapter.test.ts` — 26 passed (+3 new).
+- `corepack pnpm test` — 624 passed / 59 files (1 flaky process-supervisor test fails intermittently).
+- Committed: `552b37a feat(adapter-opencode): S2-T5 --auto opt-in, mirroring S0-T4`
+
 
 ```md
 ### <TASK-ID> — <one-line title>

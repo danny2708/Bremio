@@ -71,14 +71,14 @@ its recorded mode, model and reasoning; a legacy session asks before continuing;
 | [x] | S2-T2 | `WorkspaceStrategy` becomes explicit; Solo may run isolated | L | S2-T1 | — |
 | [x] | S2-T3 | Plan mode enforced per transport, guarantee declared honestly (`docs/15` §2.2) | L | S2-T1, S2-T2 | — |
 | [x] | S2-T4 | `AdapterRuntimeCapabilities` replaces name-based capability checks | M | S2-T1 | ‖ S2-T2 |
-| [ ] | S2-T5 | OpenCode `--auto` opt-in, mirroring S0-T4 (`docs/15` §1.5, §8) | S | — | ‖ everything |
+| [x] | S2-T5 | OpenCode `--auto` opt-in, mirroring S0-T4 (`docs/15` §1.5, §8) | S | — | ‖ everything |
 
 **Sprint gate:** a Plan-mode run cannot modify the workspace, proven per adapter
 by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 
 ---
 
-## Sprint 3 — Approval lifecycle
+## Sprint 2 — Policy and enforcement ✅ COMPLETE
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
