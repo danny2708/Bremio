@@ -4,7 +4,35 @@ Narrative record of parallel agent work. The task board ([`TASKS.md`](TASKS.md))
 says *what* and *whether done*; this file says *how it went* — what was decided,
 what blocked, what was learned.
 
-## How this file is structured
+
+### S2-T3 — Plan mode enforced per transport, guarantee declared honestly
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T09:30 → 2026-07-25T09:55
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T3
+- **status:** done
+
+**Did**
+- Added `ReadOnlyEnforcement` union type (`hard-sandbox | provider-native | worktree-contained | advisory | unsupported`) to `AgentCapabilitiesSchema` in `packages/adapter-sdk`.
+- Declared `readOnlyEnforcement` honestly on all 4 production adapters + conservative default:
+  - OpenCode: `"provider-native"` (skips `--auto` in read-only mode)
+  - Claude: `"provider-native"` (`canUseTool` denies write tools)
+  - Codex: `"hard-sandbox"` (`--sandbox read-only`)
+  - Antigravity: `"provider-native"` (`--mode plan` without `--dangerously-skip-permissions`)
+  - Local (CONSERVATIVE_CAPABILITIES): `"unsupported"` (no read-only mechanism)
+- Fixed 12+ test files missing `readOnlyEnforcement` in mock capabilities.
+- Fixed `router.test.ts` type widening across spread objects.
+- Fixed `local-adapter.test.ts` "all-false" check to skip the non-boolean field.
+
+**Decided**
+- Each adapter's declaration must match observable behavior — the contract is that the guarantee is honest, not aspirational.
+- `unsupported` is the safe default for the conservative (unroutable) posture: if an adapter has no read-only mechanism, it's the caller's responsibility not to send it read-only requests.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 621 passed / 59 files.
+- Committed: `18e9cc1 feat(adapter-sdk, adapters): S2-T3 plan mode enforced per transport, guarantee declared honestly`
+
 
 - One `## Sprint N — <theme>` heading per sprint, newest sprint at the bottom.
 - Inside a sprint, one `### block` per agent working session. An agent that comes
