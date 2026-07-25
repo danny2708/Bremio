@@ -26,6 +26,7 @@ const CAPS: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: false,
+  readOnlyEnforcement: "provider-native",
 };
 
 abstract class EfficiencyAdapter implements AgentAdapter {

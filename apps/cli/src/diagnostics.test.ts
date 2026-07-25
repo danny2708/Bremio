@@ -21,7 +21,7 @@ async function scratch(): Promise<string> {
 
 const CAPS: AgentCapabilities = {
   planning: true, structuredOutput: true, repositoryRead: true, repositoryWrite: true,
-  shell: true, testing: true, browser: false, vision: false, resumableSessions: false,
+  shell: true, testing: true, browser: false, vision: false, resumableSessions: false, readOnlyEnforcement: "provider-native",
 };
 
 /** A stand-in adapter so diagnostics never touch a real provider. */

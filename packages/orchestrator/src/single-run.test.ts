@@ -25,6 +25,7 @@ const FULL_CAPABILITIES: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: true,
+  readOnlyEnforcement: "provider-native",
 };
 
 class SingleMockAdapter implements AgentAdapter {

@@ -34,6 +34,8 @@ const CAPABILITIES: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: true,
+  // canUseTool denies write tools when read-only → provider-native.
+  readOnlyEnforcement: "provider-native",
 };
 
 type ContentBlock = { type: string } & Record<string, unknown>;

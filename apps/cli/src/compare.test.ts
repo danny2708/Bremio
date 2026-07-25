@@ -28,6 +28,7 @@ const FULL_CAPABILITIES: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: true,
+  readOnlyEnforcement: "provider-native",
 };
 
 abstract class BaseAdapter implements AgentAdapter {

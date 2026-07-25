@@ -8,6 +8,20 @@ import { z } from "zod";
  * An adapter with `planning === true` and `structuredOutput === true` is
  * eligible to be the lead.
  */
+/**
+ * How read-only enforcement is achieved at the transport level.
+ * Only `"advisory"` and `"unsupported"` are not acceptable backings for
+ * `plan` or `approve` control modes.
+ */
+export const ReadOnlyEnforcementSchema = z.enum([
+  "hard-sandbox",
+  "provider-native",
+  "worktree-contained",
+  "advisory",
+  "unsupported",
+]);
+export type ReadOnlyEnforcement = z.infer<typeof ReadOnlyEnforcementSchema>;
+
 export const AgentCapabilitiesSchema = z.object({
   planning: z.boolean(),
   structuredOutput: z.boolean(),
@@ -18,6 +32,7 @@ export const AgentCapabilitiesSchema = z.object({
   browser: z.boolean(),
   vision: z.boolean(),
   resumableSessions: z.boolean(),
+  readOnlyEnforcement: ReadOnlyEnforcementSchema,
 });
 export type AgentCapabilities = z.infer<typeof AgentCapabilitiesSchema>;
 

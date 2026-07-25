@@ -36,6 +36,8 @@ const CAPABILITIES: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: true,
+  // --sandbox read-only is a hard OS/provider sandbox → hard-sandbox.
+  readOnlyEnforcement: "hard-sandbox",
 };
 
 export function buildCodexExecArgs(

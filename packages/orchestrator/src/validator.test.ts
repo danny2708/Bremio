@@ -13,6 +13,7 @@ const fullCaps: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: true,
+  readOnlyEnforcement: "provider-native",
 };
 
 const caps = new Map<string, AgentCapabilities>([

@@ -18,6 +18,7 @@ function mockAdapter(overrides: {
     browser: false,
     vision: false,
     resumableSessions,
+    readOnlyEnforcement: "provider-native",
   };
 
   return {

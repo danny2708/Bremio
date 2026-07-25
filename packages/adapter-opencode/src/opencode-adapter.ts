@@ -71,6 +71,9 @@ const CAPABILITIES: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: false,
+  // Without --auto (which we no longer pass in plan mode) the provider's
+  // own permission system refuses writes → provider-native.
+  readOnlyEnforcement: "provider-native",
 };
 
 export class OpenCodeAdapter implements AgentAdapter {
@@ -157,13 +160,17 @@ export class OpenCodeAdapter implements AgentAdapter {
   private async *startCliRun(req: AgentRunRequest, bin: string): AsyncIterable<AgentEvent> {
     const now = () => Date.now();
 
-    const args = [...this.extraArgs, "run", "--format", "json", "--dir", path.resolve(req.cwd), "--auto"];
+    const readOnly = req.permission === "read-only";
+    const args = [...this.extraArgs, "run", "--format", "json", "--dir", path.resolve(req.cwd)];
+
+    // S2-T3: --auto is incompatible with plan mode — it auto-approves all
+    // permission requests, which defeats --agent plan's read-only enforcement.
+    // Only add --auto when the caller explicitly asked for workspace-write.
+    if (!readOnly) args.push("--auto");
+    if (readOnly) args.push("--agent", "plan");
 
     if (req.model) args.push("--model", req.model);
     if (req.reasoningLevel) args.push("--variant", req.reasoningLevel);
-
-    const readOnly = req.permission === "read-only";
-    if (readOnly) args.push("--agent", "plan");
 
     // Passed as a single argv entry with shell:false, so newlines survive and no
     // quoting is involved. Collapsing them would flatten every structured task

@@ -26,6 +26,7 @@ const FULL_CAPS: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: true,
+  readOnlyEnforcement: "provider-native",
 };
 
 /** Shared no-op adapter surface; each mock overrides id/provider/startRun. */

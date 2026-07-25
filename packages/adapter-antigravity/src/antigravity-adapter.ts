@@ -85,6 +85,9 @@ const CAPABILITIES: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: false,
+  // --mode plan refuses writes headlessly without --dangerously-skip-permissions
+  // → provider-native.
+  readOnlyEnforcement: "provider-native",
 };
 
 export interface AgyInvocation {

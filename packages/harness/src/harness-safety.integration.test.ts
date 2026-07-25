@@ -24,6 +24,7 @@ function createMockAdapter(opts: {
     browser: false,
     vision: false,
     resumableSessions,
+    readOnlyEnforcement: "provider-native",
   };
 
   let resumeCalled = false;

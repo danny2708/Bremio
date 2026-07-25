@@ -7,9 +7,11 @@ export {
   AgentCapabilitiesSchema,
   AgentRoleSchema,
   PermissionSchema,
+  ReadOnlyEnforcementSchema,
   type AgentCapabilities,
   type AgentRole,
   type Permission,
+  type ReadOnlyEnforcement,
 } from "./capabilities";
 
 export {

@@ -24,6 +24,7 @@ const CAPS: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: true,
+  readOnlyEnforcement: "provider-native",
 };
 
 function task(id: string, over: Partial<Task> = {}): Task {
