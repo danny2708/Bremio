@@ -42,6 +42,37 @@ what blocked, what was learned.
   greps these fields, so the keys and order are fixed.
 
 
+### S3-T1 — `ApprovalRequest` / `ApprovalDecision` / `ApprovalGrant` + action digest
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T10:30 → 2026-07-25T11:30
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T1
+- **status:** done
+
+**Did**
+- Created `packages/approval` with core approval types and an in-memory engine:
+  - `ActionDigest` — SHA-256 digest of `{actionClass}\0{target}`; `create()` / `verify()` to prevent command substitution (docs/15 §9 amendment 5).
+  - `ApprovalRequest` — `pending → approved | rejected | expired | cancelled` state machine, with `sessionId`, `runId`, `actionDigest`, `risk`, timestamps, `decidedBy`.
+  - `ApprovalDecision` — value object for `decide()`.
+  - `ApprovalGrant` — scoped grant with `once | session | workspace` scope, `target`/`actionClass` filters, `expiresAt`, `revokedAt`, `precedence` for first-decision-wins.
+  - `InMemoryApprovalEngine` — stores requests + grants, enforces `first-decision-wins` (DuplicateDecisionError), state machine validation (InvalidTransitionError), `expirePendingRequests()`, `pruneExpiredGrants()`, `findActiveGrant()` with precedence+target matching.
+  - Event system — typed `ApprovalEvent` log + listener subscription.
+- 35 tests covering ActionDigest (determinism, tamper detection), request lifecycle (create, approve, reject, cancel, expire, duplicate decision), grant lifecycle (create, revoke, prune, findActiveGrant with precedence/session/target matching, revoked-grant exclusion), and event emission.
+- Red-checked 3 guards (InvalidDigestError, DuplicateDecisionError, GrantAlreadyRevokedError).
+
+**Decided**
+- `DuplicateDecisionError` is a separate, domain-meaningful error (not just InvalidTransitionError) because "first-decision-wins" is the semantics docs/15 requires, and a caller should see the reason explicitly.
+- `packages/approval` is a new package rather than extending `packages/policy` because the approval lifecycle is a separate runtime concern with its own state machine, event system, and storage needs; policy is pure evaluation.
+- In-memory engine first; persistence (DB schema, protocol routes) belongs to S3-T2/S3-T3.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/approval` — 35 passed.
+- `corepack pnpm test` — 669 passed / 60 files (0 failed).
+- Red-check 1: removed `InvalidDigestError` guard → test "throws InvalidDigestError when creating with a tampered digest" fails. Restored.
+- Red-check 2: removed `DuplicateDecisionError` guard → test "first-decision-wins: rejects duplicate decision" fails (catches `InvalidTransitionError` instead). Restored.
+- Red-check 3: removed `GrantAlreadyRevokedError` guard → test "throws GrantAlreadyRevokedError on double revoke" fails. Restored.
+
 ### S2-T4 — AdapterRuntimeCapabilities replaces name-based capability checks
 - **agent:** Claude (opencode)
 - **time:** 2026-07-25T09:55 → 2026-07-25T10:15

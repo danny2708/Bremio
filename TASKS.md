@@ -82,7 +82,7 @@ by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S3-T1 | `ApprovalRequest` / `ApprovalDecision` / `ApprovalGrant` + action digest | L | S2-T1 | — |
+| [x] | S3-T1 | `ApprovalRequest` / `ApprovalDecision` / `ApprovalGrant` + action digest | L | S2-T1 | — |
 | [ ] | S3-T2 | Grant scopes (once / session / workspace), expiry, revoke, precedence | M | S3-T1 | — |
 | [ ] | S3-T3 | Protocol routes + fail-closed when non-interactive | M | S3-T1 | — |
 | [ ] | S3-T4 | Review-before-apply in an isolated worktree | L | S2-T2, S3-T1 | — |
