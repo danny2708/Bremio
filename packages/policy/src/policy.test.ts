@@ -62,12 +62,24 @@ describe("ControlMode × ActionClass matrix", () => {
     },
   );
 
-  // ── autopilot: everything allowed, no approval ────────────────────────
-  it.each(ALL_ACTIONS)("autopilot mode allows %s", (action) => {
-    const result = evaluate("autopilot", action);
-    expect(result.allowed, result.reason).toBe(true);
-    expect(result.approvalRequired).toBe("none");
-  });
+  // ── autopilot: safe actions allowed, dangerous actions denied but overrideable ──
+  it.each(["read", "write", "create", "delete", "command", "network", "mcp-tool"] as ActionClass[])(
+    "autopilot mode allows %s without approval",
+    (action) => {
+      const result = evaluate("autopilot", action);
+      expect(result.allowed, result.reason).toBe(true);
+      expect(result.approvalRequired).toBe("none");
+    },
+  );
+
+  it.each(["git-destructive", "outside-workspace", "user-config"] as ActionClass[])(
+    "autopilot mode denies %s but marks it overrideable by grant",
+    (action) => {
+      const result = evaluate("autopilot", action);
+      expect(result.allowed, result.reason).toBe(false);
+      expect(result.overrideableByGrant).toBe(true);
+    },
+  );
 
   // ── every cell is reachable (no gaps in the matrix) ──────────────────
   it("every ControlMode × ActionClass cell returns a result", () => {

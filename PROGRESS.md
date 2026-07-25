@@ -42,6 +42,28 @@ what blocked, what was learned.
   greps these fields, so the keys and order are fixed.
 
 
+### S3-T8 — Autopilot deny list in AUTOPILOT_RULES per docs/15 §2.5
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T14:45 → 2026-07-25T14:50
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T8
+- **status:** done
+
+**Did**
+- Updated `AUTOPILOT_RULES` in `packages/policy/src/policy.ts`: denies `git-destructive`, `outside-workspace`, `user-config` with `allowed: false, overrideableByGrant: true`
+- Added `overrideableByGrant?: true` to `PolicyEvaluation` interface to signal a denial can be overridden by an `ApprovalGrant`
+- Kept `read`, `write`, `create`, `delete`, `command`, `network`, `mcp-tool` allowed in autopilot (no approval needed)
+- Updated tests: split the "all actions allowed" test into "safe actions allowed" (7 classes) and "dangerous actions denied but overrideable" (3 classes)
+
+**Decided**
+- `overrideableByGrant: true` on denied entries is cleaner than repurposing `approvalRequired: "per-action"` to mean "overrideable" — the latter conflates approve mode's "allowed + needs approval" with autopilot's "denied but can be overridden"
+- The grant-verification logic is the caller's responsibility, keeping `evaluate()` as a pure function
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 726 passed / 61 files
+- Red-check: flipped `git-destructive` to `allowed: true` → test "denies git-destructive but marks it overrideable by grant" failed with `expected true to be false`. Restored.
+
 ### S3-T7 — Wire readOnlyEnforcement + getRuntimeCapabilities into run selection
 - **agent:** Claude (opencode)
 - **time:** 2026-07-25T14:28 → 2026-07-25T14:40

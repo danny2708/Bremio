@@ -115,6 +115,8 @@ export interface PolicyEvaluation {
   allowed: boolean;
   approvalRequired: ApprovalRequirement;
   reason: string;
+  /** When true, a denial can be overridden by an active ApprovalGrant. */
+  overrideableByGrant?: true;
 }
 
 type Rule = PolicyEvaluation;
@@ -146,16 +148,16 @@ const APPROVE_RULES: Record<ActionClass, Rule> = {
 };
 
 const AUTOPILOT_RULES: Record<ActionClass, Rule> = {
-  read:             { allowed: true,  approvalRequired: "none",        reason: "autopilot allows all actions" },
-  write:            { allowed: true,  approvalRequired: "none",        reason: "autopilot allows all actions" },
-  create:           { allowed: true,  approvalRequired: "none",        reason: "autopilot allows all actions" },
-  delete:           { allowed: true,  approvalRequired: "none",        reason: "autopilot allows all actions" },
-  command:          { allowed: true,  approvalRequired: "none",        reason: "autopilot allows all actions" },
-  network:          { allowed: true,  approvalRequired: "none",        reason: "autopilot allows all actions" },
-  "mcp-tool":       { allowed: true,  approvalRequired: "none",        reason: "autopilot allows all actions" },
-  "git-destructive":{ allowed: true,  approvalRequired: "none",        reason: "autopilot allows all actions" },
-  "outside-workspace": { allowed: true,  approvalRequired: "none",     reason: "autopilot allows all actions" },
-  "user-config":    { allowed: true,  approvalRequired: "none",        reason: "autopilot allows all actions" },
+  read:             { allowed: true,  approvalRequired: "none",        reason: "autopilot allows reads" },
+  write:            { allowed: true,  approvalRequired: "none",        reason: "autopilot allows writes" },
+  create:           { allowed: true,  approvalRequired: "none",        reason: "autopilot allows file creation" },
+  delete:           { allowed: true,  approvalRequired: "none",        reason: "autopilot allows deletion" },
+  command:          { allowed: true,  approvalRequired: "none",        reason: "autopilot allows commands" },
+  network:          { allowed: true,  approvalRequired: "none",        reason: "autopilot allows network access" },
+  "mcp-tool":       { allowed: true,  approvalRequired: "none",        reason: "autopilot allows MCP tool use" },
+  "git-destructive":{ allowed: false, approvalRequired: "none", overrideableByGrant: true, reason: "destructive git requires a grant in autopilot" },
+  "outside-workspace": { allowed: false, approvalRequired: "none", overrideableByGrant: true, reason: "outside-workspace access requires a grant in autopilot" },
+  "user-config":    { allowed: false, approvalRequired: "none", overrideableByGrant: true, reason: "user config changes require a grant in autopilot" },
 };
 
 const MODE_MATRIX: Record<ControlMode, Record<ActionClass, Rule>> = {
