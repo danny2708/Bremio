@@ -443,5 +443,59 @@ Rules:
 - `corepack pnpm test` — 621 passed across 59 test files (+7 new tests).
 - Red-check: removed `targetCwd = taskWorktree.path` in `single-run.ts` → `isolated-worktree` test failed (`expected [] to include 'DIRECT.txt'`) because edits landed in main repo instead of worktree. Restored and test passed.
 
+### S2-REVIEW — tech-lead audit of Sprint 2
+- **agent:** Claude (Opus 4.8), acting as tech lead
+- **time:** 2026-07-25 → 2026-07-25
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T1..T5 (review), fixes to policy + docs/15 + TASKS.md
+- **status:** done
+
+**Did**
+- Gates on the branch: typecheck clean, 624 tests / 59 files.
+- Read every task's production code rather than its log entry. Confirmed the
+  policy package is a pure data matrix with **zero provider names**, that Solo's
+  isolated-worktree path really redirects `targetCwd` *and* collects
+  `filesChanged` from the worktree (so change reporting stays honest), and that
+  S2-T5 mirrors S0-T4's fail-closed shape exactly.
+- Red-checked three guards by mutating production code: OpenCode's writable
+  fail-closed, `validateCombination`'s approve-requires-isolation rule, and my
+  own new `canBackControlMode`. All failed for the stated reason; all restored.
+
+**Found & fixed**
+- **The §2.2 rule was comment-only.** `ReadOnlyEnforcement`'s doc comment says
+  advisory/unsupported "are not acceptable backings for plan or approve" — but
+  nothing executed it, which is the comment-only enforcement the rule itself
+  forbids. Added `canBackControlMode()` to `packages/policy` with tests and a
+  red-check. `plan` needs real transport enforcement (a worktree contains a
+  write but plan promises it never happened); `approve` accepts an isolated
+  worktree as its backing; `autopilot` constrains nothing here.
+- **`TASKS.md` had no Sprint 3.** A botched edit renamed Sprint 3's heading to a
+  second "Sprint 2 ✅ COMPLETE", leaving S3's rows orphaned under it. On the
+  board parallel agents read, that misdirects whoever picks up next. Restored.
+- **`docs/15` was missing the Autopilot deny list** approved in the `docs/14` Q4
+  review. Sprint 2 built `AUTOPILOT_RULES` to allow all ten action classes,
+  correctly per the spec as written — the omission was mine, not the sprint's.
+  Recorded as `docs/15` §2.5 and scheduled as S3-T8.
+
+**Decided**
+- Merged. The two "declared but unconsumed" findings (`readOnlyEnforcement`,
+  `getRuntimeCapabilities`) are correct sequencing, not defects: Sprint 3 is what
+  consumes them, and nothing is *weaker* than before. Scheduled as S3-T7 so they
+  cannot quietly stay inert.
+- Accepted argv-shape tests as the sprint gate's evidence. Asserting the right
+  flag reaches the provider is the honest claim available without spending real
+  quota; the `docs/15` §6 sentinel fixtures are scheduled as S3-T9 rather than
+  faked now.
+- Worth naming as a genuine win: before S2-T3, OpenCode passed `--auto` on
+  **every** run including read-only, which silently defeated `--agent plan`.
+  Plan mode was actively broken for that adapter and now is not.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 634 passed / 59 files (+10 from the new rule's tests).
+- `corepack pnpm release:check` — PASS, `bremio 1.2.0` packed install clean.
+- Red-check (mine): `canBackControlMode` forced to always-enforced → 5 tests
+  failed. Restored.
+
 
 

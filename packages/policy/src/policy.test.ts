@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluate, validateCombination } from "./policy";
+import { canBackControlMode, evaluate, validateCombination } from "./policy";
 import type { ActionClass, ControlMode } from "./policy";
 
 const ALL_CONTROL_MODES: ControlMode[] = ["plan", "approve", "autopilot"];
@@ -113,5 +113,55 @@ describe("validateCombination (docs/15 §2.3)", () => {
     const res = validateCombination("solo", "approve", "direct-workspace", "per-action");
     expect(res.valid).toBe(true);
     expect(res.granularity).toBe("per-action");
+  });
+});
+
+describe("canBackControlMode (docs/15 §2.2)", () => {
+  // The rule this pins used to live only in a doc comment on
+  // ReadOnlyEnforcement — comment-only enforcement, which is exactly what the
+  // rule forbids. Nothing could fail when it was violated.
+
+  it.each(["hard-sandbox", "provider-native", "worktree-contained"] as const)(
+    "lets %s back plan mode",
+    (enforcement) => {
+      expect(canBackControlMode("plan", enforcement, "direct-workspace").ok).toBe(true);
+    },
+  );
+
+  it.each(["advisory", "unsupported"] as const)(
+    "refuses to let %s back plan mode",
+    (enforcement) => {
+      const res = canBackControlMode("plan", enforcement, "direct-workspace");
+      expect(res.ok).toBe(false);
+      if (res.ok) throw new Error("unreachable");
+      expect(res.reason).toContain(enforcement);
+    },
+  );
+
+  it("refuses an unenforced adapter for plan even in an isolated worktree", () => {
+    // A worktree contains the write, but plan mode promises the write never
+    // happened. Containment is not the same guarantee.
+    expect(canBackControlMode("plan", "unsupported", "isolated-worktree").ok).toBe(false);
+  });
+
+  it("accepts an unenforced adapter for approve when isolated, since the worktree is the backing", () => {
+    expect(canBackControlMode("approve", "unsupported", "isolated-worktree").ok).toBe(true);
+  });
+
+  it("refuses an unenforced adapter for approve in the user's own workspace", () => {
+    const res = canBackControlMode("approve", "advisory", "direct-workspace");
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.reason).toContain("isolated worktree");
+  });
+
+  it("constrains nothing in autopilot, which makes no read-only promise", () => {
+    expect(canBackControlMode("autopilot", "unsupported", "direct-workspace").ok).toBe(true);
+  });
+
+  it("covers the local adapter, the one that ships reporting no enforcement", () => {
+    // adapter-local declares readOnlyEnforcement: "unsupported". It is
+    // unregistered today, so this is a trap set for whoever registers it.
+    expect(canBackControlMode("plan", "unsupported", "direct-workspace").ok).toBe(false);
   });
 });

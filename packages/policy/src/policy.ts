@@ -1,3 +1,5 @@
+import type { ReadOnlyEnforcement } from "@bremio/adapter-sdk";
+
 export type CollaborationMode = "solo" | "colab";
 
 export type ControlMode = "plan" | "approve" | "autopilot";
@@ -50,6 +52,48 @@ export function validateCombination(
   return {
     valid: true,
     granularity,
+  };
+}
+
+/**
+ * Whether an adapter's read-only enforcement is strong enough to back a
+ * control mode, per docs/15 §2.2:
+ *
+ *   "`advisory` is never an acceptable backing for `plan` or `approve`. A mode
+ *   whose only enforcement is a sentence in a prompt must not be offered."
+ *
+ * That rule previously existed only as a doc comment on `ReadOnlyEnforcement`,
+ * which is the comment-only enforcement the rule itself forbids — nothing could
+ * fail when it was violated. It is executable here so a caller cannot offer a
+ * guarantee the transport does not provide.
+ *
+ * `plan` promises the agent does not modify anything, so it needs real
+ * transport-level enforcement; a worktree would contain the write but the write
+ * would still have happened. `approve` only promises nothing reaches the user's
+ * workspace unreviewed, so an isolated worktree is a sufficient backing on its
+ * own. `autopilot` makes no read-only promise and constrains nothing here.
+ */
+export function canBackControlMode(
+  control: ControlMode,
+  enforcement: ReadOnlyEnforcement,
+  workspace: WorkspaceStrategy,
+): { ok: true } | { ok: false; reason: string } {
+  if (control === "autopilot") return { ok: true };
+
+  const enforced = enforcement !== "advisory" && enforcement !== "unsupported";
+  if (enforced) return { ok: true };
+
+  if (control === "approve" && workspace === "isolated-worktree") {
+    // The worktree, not the adapter, is what contains the change.
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    reason:
+      `${control} mode requires transport-level read-only enforcement, but this adapter ` +
+      `reports "${enforcement}"` +
+      (control === "approve" ? "; run it in an isolated worktree instead" : ""),
   };
 }
 

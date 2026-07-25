@@ -1,4 +1,5 @@
 export {
+  canBackControlMode,
   evaluate,
   validateCombination,
   type CollaborationMode,
