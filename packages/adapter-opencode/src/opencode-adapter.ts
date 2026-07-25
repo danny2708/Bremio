@@ -10,6 +10,7 @@ import type {
   AgentCapabilities,
   AgentHealth,
   AgentRunRequest,
+  AdapterRuntimeCapabilities,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
@@ -98,6 +99,20 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   async getCapabilities(): Promise<AgentCapabilities> {
     return CAPABILITIES;
+  }
+
+  async getRuntimeCapabilities(): Promise<AdapterRuntimeCapabilities> {
+    return {
+      adapterId: this.id,
+      transport: "cli",
+      approval: "none", // no per-action seam — all-or-nothing per run
+      structuredToolEvents: false,
+      contextMetrics: "estimated",
+      manualCompact: false,
+      mcp: false,
+      webSearch: false,
+      cancellation: false,
+    };
   }
 
   /**

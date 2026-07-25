@@ -1,5 +1,5 @@
 import type { AgentEvent } from "@bremio/protocol";
-import type { AgentCapabilities, AgentRole } from "./capabilities";
+import type { AgentCapabilities, AgentRole, AdapterRuntimeCapabilities } from "./capabilities";
 import type {
   AgentHealth,
   AgentRunRequest,
@@ -23,6 +23,7 @@ export interface AgentAdapter {
 
   healthCheck(): Promise<AgentHealth>;
   getCapabilities(): Promise<AgentCapabilities>;
+  getRuntimeCapabilities(): Promise<AdapterRuntimeCapabilities>;
   listModels(): Promise<ModelDescriptor[]>;
 
   /** Start a run and stream normalized events until a terminal `completed`. */

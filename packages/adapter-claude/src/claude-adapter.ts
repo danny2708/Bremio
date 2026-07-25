@@ -12,6 +12,7 @@ import type {
   AgentCapabilities,
   AgentHealth,
   AgentRunRequest,
+  AdapterRuntimeCapabilities,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
 import type { AgentEvent, RunOutcome } from "@bremio/protocol";
@@ -54,6 +55,20 @@ export class ClaudeAdapter implements AgentAdapter {
 
   async getCapabilities(): Promise<AgentCapabilities> {
     return CAPABILITIES;
+  }
+
+  async getRuntimeCapabilities(): Promise<AdapterRuntimeCapabilities> {
+    return {
+      adapterId: this.id,
+      transport: "sdk",
+      approval: "per-action", // canUseTool allows per-tool decisions
+      structuredToolEvents: true,
+      contextMetrics: "estimated",
+      manualCompact: false,
+      mcp: false,
+      webSearch: false,
+      cancellation: true,
+    };
   }
 
   async listModels(): Promise<ModelDescriptor[]> {

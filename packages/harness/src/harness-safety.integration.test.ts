@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentAdapter, AgentCapabilities, AgentRunRequest } from "@bremio/adapter-sdk";
+import type { AdapterRuntimeCapabilities, AgentAdapter, AgentCapabilities, AgentRunRequest } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
 import {
   assembleTurnContext,
@@ -73,6 +73,17 @@ function createMockAdapter(opts: {
       };
     },
     cancelRun: async () => {},
+    getRuntimeCapabilities: async () => ({
+      adapterId: "mock",
+      transport: "cli",
+      approval: "none",
+      structuredToolEvents: false,
+      contextMetrics: "estimated",
+      manualCompact: false,
+      mcp: false,
+      webSearch: false,
+      cancellation: false,
+    }),
     // Expose tracking flags for assertions
     get _resumeCalled() {
       return resumeCalled;

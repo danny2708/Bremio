@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AgentAdapter, AgentCapabilities, AgentHealth } from "@bremio/adapter-sdk";
+import type { AdapterRuntimeCapabilities, AgentAdapter, AgentCapabilities, AgentHealth } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
 
@@ -34,6 +34,19 @@ class FakeAdapter implements AgentAdapter {
   startRun(): AsyncIterable<AgentEvent> { throw new Error("not used"); }
   resumeRun(): AsyncIterable<AgentEvent> { throw new Error("not used"); }
   async cancelRun() {}
+  async getRuntimeCapabilities(): Promise<AdapterRuntimeCapabilities> {
+    return {
+      adapterId: this.id,
+      transport: "cli",
+      approval: "none",
+      structuredToolEvents: false,
+      contextMetrics: "estimated",
+      manualCompact: false,
+      mcp: false,
+      webSearch: false,
+      cancellation: false,
+    };
+  }
 }
 
 const adapters = [

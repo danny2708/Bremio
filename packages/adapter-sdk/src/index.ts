@@ -8,10 +8,18 @@ export {
   AgentRoleSchema,
   PermissionSchema,
   ReadOnlyEnforcementSchema,
+  AdapterRuntimeCapabilitiesSchema,
+  AdapterTransportSchema,
+  ApprovalSeamSchema,
+  ContextMetricsQualitySchema,
   type AgentCapabilities,
   type AgentRole,
   type Permission,
   type ReadOnlyEnforcement,
+  type AdapterRuntimeCapabilities,
+  type AdapterTransport,
+  type ApprovalSeam,
+  type ContextMetricsQuality,
 } from "./capabilities";
 
 export {

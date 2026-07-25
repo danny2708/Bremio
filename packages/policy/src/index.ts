@@ -4,6 +4,7 @@ export {
   type CollaborationMode,
   type ControlMode,
   type WorkspaceStrategy,
+  type ApprovalSeam,
   type CombinationValidation,
   type ActionClass,
   type PolicyEvaluation,

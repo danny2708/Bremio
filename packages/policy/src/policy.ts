@@ -4,17 +4,29 @@ export type ControlMode = "plan" | "approve" | "autopilot";
 
 export type WorkspaceStrategy = "direct-workspace" | "isolated-worktree";
 
+/**
+ * The approval seam an adapter provides.
+ * - `"per-action"`: each action can be approved/denied individually.
+ * - `"before-apply"`: actions can only be approved as a batch before apply.
+ * - `"none"`: no approval seam — all-or-nothing per run.
+ */
+export type ApprovalSeam = "per-action" | "before-apply" | "none";
+
 export interface CombinationValidation {
   valid: boolean;
   reason?: string;
   granularity?: "per-action" | "before-apply" | "none";
 }
 
+function hasPerActionSeam(approvalSeam?: ApprovalSeam): boolean {
+  return approvalSeam === "per-action";
+}
+
 export function validateCombination(
   collaboration: CollaborationMode,
   control: ControlMode,
   workspace: WorkspaceStrategy,
-  options?: { hasPerActionSeam?: boolean },
+  approvalSeam?: ApprovalSeam,
 ): CombinationValidation {
   if (collaboration === "colab" && workspace === "direct-workspace") {
     return {
@@ -23,7 +35,7 @@ export function validateCombination(
     };
   }
 
-  if (control === "approve" && workspace === "direct-workspace" && !options?.hasPerActionSeam) {
+  if (control === "approve" && workspace === "direct-workspace" && !hasPerActionSeam(approvalSeam)) {
     return {
       valid: false,
       reason: "Approve control mode requires isolated-worktree strategy unless transport provides a per-action seam",
@@ -32,7 +44,7 @@ export function validateCombination(
 
   let granularity: CombinationValidation["granularity"] = "none";
   if (control === "approve") {
-    granularity = options?.hasPerActionSeam && workspace === "direct-workspace" ? "per-action" : "before-apply";
+    granularity = hasPerActionSeam(approvalSeam) && workspace === "direct-workspace" ? "per-action" : "before-apply";
   }
 
   return {

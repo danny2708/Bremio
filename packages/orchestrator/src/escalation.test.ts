@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
+  AdapterRuntimeCapabilities,
   AgentAdapter,
   AgentCapabilities,
   AgentHealth,
@@ -53,6 +54,20 @@ abstract class BaseAdapter implements AgentAdapter {
   }
 
   async cancelRun(): Promise<void> {}
+
+  async getRuntimeCapabilities(): Promise<AdapterRuntimeCapabilities> {
+    return {
+      adapterId: this.id,
+      transport: "cli",
+      approval: "none",
+      structuredToolEvents: false,
+      contextMetrics: "estimated",
+      manualCompact: false,
+      mcp: false,
+      webSearch: false,
+      cancellation: false,
+    };
+  }
 }
 
 class VerifyingSingle extends BaseAdapter {

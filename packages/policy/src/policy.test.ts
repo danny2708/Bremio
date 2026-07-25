@@ -104,13 +104,13 @@ describe("validateCombination (docs/15 §2.3)", () => {
   });
 
   it("rejects solo + approve + direct-workspace without per-action seam", () => {
-    const res = validateCombination("solo", "approve", "direct-workspace", { hasPerActionSeam: false });
+    const res = validateCombination("solo", "approve", "direct-workspace", "none");
     expect(res.valid).toBe(false);
     expect(res.reason).toContain("Approve control mode requires isolated-worktree");
   });
 
   it("allows solo + approve + direct-workspace when transport has per-action seam", () => {
-    const res = validateCombination("solo", "approve", "direct-workspace", { hasPerActionSeam: true });
+    const res = validateCombination("solo", "approve", "direct-workspace", "per-action");
     expect(res.valid).toBe(true);
     expect(res.granularity).toBe("per-action");
   });
