@@ -12,6 +12,15 @@ function adapter(): OpenCodeAdapter {
   return new OpenCodeAdapter({ explicitBin: process.execPath, extraArgs: [fakeOpenCode], defaultTimeoutMs: 30_000 });
 }
 
+function writableAdapter(): OpenCodeAdapter {
+  return new OpenCodeAdapter({
+    explicitBin: process.execPath,
+    extraArgs: [fakeOpenCode],
+    defaultTimeoutMs: 30_000,
+    allowAutoPermissionBypass: true,
+  });
+}
+
 function request(overrides: Partial<AgentRunRequest> = {}): AgentRunRequest {
   return {
     runId: "run:test",
@@ -60,7 +69,7 @@ describe("OpenCodeAdapter", () => {
   });
 
   it("streams JSON events and completes with exactly one terminal event", async () => {
-    const events = await collect(adapter().startRun(request({ prompt: "do it", cwd: process.cwd() })));
+    const events = await collect(writableAdapter().startRun(request({ prompt: "do it", cwd: process.cwd() })));
     expect(events[0]?.type).toBe("started");
 
     const messages = events.filter((e) => e.type === "message");
@@ -82,7 +91,7 @@ describe("OpenCodeAdapter", () => {
   });
 
   it("surfaces a non-zero exit as a failed outcome", async () => {
-    const events = await collect(adapter().startRun(request({ prompt: "FAIL_PLEASE", cwd: process.cwd() })));
+    const events = await collect(writableAdapter().startRun(request({ prompt: "FAIL_PLEASE", cwd: process.cwd() })));
     const terminals = events.filter((e) => e.type === "completed");
     expect(terminals).toHaveLength(1);
     const terminal = terminals[0];
@@ -94,7 +103,7 @@ describe("OpenCodeAdapter", () => {
 
   it("passes a multi-line prompt through without flattening it", async () => {
     const multiLine = "ECHO_PROMPT\nline two\n\n- bullet three";
-    const events = await collect(adapter().startRun(request({ prompt: multiLine })));
+    const events = await collect(writableAdapter().startRun(request({ prompt: multiLine })));
     const terminal = events.find((e) => e.type === "completed");
     if (terminal?.type !== "completed") throw new Error("no terminal event");
     expect(terminal.outcome.finalText).toContain("line two");
@@ -105,7 +114,7 @@ describe("OpenCodeAdapter", () => {
 
   it("keeps the system prompt separate from the task prompt", async () => {
     const events = await collect(
-      adapter().startRun(request({ prompt: "ECHO_PROMPT task body", systemPrompt: "system rules here" })),
+      writableAdapter().startRun(request({ prompt: "ECHO_PROMPT task body", systemPrompt: "system rules here" })),
     );
     const terminal = events.find((e) => e.type === "completed");
     if (terminal?.type !== "completed") throw new Error("no terminal event");
@@ -119,12 +128,59 @@ describe("OpenCodeAdapter", () => {
     await expect(adapter().listModels()).resolves.toEqual([]);
   });
 
+  it("refuses a writable run without allowAutoPermissionBypass", async () => {
+    const adapt = new OpenCodeAdapter({
+      explicitBin: process.execPath,
+      extraArgs: [fakeOpenCode],
+      // allowAutoPermissionBypass defaults to false
+    });
+    const events = await collect(adapt.startRun(request({ permission: "workspace-write", prompt: "do it" })));
+    const terminal = events.find((e) => e.type === "completed");
+    expect(terminal).toBeDefined();
+    if (terminal?.type === "completed") {
+      expect(terminal.outcome.status).toBe("failed");
+      expect(terminal.outcome.error).toContain("allowAutoPermissionBypass");
+    }
+  });
+
+  it("allows a writable run when allowAutoPermissionBypass is set", async () => {
+    const adapt = new OpenCodeAdapter({
+      explicitBin: process.execPath,
+      extraArgs: [fakeOpenCode],
+      defaultTimeoutMs: 30_000,
+      allowAutoPermissionBypass: true,
+    });
+    const events = await collect(adapt.startRun(request({ permission: "workspace-write", prompt: "do it" })));
+    const terminals = events.filter((e) => e.type === "completed");
+    expect(terminals).toHaveLength(1);
+    const terminal = terminals[0];
+    if (terminal?.type === "completed") {
+      expect(terminal.outcome.status).toBe("completed");
+    }
+  });
+
+  it("allows a read-only run regardless of allowAutoPermissionBypass", async () => {
+    const adapt = new OpenCodeAdapter({
+      explicitBin: process.execPath,
+      extraArgs: [fakeOpenCode],
+      defaultTimeoutMs: 30_000,
+      // allowAutoPermissionBypass defaults to false
+    });
+    const events = await collect(adapt.startRun(request({ permission: "read-only", prompt: "do it" })));
+    const terminals = events.filter((e) => e.type === "completed");
+    expect(terminals).toHaveLength(1);
+    const terminal = terminals[0];
+    if (terminal?.type === "completed") {
+      expect(terminal.outcome.status).toBe("completed");
+    }
+  });
+
   it("cancelRun before startRun is a no-op", async () => {
     await expect(adapter().cancelRun("run:nonexistent")).resolves.toBeUndefined();
   });
 
   it("cancelRun after completion is a no-op", async () => {
-    const adapt = adapter();
+    const adapt = writableAdapter();
     await collect(adapt.startRun(request({ cwd: process.cwd() })));
     await expect(adapt.cancelRun("run:test")).resolves.toBeUndefined();
   });

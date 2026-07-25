@@ -89,7 +89,10 @@ const delta = (content: string) => ({ choices: [{ delta: { content } }] });
 describe("LocalOpenAiAdapter capabilities", () => {
   it("defaults to an all-false, unroutable posture", async () => {
     const caps = await new LocalOpenAiAdapter({ id: "x", baseUrl: "http://localhost:1/v1" }).getCapabilities();
-    for (const value of Object.values(caps)) expect(value).toBe(false);
+    for (const [key, value] of Object.entries(caps)) {
+      if (key === "readOnlyEnforcement") continue;
+      expect(value).toBe(false);
+    }
   });
 
   it("explicitly rejects resumeRun", () => {

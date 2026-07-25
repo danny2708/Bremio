@@ -23,6 +23,7 @@ import {
   type RunBremioHooks,
   type SingleRunHooks,
 } from "@bremio/orchestrator";
+import { validateCombination, type WorkspaceStrategy } from "@bremio/policy";
 import { ExecutionModeSchema, type ReasoningLevel } from "@bremio/protocol";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
@@ -147,6 +148,8 @@ function parseCli() {
       "open-usage": { type: "string" },
       out: { type: "string" },
       comparison: { type: "string" },
+      "workspace-strategy": { type: "string" },
+      isolated: { type: "boolean", default: false },
       escalate: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
@@ -444,10 +447,28 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   if (values.comparison !== undefined && values.comparison.trim().length === 0) {
     errors.push("--comparison must be a non-empty experiment id");
   }
+  let workspaceStrategy: WorkspaceStrategy = "direct-workspace";
+  if (values.isolated || values["workspace-strategy"] === "isolated-worktree") {
+    workspaceStrategy = "isolated-worktree";
+  } else if (values["workspace-strategy"] === "direct-workspace") {
+    workspaceStrategy = "direct-workspace";
+  } else if (values["workspace-strategy"]) {
+    errors.push("--workspace-strategy must be 'direct-workspace' or 'isolated-worktree'");
+  }
+
+  if (mode) {
+    const colabMode = mode === "team" ? "colab" : "solo";
+    const validation = validateCombination(colabMode, "autopilot", workspaceStrategy);
+    if (!validation.valid) {
+      errors.push(validation.reason ?? "Invalid combination of mode and workspace strategy");
+    }
+  }
+
   const capacityTiming = parseCapacityTiming(values);
   if (values["capacity-routing"] && capacityTiming.error) {
     errors.push(capacityTiming.error);
   }
+
   if (errors.length) {
     for (const e of errors) console.error(c.red(`error: ${e}`));
     console.log(`\n${USAGE}`);
@@ -612,6 +633,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         repoPath,
         prompt,
         registry,
+        workspaceStrategy,
         signal: ac.signal,
         hooks: singleHooks,
         ...(values.model ? { model: values.model } : {}),

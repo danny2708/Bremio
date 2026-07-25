@@ -204,6 +204,29 @@ read · write · create · delete · command · network
 mcp-tool · git-destructive · outside-workspace · user-config
 ```
 
+### 2.5 Autopilot's non-negotiable deny list
+
+**Recorded late — this decision was approved in the `docs/14` Q4 review and was
+missing from the first version of this lock.** Sprint 2 built its policy matrix
+to the spec as written, so `autopilot` currently allows all ten action classes
+with the reason *"autopilot allows all actions"*. That is a gap in this document,
+not in that sprint's work.
+
+Autopilot means "do not ask me about ordinary work". It does **not** mean "no
+limits". These classes stay denied under autopilot unless an explicit,
+narrowly-scoped, auditable and revocable override says otherwise:
+
+- `outside-workspace` — writes beyond the approved workspace or worktree
+- `git-destructive` — force-push and history rewriting
+- `user-config` — silent changes to user-level configuration
+- privileged/administrator commands
+- anything that would exfiltrate secrets
+- destructive commands aimed outside the worktree
+
+Autopilot also defaults to `isolated-worktree` (§2.3). Wiring these into
+`AUTOPILOT_RULES` belongs to the approval sprint, since the override mechanism
+is `ApprovalGrant`.
+
 ---
 
 ## 3. Adapter transport capabilities (M-1-T0)

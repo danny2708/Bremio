@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentAdapter, AgentCapabilities, AgentRunRequest } from "@bremio/adapter-sdk";
+import type { AdapterRuntimeCapabilities, AgentAdapter, AgentCapabilities, AgentRunRequest } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
 import { prepareTurnExecution } from "./turn-runner";
 
@@ -18,6 +18,7 @@ function mockAdapter(overrides: {
     browser: false,
     vision: false,
     resumableSessions,
+    readOnlyEnforcement: "provider-native",
   };
 
   return {
@@ -64,6 +65,17 @@ function mockAdapter(overrides: {
       };
     },
     cancelRun: async () => {},
+    getRuntimeCapabilities: async () => ({
+      adapterId: "mock",
+      transport: "cli",
+      approval: "none",
+      structuredToolEvents: false,
+      contextMetrics: "estimated",
+      manualCompact: false,
+      mcp: false,
+      webSearch: false,
+      cancellation: false,
+    }),
   };
 }
 

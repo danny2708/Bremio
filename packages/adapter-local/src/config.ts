@@ -63,6 +63,8 @@ export const CONSERVATIVE_CAPABILITIES: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: false,
+  // Local adapter has no read-only enforcement mechanism → unsupported.
+  readOnlyEnforcement: "unsupported",
 };
 
 /**

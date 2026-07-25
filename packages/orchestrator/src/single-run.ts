@@ -2,9 +2,10 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import type { WorkspaceStrategy } from "@bremio/policy";
 import type { AgentEvent, ReasoningLevel, TaskStatus, TestRun, UsageSummary } from "@bremio/protocol";
 import { prepareTurnExecution, type TurnMechanismDecision } from "@bremio/harness";
-import { TaskLog } from "@bremio/workspace";
+import { TaskLog, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
 import { appendLedgerEntry, ledgerPathFor } from "./ledger";
 import type { AgentRegistry } from "./registry";
 import { createRunId } from "./run";
@@ -24,6 +25,7 @@ export interface RunSingleAgentOptions {
   repoPath: string;
   prompt: string;
   registry: AgentRegistry;
+  workspaceStrategy?: WorkspaceStrategy;
   model?: string;
   reasoningLevel?: ReasoningLevel;
   maxTurns?: number;
@@ -83,6 +85,11 @@ export interface SingleRunReport {
   primaryAgentId: string;
   repoPath: string;
   runDir: string;
+  workspaceStrategy?: WorkspaceStrategy;
+  worktree?: {
+    branch: string;
+    path: string;
+  };
   result: SingleAgentResult;
   verification: SingleRunVerification;
   workspace: {
@@ -119,9 +126,22 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     throw new Error(`agent "${opts.primaryAgentId}" cannot run with workspace-write access`);
   }
 
+  const workspaceStrategy = opts.workspaceStrategy ?? "direct-workspace";
   const runId = createRunId();
   const before = await captureWorkspaceState(repoPath);
   opts.hooks?.onWorkspaceReady?.(before.dirtyFiles);
+
+  let targetCwd = repoPath;
+  let taskWorktree: TaskWorktree | undefined;
+  let worktreeManager: WorktreeManager | undefined;
+
+  if (workspaceStrategy === "isolated-worktree") {
+    worktreeManager = new WorktreeManager(repoPath, { runToken: runId.slice(-6) });
+    await worktreeManager.assertUsable();
+    taskWorktree = await worktreeManager.create("SOLO", opts.primaryAgentId);
+    targetCwd = taskWorktree.path;
+  }
+
   const bremioDir = path.join(repoPath, ".bremio");
   const runDir = path.join(bremioDir, "runs", runId);
   await fs.mkdir(runDir, { recursive: true });
@@ -132,7 +152,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
   ).catch(() => {});
 
   const log = new TaskLog(runDir, `single-${opts.primaryAgentId}`);
-  log.line(`# Single Agent run — agent=${opts.primaryAgentId} cwd=${repoPath}`);
+  log.line(`# Single Agent run — agent=${opts.primaryAgentId} cwd=${targetCwd}`);
   const started = Date.now();
   const controller = new AbortController();
   let timedOut = false;
@@ -167,7 +187,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
         request: {
           runId,
           role: "implementer",
-          cwd: repoPath,
+          cwd: targetCwd,
           permission: "workspace-write",
           ...(opts.model ? { model: opts.model } : {}),
           ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
@@ -192,7 +212,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
           runId,
           role: "implementer",
           prompt: opts.prompt,
-          cwd: repoPath,
+          cwd: targetCwd,
           permission: "workspace-write",
           ...(opts.model ? { model: opts.model } : {}),
           ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
@@ -216,9 +236,16 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     await log.close();
   }
 
-  const after = await captureWorkspaceState(repoPath);
-  const committedFiles = await filesChangedBetween(repoPath, before.head, after.head);
-  const filesChanged = [...new Set([...committedFiles, ...after.dirtyFiles])].sort();
+  let filesChanged: string[];
+  let after = before;
+  if (workspaceStrategy === "isolated-worktree" && worktreeManager && taskWorktree) {
+    const collectRes = await worktreeManager.collect(taskWorktree);
+    filesChanged = collectRes.filesChanged;
+  } else {
+    after = await captureWorkspaceState(repoPath);
+    const committedFiles = await filesChangedBetween(repoPath, before.head, after.head);
+    filesChanged = [...new Set([...committedFiles, ...after.dirtyFiles])].sort();
+  }
   let status = collected.outcome.status;
   let error = collected.outcome.error;
   if (timedOut) {
@@ -254,6 +281,8 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     primaryAgentId: opts.primaryAgentId,
     repoPath,
     runDir,
+    workspaceStrategy,
+    ...(taskWorktree ? { worktree: { branch: taskWorktree.branch, path: taskWorktree.path } } : {}),
     result,
     verification,
     workspace: { dirtyBefore: before.dirtyFiles, dirtyAfter: after.dirtyFiles },

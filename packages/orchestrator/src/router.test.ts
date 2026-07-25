@@ -22,6 +22,7 @@ const LEAD_CAPS = {
   browser: false,
   vision: false,
   resumableSessions: true,
+  readOnlyEnforcement: "provider-native" as const,
 };
 
 const ANTIGRAVITY_CAPS = {

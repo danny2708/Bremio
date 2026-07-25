@@ -20,6 +20,7 @@ export interface RunReport {
   leadActualReasoningLevel?: import("@bremio/protocol").ReasoningLevel;
   repoPath: string;
   runDir: string;
+  workspaceStrategy?: "isolated-worktree";
   /** Branch the repo was on when the run started; merge target for tasks. */
   baseBranch?: string;
   plan: Plan;
@@ -95,6 +96,7 @@ export function buildReport(input: BuildReportInput): RunReport {
     ...(input.leadActualReasoningLevel ? { leadActualReasoningLevel: input.leadActualReasoningLevel } : {}),
     repoPath: input.repoPath,
     runDir: input.runDir,
+    workspaceStrategy: "isolated-worktree",
     ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
     plan: input.plan,
     tasks,

@@ -4,6 +4,7 @@ import type {
   AgentCapabilities,
   AgentHealth,
   AgentRunRequest,
+  AdapterRuntimeCapabilities,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
@@ -39,6 +40,20 @@ export class LocalOpenAiAdapter implements AgentAdapter {
 
   async getCapabilities(): Promise<AgentCapabilities> {
     return this.#capabilities;
+  }
+
+  async getRuntimeCapabilities(): Promise<AdapterRuntimeCapabilities> {
+    return {
+      adapterId: this.id,
+      transport: "app-server",
+      approval: "none",
+      structuredToolEvents: false,
+      contextMetrics: "none",
+      manualCompact: false,
+      mcp: false,
+      webSearch: false,
+      cancellation: true, // HTTP fetch with AbortSignal
+    };
   }
 
   async listModels(): Promise<ModelDescriptor[]> {

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
+  AdapterRuntimeCapabilities,
   AgentAdapter,
   AgentCapabilities,
   AgentHealth,
@@ -25,6 +26,7 @@ const FULL_CAPABILITIES: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: true,
+  readOnlyEnforcement: "provider-native",
 };
 
 class SingleMockAdapter implements AgentAdapter {
@@ -96,6 +98,20 @@ class SingleMockAdapter implements AgentAdapter {
 
   async cancelRun(runId: string): Promise<void> {
     this.cancelledRuns.push(runId);
+  }
+
+  async getRuntimeCapabilities(): Promise<AdapterRuntimeCapabilities> {
+    return {
+      adapterId: this.id,
+      transport: "cli",
+      approval: "none",
+      structuredToolEvents: false,
+      contextMetrics: "estimated",
+      manualCompact: false,
+      mcp: false,
+      webSearch: false,
+      cancellation: false,
+    };
   }
 }
 
@@ -336,5 +352,28 @@ describe("runSingleAgent", () => {
     expect(turn1.turnIndex).toBe(1);
     expect(turn1.mechanismDecision?.mechanism).toBe("resume");
     expect(turn1.mechanismDecision?.reason).toContain("resumableSessions is true");
+  });
+
+  it("runs a Single agent in an isolated worktree when workspaceStrategy is isolated-worktree", async () => {
+    const adapter = new SingleMockAdapter();
+    const registry = createRegistry([adapter]);
+
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "isolated edit",
+      registry,
+      workspaceStrategy: "isolated-worktree",
+    });
+
+    expect(report.result.status).toBe("completed");
+    expect(report.workspaceStrategy).toBe("isolated-worktree");
+    expect(report.worktree).toBeDefined();
+    expect(report.worktree?.branch).toMatch(/^bremio\/SOLO-codex/);
+    expect(report.result.filesChanged).toContain("DIRECT.txt");
+
+    // Main workspace remains clean because the edit landed in the isolated worktree
+    await expect(fs.access(path.join(repoPath, "DIRECT.txt"))).rejects.toThrow();
+    await expect(fs.access(path.join(report.worktree!.path, "DIRECT.txt"))).resolves.toBeUndefined();
   });
 });

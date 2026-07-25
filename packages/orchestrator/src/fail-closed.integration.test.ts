@@ -35,21 +35,21 @@ const ALL_CAPS: AgentCapabilities = {
   planning: true, structuredOutput: true,
   repositoryRead: true, repositoryWrite: true,
   shell: true, testing: true,
-  browser: false, vision: false, resumableSessions: true,
+  browser: false, vision: false, resumableSessions: true, readOnlyEnforcement: "provider-native",
 };
 
 const LEAD_CAPS: AgentCapabilities = {
   planning: true, structuredOutput: true,
   repositoryRead: true, repositoryWrite: true,
   shell: false, testing: false,
-  browser: false, vision: false, resumableSessions: true,
+  browser: false, vision: false, resumableSessions: true, readOnlyEnforcement: "provider-native",
 };
 
 const WORKER_CAPS: AgentCapabilities = {
   planning: false, structuredOutput: false,
   repositoryRead: true, repositoryWrite: true,
   shell: true, testing: true,
-  browser: false, vision: false, resumableSessions: true,
+  browser: false, vision: false, resumableSessions: true, readOnlyEnforcement: "provider-native",
 };
 
 function snapshot(overrides: Partial<AgentCapacitySnapshot> = {}): AgentCapacitySnapshot {

@@ -69,9 +69,15 @@ importers:
       '@bremio/event-view':
         specifier: workspace:*
         version: link:../../packages/event-view
+      '@bremio/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
       '@bremio/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
+      '@bremio/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@bremio/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -207,11 +213,26 @@ importers:
 
   packages/event-view: {}
 
+  packages/harness:
+    dependencies:
+      '@bremio/adapter-sdk':
+        specifier: workspace:*
+        version: link:../adapter-sdk
+      '@bremio/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
   packages/orchestrator:
     dependencies:
       '@bremio/adapter-sdk':
         specifier: workspace:*
         version: link:../adapter-sdk
+      '@bremio/harness':
+        specifier: workspace:*
+        version: link:../harness
+      '@bremio/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@bremio/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -234,6 +255,12 @@ importers:
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
+
+  packages/policy:
+    dependencies:
+      '@bremio/adapter-sdk':
+        specifier: workspace:*
+        version: link:../adapter-sdk
 
   packages/protocol:
     dependencies:

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type {
+  AdapterRuntimeCapabilities,
   AgentAdapter,
   AgentCapabilities,
   AgentHealth,
@@ -24,6 +25,7 @@ const CAPS: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: true,
+  readOnlyEnforcement: "provider-native",
 };
 
 function task(id: string, over: Partial<Task> = {}): Task {
@@ -78,6 +80,20 @@ class TrackingAdapter implements AgentAdapter {
   }
   async cancelRun(runId: string): Promise<void> {
     this.cancelled.push(runId);
+  }
+
+  async getRuntimeCapabilities(): Promise<AdapterRuntimeCapabilities> {
+    return {
+      adapterId: this.id,
+      transport: "cli",
+      approval: "none",
+      structuredToolEvents: false,
+      contextMetrics: "estimated",
+      manualCompact: false,
+      mcp: false,
+      webSearch: false,
+      cancellation: false,
+    };
   }
 
   async *startRun(req: AgentRunRequest): AsyncIterable<AgentEvent> {

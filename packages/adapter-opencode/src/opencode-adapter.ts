@@ -10,6 +10,7 @@ import type {
   AgentCapabilities,
   AgentHealth,
   AgentRunRequest,
+  AdapterRuntimeCapabilities,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
@@ -48,10 +49,33 @@ export function validateStructuredOutput(
   return { valid: true, data: parsed };
 }
 
+/**
+ * Raised before spawning when a writable run would use `--auto` but the
+ * caller has not opted in. `--auto` auto-approves every permission request
+ * the provider makes — file writes, shell commands, tool access, network —
+ * which is the same defect class as Antigravity's
+ * `--dangerously-skip-permissions` (docs/15 §1.5, §8).
+ */
+export class OpenCodePermissionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenCodePermissionError";
+  }
+}
+
 export interface OpenCodeAdapterOptions {
   explicitBin?: string;
   extraArgs?: string[];
   defaultTimeoutMs?: number;
+  /**
+   * Opt in to `--auto`, which auto-approves **every** permission request
+   * the provider makes — file writes, shell commands, tool access, network —
+   * with no prompt and no record of what was approved.
+   *
+   * Off by default. A writable run without this opt-in is refused before
+   * spawn, mirroring Antigravity's `allowDangerousPermissionBypass`.
+   */
+  allowAutoPermissionBypass?: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
@@ -71,6 +95,9 @@ const CAPABILITIES: AgentCapabilities = {
   browser: false,
   vision: false,
   resumableSessions: false,
+  // Without --auto (which we no longer pass in plan mode) the provider's
+  // own permission system refuses writes → provider-native.
+  readOnlyEnforcement: "provider-native",
 };
 
 export class OpenCodeAdapter implements AgentAdapter {
@@ -80,6 +107,7 @@ export class OpenCodeAdapter implements AgentAdapter {
   private readonly explicitBin: string | undefined;
   private readonly extraArgs: string[];
   private readonly defaultTimeoutMs: number;
+  private readonly allowAutoPermissionBypass: boolean;
   private readonly children = new Map<string, ReturnType<typeof spawnOpenCode>>();
   private readonly cancelled = new Set<string>();
   private readonly servers = new Map<
@@ -91,10 +119,27 @@ export class OpenCodeAdapter implements AgentAdapter {
     this.explicitBin = options.explicitBin;
     this.extraArgs = options.extraArgs ?? [];
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+    // Defaults to false: the auto-approve flag must be asked for, never
+    // inherited from a task merely being writable (docs/15 §8).
+    this.allowAutoPermissionBypass = options.allowAutoPermissionBypass ?? false;
   }
 
   async getCapabilities(): Promise<AgentCapabilities> {
     return CAPABILITIES;
+  }
+
+  async getRuntimeCapabilities(): Promise<AdapterRuntimeCapabilities> {
+    return {
+      adapterId: this.id,
+      transport: "cli",
+      approval: "none", // no per-action seam — all-or-nothing per run
+      structuredToolEvents: false,
+      contextMetrics: "estimated",
+      manualCompact: false,
+      mcp: false,
+      webSearch: false,
+      cancellation: false,
+    };
   }
 
   /**
@@ -157,13 +202,39 @@ export class OpenCodeAdapter implements AgentAdapter {
   private async *startCliRun(req: AgentRunRequest, bin: string): AsyncIterable<AgentEvent> {
     const now = () => Date.now();
 
-    const args = [...this.extraArgs, "run", "--format", "json", "--dir", path.resolve(req.cwd), "--auto"];
+    const readOnly = req.permission === "read-only";
+
+    // S2-T5: --auto is the same defect class as Antigravity's
+    // --dangerously-skip-permissions — it auto-approves every tool request
+    // (docs/15 §1.5, §8). It must be opted into explicitly.
+    if (!readOnly && !this.allowAutoPermissionBypass) {
+      yield {
+        type: "completed",
+        runId: req.runId,
+        ts: now(),
+        outcome: {
+          status: "failed",
+          error:
+            'opencode cannot run with write access unless "allowAutoPermissionBypass" is ' +
+            "enabled, and that flag auto-approves every permission request the provider " +
+            "makes — file writes, shell commands, tool access and network alike — not only " +
+            "the edits this task needs.\n" +
+            "Set allowAutoPermissionBypass: true on the adapter to accept that, or run this " +
+            "task read-only. See docs/15 §8.",
+        },
+      };
+      return;
+    }
+
+    const args = [...this.extraArgs, "run", "--format", "json", "--dir", path.resolve(req.cwd)];
+
+    // S2-T3: --auto is incompatible with plan mode — it auto-approves all
+    // permission requests, which defeats --agent plan's read-only enforcement.
+    if (!readOnly && this.allowAutoPermissionBypass) args.push("--auto");
+    if (readOnly) args.push("--agent", "plan");
 
     if (req.model) args.push("--model", req.model);
     if (req.reasoningLevel) args.push("--variant", req.reasoningLevel);
-
-    const readOnly = req.permission === "read-only";
-    if (readOnly) args.push("--agent", "plan");
 
     // Passed as a single argv entry with shell:false, so newlines survive and no
     // quoting is involved. Collapsing them would flatten every structured task

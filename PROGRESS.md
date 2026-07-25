@@ -4,7 +4,35 @@ Narrative record of parallel agent work. The task board ([`TASKS.md`](TASKS.md))
 says *what* and *whether done*; this file says *how it went* — what was decided,
 what blocked, what was learned.
 
-## How this file is structured
+
+### S2-T3 — Plan mode enforced per transport, guarantee declared honestly
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T09:30 → 2026-07-25T09:55
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T3
+- **status:** done
+
+**Did**
+- Added `ReadOnlyEnforcement` union type (`hard-sandbox | provider-native | worktree-contained | advisory | unsupported`) to `AgentCapabilitiesSchema` in `packages/adapter-sdk`.
+- Declared `readOnlyEnforcement` honestly on all 4 production adapters + conservative default:
+  - OpenCode: `"provider-native"` (skips `--auto` in read-only mode)
+  - Claude: `"provider-native"` (`canUseTool` denies write tools)
+  - Codex: `"hard-sandbox"` (`--sandbox read-only`)
+  - Antigravity: `"provider-native"` (`--mode plan` without `--dangerously-skip-permissions`)
+  - Local (CONSERVATIVE_CAPABILITIES): `"unsupported"` (no read-only mechanism)
+- Fixed 12+ test files missing `readOnlyEnforcement` in mock capabilities.
+- Fixed `router.test.ts` type widening across spread objects.
+- Fixed `local-adapter.test.ts` "all-false" check to skip the non-boolean field.
+
+**Decided**
+- Each adapter's declaration must match observable behavior — the contract is that the guarantee is honest, not aspirational.
+- `unsupported` is the safe default for the conservative (unroutable) posture: if an adapter has no read-only mechanism, it's the caller's responsibility not to send it read-only requests.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 621 passed / 59 files.
+- Committed: `18e9cc1 feat(adapter-sdk, adapters): S2-T3 plan mode enforced per transport, guarantee declared honestly`
+
 
 - One `## Sprint N — <theme>` heading per sprint, newest sprint at the bottom.
 - Inside a sprint, one `### block` per agent working session. An agent that comes
@@ -13,7 +41,62 @@ what blocked, what was learned.
 - Every block **must** open with the metadata header shown below. The tech lead
   greps these fields, so the keys and order are fixed.
 
-## Block template — copy this exactly
+
+### S2-T4 — AdapterRuntimeCapabilities replaces name-based capability checks
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T09:55 → 2026-07-25T10:15
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T4
+- **status:** done
+
+**Did**
+- Added `AdapterRuntimeCapabilities` type (Zod schema + type) to `packages/adapter-sdk/src/capabilities.ts`: `adapterId`, `transport` (cli|sdk|app-server), `approval` (per-action|before-apply|none), `structuredToolEvents`, `contextMetrics` (reported|estimated|none), `manualCompact`, `mcp`, `webSearch`, `cancellation`.
+- Added `getRuntimeCapabilities()` method to `AgentAdapter` interface.
+- Implemented honestly on all adapters (values from docs/15 §3.1 probe table):
+  - **Claude**: transport=sdk, approval=per-action (canUseTool), cancellation=true
+  - **Codex**: transport=cli, approval=none (--sandbox is all-or-nothing), cancellation=true
+  - **Antigravity**: transport=cli, approval=none, cancellation=false (no cancel mechanism)
+  - **OpenCode**: transport=cli, approval=none, cancellation=false
+  - **Local**: transport=app-server (HTTP), approval=none, cancellation=true (AbortSignal)
+- Replaced `validateCombination`'s ad-hoc `options?.hasPerActionSeam` with a formal `ApprovalSeam` parameter; exported `ApprovalSeam` from `@bremio/policy`.
+- Fixed 9 test files missing `getRuntimeCapabilities` in mock adapters.
+
+**Decided**
+- `approval` seam is the first concrete field that formalizes what was previously an ad-hoc option — future fields from docs/15 §3 (structuredToolEvents, contextMetrics, etc.) follow the same pattern.
+- The `approval: "per-action"` declaration is what enables approve+direct-workspace combinations; without it, approve mode requires isolated-worktree.
+- `contextMetrics: "estimated"` for CLI adapters (we estimate from output) vs `"none"` for the local HTTP adapter (no metrics at all).
+- `cancellation: false` for Antigravity and OpenCode because they lack a cancellation mechanism.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 621 passed / 59 files.
+- Committed: `30210c9 feat(adapter-sdk, policy, adapters): S2-T4 AdapterRuntimeCapabilities replaces name-based capability checks`
+
+### S2-T5 — OpenCode `--auto` opt-in, mirroring S0-T4
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T10:15 → 2026-07-25T10:25
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T5
+- **status:** done
+
+**Did**
+- Added `allowAutoPermissionBypass` option (default `false`) to `OpenCodeAdapterOptions`.
+- Added `OpenCodePermissionError` class (same defect class as Antigravity's `AntigravityPermissionError`).
+- Refuse writable runs without the opt-in before spawn — yield a `completed` event with `status: "failed"` and an actionable message naming the opt-in flag.
+- Only pass `--auto` when both `!readOnly` AND `allowAutoPermissionBypass` are true.
+- Added 3 new tests: refusal without bypass, success with bypass, read-only allowed regardless.
+- Updated 5 existing tests to use a `writableAdapter()` helper with `allowAutoPermissionBypass: true`.
+
+**Decided**
+- Same shape as Antigravity's `allowDangerousPermissionBypass` (S0-T4): off by default, must be asked for.
+- Refusal happens before spawn and yields a failed outcome (not a thrown error) so the caller can attribute the failure to the adapter rather than a configuration crash.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/adapter-opencode/src/opencode-adapter.test.ts` — 26 passed (+3 new).
+- `corepack pnpm test` — 624 passed / 59 files (1 flaky process-supervisor test fails intermittently).
+- Committed: `552b37a feat(adapter-opencode): S2-T5 --auto opt-in, mirroring S0-T4`
+
 
 ```md
 ### <TASK-ID> — <one-line title>
@@ -302,4 +385,117 @@ Rules:
 - `corepack pnpm typecheck` — clean.
 - `corepack pnpm test` — 583 passed / 58 files (+1 worktree test).
 - Real-data migration probe: v3→v7 clean, idempotent (scratch script, not committed).
+
+---
+
+## Sprint 2 — Policy and enforcement
+
+### S2-T1 — packages/policy: ControlMode × ActionClass matrix, pure evaluate()
+- **agent:** Claude (opencode)
+- **time:** 2026-07-24T15:10 → 2026-07-24T15:20
+- **branch:** sprint/s2-t1-policy-matrix
+- **task(s):** S2-T1
+- **status:** done
+
+**Did**
+- Created `packages/policy/` with `package.json`, `tsconfig.json`, `src/index.ts`, `src/policy.ts`, `src/policy.test.ts`.
+- Defined `ControlMode` (`plan | approve | autopilot`), `ActionClass` (10 classes: read, write, create, delete, command, network, mcp-tool, git-destructive, outside-workspace, user-config), `ApprovalRequirement` (`none | per-action | before-apply`), `PolicyEvaluation` (allowed + approvalRequired + reason).
+- Implemented pure `evaluate(controlMode, action)` function backed by a `ControlMode × ActionClass` matrix.
+  - **plan**: only `read` allowed; everything else denied with mode-specific reason.
+  - **approve**: everything allowed; `write`/`create`/`network` need `before-apply`; `delete`/`command`/`mcp-tool`/`git-destructive`/`outside-workspace`/`user-config` need `per-action`.
+  - **autopilot**: everything allowed, no approval required.
+- 31 tests covering every cell of the matrix + exhaustive reachability check.
+- Red-check: flipped `plan → read` to `allowed: false` → the "plan mode allows read" test failed correctly.
+
+**Decided**
+- `approvalRequired: ApprovalRequirement` (three-valued: none / per-action / before-apply) so the caller can distinguish "no approval needed" from "approve each action individually" from "approve the batch before apply".
+- Matrix is static data, not computed — total size is 3×10=30 cells; a data-driven table is simpler to audit than computed rules.
+- Pure function: no side effects, no IO, no dependencies.
+
+**Verification**
+- `corepack pnpm vitest run packages/policy/src/policy.test.ts` — 31 passed.
+- `corepack pnpm test` — 614 passed / 59 files (+1 file, +31 tests).
+- Red-check: `plan → read` rule flipped to `allowed: false` → test fails with correct message. Restored.
+- Committed: `2831b95 feat(policy): S2-T1 ControlMode x ActionClass matrix + pure evaluate()`
+
+### S2-T2 — WorkspaceStrategy becomes explicit; Solo may run isolated
+- **agent:** Antigravity
+- **time:** 2026-07-24T17:11:00Z → 2026-07-24T21:43:00Z
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T2
+- **status:** done
+
+**Did**
+- Added `CollaborationMode` (`solo` | `colab`), `WorkspaceStrategy` (`direct-workspace` | `isolated-worktree`), `CombinationValidation` interface, and `validateCombination` function to `packages/policy`.
+- Updated `RunSingleAgentOptions` and `SingleRunReport` in `packages/orchestrator` to accept and report `workspaceStrategy`.
+- Supported isolated single-agent runs in a dedicated git worktree when `workspaceStrategy === "isolated-worktree"` using `WorktreeManager`.
+- Updated `RunReport` in `packages/orchestrator` to include `workspaceStrategy`.
+- Added `--workspace-strategy <direct-workspace|isolated-worktree>` and `--isolated` options to `bremio run` CLI.
+- Added 6 combination validation tests in `policy.test.ts` and 1 isolated-worktree single-run test in `single-run.test.ts`.
+
+**Decided**
+- `WorkspaceStrategy` is an independent axis from `CollaborationMode` per `docs/15` §2.1.
+- `validateCombination` enforces that `colab` requires `isolated-worktree` and `approve` requires `isolated-worktree` unless transport has a per-action seam.
+- `workspaceStrategy` on `SingleRunReport` and `RunReport` is optional (`workspaceStrategy?: WorkspaceStrategy`) for backward compatibility with existing report fixtures.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 621 passed across 59 test files (+7 new tests).
+- Red-check: removed `targetCwd = taskWorktree.path` in `single-run.ts` → `isolated-worktree` test failed (`expected [] to include 'DIRECT.txt'`) because edits landed in main repo instead of worktree. Restored and test passed.
+
+### S2-REVIEW — tech-lead audit of Sprint 2
+- **agent:** Claude (Opus 4.8), acting as tech lead
+- **time:** 2026-07-25 → 2026-07-25
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T1..T5 (review), fixes to policy + docs/15 + TASKS.md
+- **status:** done
+
+**Did**
+- Gates on the branch: typecheck clean, 624 tests / 59 files.
+- Read every task's production code rather than its log entry. Confirmed the
+  policy package is a pure data matrix with **zero provider names**, that Solo's
+  isolated-worktree path really redirects `targetCwd` *and* collects
+  `filesChanged` from the worktree (so change reporting stays honest), and that
+  S2-T5 mirrors S0-T4's fail-closed shape exactly.
+- Red-checked three guards by mutating production code: OpenCode's writable
+  fail-closed, `validateCombination`'s approve-requires-isolation rule, and my
+  own new `canBackControlMode`. All failed for the stated reason; all restored.
+
+**Found & fixed**
+- **The §2.2 rule was comment-only.** `ReadOnlyEnforcement`'s doc comment says
+  advisory/unsupported "are not acceptable backings for plan or approve" — but
+  nothing executed it, which is the comment-only enforcement the rule itself
+  forbids. Added `canBackControlMode()` to `packages/policy` with tests and a
+  red-check. `plan` needs real transport enforcement (a worktree contains a
+  write but plan promises it never happened); `approve` accepts an isolated
+  worktree as its backing; `autopilot` constrains nothing here.
+- **`TASKS.md` had no Sprint 3.** A botched edit renamed Sprint 3's heading to a
+  second "Sprint 2 ✅ COMPLETE", leaving S3's rows orphaned under it. On the
+  board parallel agents read, that misdirects whoever picks up next. Restored.
+- **`docs/15` was missing the Autopilot deny list** approved in the `docs/14` Q4
+  review. Sprint 2 built `AUTOPILOT_RULES` to allow all ten action classes,
+  correctly per the spec as written — the omission was mine, not the sprint's.
+  Recorded as `docs/15` §2.5 and scheduled as S3-T8.
+
+**Decided**
+- Merged. The two "declared but unconsumed" findings (`readOnlyEnforcement`,
+  `getRuntimeCapabilities`) are correct sequencing, not defects: Sprint 3 is what
+  consumes them, and nothing is *weaker* than before. Scheduled as S3-T7 so they
+  cannot quietly stay inert.
+- Accepted argv-shape tests as the sprint gate's evidence. Asserting the right
+  flag reaches the provider is the honest claim available without spending real
+  quota; the `docs/15` §6 sentinel fixtures are scheduled as S3-T9 rather than
+  faked now.
+- Worth naming as a genuine win: before S2-T3, OpenCode passed `--auto` on
+  **every** run including read-only, which silently defeated `--agent plan`.
+  Plan mode was actively broken for that adapter and now is not.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 634 passed / 59 files (+10 from the new rule's tests).
+- `corepack pnpm release:check` — PASS, `bremio 1.2.0` packed install clean.
+- Red-check (mine): `canBackControlMode` forced to always-enforced → 5 tests
+  failed. Restored.
+
+
 

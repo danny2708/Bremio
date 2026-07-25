@@ -63,15 +63,15 @@ its recorded mode, model and reasoning; a legacy session asks before continuing;
 
 ---
 
-## Sprint 2 — Policy and enforcement
+## Sprint 2 — Policy and enforcement ✅ COMPLETE
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S2-T1 | `packages/policy`: `ControlMode` × `ActionClass` matrix, pure `evaluate()` | M | — | ‖ S1 |
-| [ ] | S2-T2 | `WorkspaceStrategy` becomes explicit; Solo may run isolated | L | S2-T1 | — |
-| [ ] | S2-T3 | Plan mode enforced per transport, guarantee declared honestly (`docs/15` §2.2) | L | S2-T1, S2-T2 | — |
-| [ ] | S2-T4 | `AdapterRuntimeCapabilities` replaces name-based capability checks | M | S2-T1 | ‖ S2-T2 |
-| [ ] | S2-T5 | OpenCode `--auto` opt-in, mirroring S0-T4 (`docs/15` §1.5, §8) | S | — | ‖ everything |
+| [x] | S2-T1 | `packages/policy`: `ControlMode` × `ActionClass` matrix, pure `evaluate()` | M | — | ‖ S1 |
+| [x] | S2-T2 | `WorkspaceStrategy` becomes explicit; Solo may run isolated | L | S2-T1 | — |
+| [x] | S2-T3 | Plan mode enforced per transport, guarantee declared honestly (`docs/15` §2.2) | L | S2-T1, S2-T2 | — |
+| [x] | S2-T4 | `AdapterRuntimeCapabilities` replaces name-based capability checks | M | S2-T1 | ‖ S2-T2 |
+| [x] | S2-T5 | OpenCode `--auto` opt-in, mirroring S0-T4 (`docs/15` §1.5, §8) | S | — | ‖ everything |
 
 **Sprint gate:** a Plan-mode run cannot modify the workspace, proven per adapter
 by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
@@ -88,6 +88,9 @@ by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 | [ ] | S3-T4 | Review-before-apply in an isolated worktree | L | S2-T2, S3-T1 | — |
 | [ ] | S3-T5 | Approval UX — CLI and panel share one decision surface | M | S3-T3 | — |
 | [ ] | S3-T6 | Audit log: every decision and mode transition, queryable | S | S3-T1 | ‖ S3-T5 |
+| [ ] | S3-T7 | Wire `readOnlyEnforcement` + `getRuntimeCapabilities` into run selection — Sprint 2 declared both, nothing consumes them (`canBackControlMode` is ready) | M | S2-T3, S2-T4 | ‖ S3-T1 |
+| [ ] | S3-T8 | Autopilot deny list in `AUTOPILOT_RULES` per `docs/15` §2.5, with `ApprovalGrant` as the only override | M | S3-T2 | — |
+| [ ] | S3-T9 | Safety fixtures from `docs/15` §6: outside-workspace sentinel, ignored-file write, home-dir write — the sprint-2 gate accepted argv-shape tests instead | M | S3-T7 | ‖ S3-T8 |
 
 ---
 

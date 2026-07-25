@@ -29,6 +29,7 @@
       "@bremio/adapter-codex": ["./packages/adapter-codex/src/index.ts"],
       "@bremio/adapter-opencode": ["./packages/adapter-opencode/src/index.ts"],
       "@bremio/adapter-antigravity": ["./packages/adapter-antigravity/src/index.ts"],
+      "@bremio/policy": ["./packages/policy/src/index.ts"],
       "@bremio/adapter-local": ["./packages/adapter-local/src/index.ts"]
     }
   }
