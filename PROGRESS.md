@@ -41,7 +41,37 @@ what blocked, what was learned.
 - Every block **must** open with the metadata header shown below. The tech lead
   greps these fields, so the keys and order are fixed.
 
-## Block template — copy this exactly
+
+### S2-T4 — AdapterRuntimeCapabilities replaces name-based capability checks
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T09:55 → 2026-07-25T10:15
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T4
+- **status:** done
+
+**Did**
+- Added `AdapterRuntimeCapabilities` type (Zod schema + type) to `packages/adapter-sdk/src/capabilities.ts`: `adapterId`, `transport` (cli|sdk|app-server), `approval` (per-action|before-apply|none), `structuredToolEvents`, `contextMetrics` (reported|estimated|none), `manualCompact`, `mcp`, `webSearch`, `cancellation`.
+- Added `getRuntimeCapabilities()` method to `AgentAdapter` interface.
+- Implemented honestly on all adapters (values from docs/15 §3.1 probe table):
+  - **Claude**: transport=sdk, approval=per-action (canUseTool), cancellation=true
+  - **Codex**: transport=cli, approval=none (--sandbox is all-or-nothing), cancellation=true
+  - **Antigravity**: transport=cli, approval=none, cancellation=false (no cancel mechanism)
+  - **OpenCode**: transport=cli, approval=none, cancellation=false
+  - **Local**: transport=app-server (HTTP), approval=none, cancellation=true (AbortSignal)
+- Replaced `validateCombination`'s ad-hoc `options?.hasPerActionSeam` with a formal `ApprovalSeam` parameter; exported `ApprovalSeam` from `@bremio/policy`.
+- Fixed 9 test files missing `getRuntimeCapabilities` in mock adapters.
+
+**Decided**
+- `approval` seam is the first concrete field that formalizes what was previously an ad-hoc option — future fields from docs/15 §3 (structuredToolEvents, contextMetrics, etc.) follow the same pattern.
+- The `approval: "per-action"` declaration is what enables approve+direct-workspace combinations; without it, approve mode requires isolated-worktree.
+- `contextMetrics: "estimated"` for CLI adapters (we estimate from output) vs `"none"` for the local HTTP adapter (no metrics at all).
+- `cancellation: false` for Antigravity and OpenCode because they lack a cancellation mechanism.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 621 passed / 59 files.
+- Committed: `30210c9 feat(adapter-sdk, policy, adapters): S2-T4 AdapterRuntimeCapabilities replaces name-based capability checks`
+
 
 ```md
 ### <TASK-ID> — <one-line title>
