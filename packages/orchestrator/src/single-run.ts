@@ -449,7 +449,7 @@ async function captureWorkspaceState(repoPath: string): Promise<WorkspaceState> 
   try {
     const { stdout: status } = await execFileAsync(
       "git",
-      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored"],
       { cwd: repoPath, encoding: "utf8" },
     );
     const head = await execFileAsync(

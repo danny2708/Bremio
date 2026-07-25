@@ -42,6 +42,30 @@ what blocked, what was learned.
   greps these fields, so the keys and order are fixed.
 
 
+### S3-T9 — Safety fixtures: outside-workspace sentinel, ignored-file write, home-dir write
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T14:55 → 2026-07-25T15:00
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T9
+- **status:** done
+
+**Did**
+- Added `--ignored` flag to `captureWorkspaceState` git status call in `single-run.ts` — gitignored files are now detected in `dirtyFiles` and `filesChanged`
+- Added 3 safety fixture integration tests in `single-run.test.ts`:
+  1. **ignored-file write**: creates `.gitignore` with `*.log`, mock writes `agent.log`, verifies it appears in `filesChanged` and `dirtyAfter`
+  2. **outside-workspace sentinel**: creates sentinel file outside the repo, runs plan mode, verifies sentinel unchanged and workspace clean
+  3. **home-dir sentinel**: weak adapter with `"advisory"` enforcement is rejected by `canBackControlMode` gate, home sentinel unchanged
+
+**Decided**
+- `--ignored` is safe to add unconditionally because git porcelain `!!` entries are parsed correctly by the existing `parsePorcelainStatus` (handles any 2-char code)
+- The sentinel tests verify the contract at the orchestrator level: (1) the workspace capture catches all file changes including ignored, (2) plan mode passes the `canBackControlMode` gate for capable adapters, (3) weak adapters are rejected before any run threatens sentinel files
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 729 passed / 61 files (+3 new)
+- Red-check 1: removed `--ignored` → "ignored-file write" test fails (`expected [] to include 'agent.log'`). Restored.
+- Red-check 2: removed `canBackControlMode` guard → "home-dir sentinel" test resolves instead of rejecting. Restored.
+
 ### S3-T8 — Autopilot deny list in AUTOPILOT_RULES per docs/15 §2.5
 - **agent:** Claude (opencode)
 - **time:** 2026-07-25T14:45 → 2026-07-25T14:50
