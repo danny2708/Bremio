@@ -42,6 +42,57 @@ what blocked, what was learned.
   greps these fields, so the keys and order are fixed.
 
 
+### S3-T3 — Protocol routes + fail-closed when non-interactive
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T11:50 → 2026-07-25T12:30
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T3
+- **status:** done
+
+**Did**
+- `packages/protocol/src/approval.ts`: ActionClassSchema, ActionDigestSchema, ApprovalRequestSchema, ApprovalDecisionSchema, ApprovalGrantSchema, CreateApprovalRequestSchema, DecideApprovalRequestSchema, CreateApprovalGrantSchema — all exported from `index.ts`
+- `apps/daemon/src/storage.ts`: SCHEMA_VERSION 8, migration for `approval_requests` and `approval_grants` (no FK on sessions), CRUD methods, `PersistedApprovalRequest`/`PersistedApprovalGrant` types, `toApprovalRequest`/`toApprovalGrant` helpers
+- `apps/daemon/src/runs.ts`: RunRegistry pass-through with fail-closed — `createApprovalRequest` auto-rejects when `#listeners.get(runId)?.size === 0`
+- `apps/daemon/src/server.ts`: full route set (list/create/get/decide/cancel for requests; list/create/get/revoke for grants) + `approvals: true` capability in `/meta`
+- `apps/daemon/src/protocol.test.ts`: 15 integration tests covering auto-deny (fail-closed), pending, validation, fetch, 404, filtering, approve/reject with reason, 409 double-decide, cancel, 409 cancel-non-pending, create/revoke/list grants
+- Typecheck: clean. Full suite: 140 tests pass across 6 files.
+**Decided**
+
+**Verification**
+
+### S3-T4 — Review-before-apply in an isolated worktree
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T12:30 → 2026-07-25T13:05
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T4
+- **status:** done
+
+**Did**
+- `apps/daemon/src/storage.ts`: added `"pending_approval"` to `RunStatus`
+- `apps/daemon/src/runs.ts`:
+  - Added `"review-requested"` event kind, `PendingReview` interface, `#pendingReviews` map
+  - Added `workspaceStrategy` to `StartRunInput`
+  - Added `#startReview()` — creates approval request, emits `review-requested` with diff, sets `pending_approval`, returns a promise that resolves when the user decides
+  - Added `resolvePendingApproval(requestId, decision)` — unlocks a waiting review, called from the route handler
+  - Modified `#execute` — after `runSingleAgent` returns for an isolated-worktree run with completed status, inserts the review gate: pause, wait for decision, then merge (on approve) or cleanup + fail (on reject)
+  - Passes `workspaceStrategy` through to `runSingleAgent` options
+- `apps/daemon/src/server.ts`: added `workspaceStrategy` to `StartRunSchema`; wired `registry.resolvePendingApproval()` into the decide route
+- `apps/daemon/src/protocol.test.ts`: 4 new tests covering `workspaceStrategy` acceptance, capability advertisement, recovery options for `pending_approval` runs, and `resolvePendingApproval` lifecycle
+
+**Decided**
+- The review gate lives in the daemon's `#execute` method (not in the orchestrator) because approval decisions are daemon-level concerns involving SSE events, run status transitions, and merge/cleanup of worktrees
+- `#startReview` blocks `#execute` via a Promise stored in `#pendingReviews`, resolved by the existing approval route handler
+- On approval: merge worktree branch into the current branch using `MergeManager.merge()`, then clean up
+- On rejection: clean up the worktree without merging, emit `failed` with `review_rejected` code
+- Merge errors are caught and logged but do not fail the run — the worktree is left in place for manual resolution
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run apps/daemon` — 144 passed (140 + 4 new).
+- `corepack pnpm vitest run packages/orchestrator` — 116 passed.
+- `corepack pnpm vitest run packages/workspace` — 9 passed.
+- Full suite: 144 daemon tests + 116 orchestrator tests + 9 workspace tests all pass.
+
 ### S3-T2 — Grant scopes (once / session / workspace), expiry, revoke, precedence
 - **agent:** Claude (opencode)
 - **time:** 2026-07-25T11:35 → 2026-07-25T11:45

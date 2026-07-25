@@ -68,3 +68,30 @@ export {
   type ProtocolCompatibility,
 } from "./version";
 
+export {
+  ActionClassSchema,
+  ApprovalRequestStateSchema,
+  RiskLevelSchema,
+  GrantScopeSchema,
+  GrantStatusSchema,
+  ActionDigestSchema,
+  ApprovalRequestSchema,
+  ApprovalDecisionSchema,
+  ApprovalGrantSchema,
+  CreateApprovalRequestSchema,
+  DecideApprovalRequestSchema,
+  CreateApprovalGrantSchema,
+  type ActionClass,
+  type ApprovalRequestState,
+  type RiskLevel,
+  type GrantScope,
+  type GrantStatus,
+  type ActionDigest,
+  type ApprovalRequest,
+  type ApprovalDecision,
+  type ApprovalGrant,
+  type CreateApprovalRequest,
+  type DecideApprovalRequest,
+  type CreateApprovalGrant,
+} from "./approval";
+

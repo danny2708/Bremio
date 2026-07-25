@@ -42,6 +42,7 @@ import { mergeCommand } from "./merge";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
 import { collectComparison, printComparison, type ComparisonSide } from "./compare";
 import { capacityCommand } from "./quota";
+import { approvalCommandFromCli } from "./approval";
 import { sessionCommandFromCli } from "./session";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
@@ -149,6 +150,16 @@ function parseCli() {
       out: { type: "string" },
       comparison: { type: "string" },
       "workspace-strategy": { type: "string" },
+      "workspace": { type: "string" },
+      session: { type: "string" },
+      reason: { type: "string" },
+      scope: { type: "string" },
+      ttl: { type: "string" },
+      "action-class": { type: "string" },
+      target: { type: "string" },
+      precedence: { type: "string" },
+      state: { type: "string" },
+      "decided-by": { type: "string" },
       isolated: { type: "boolean", default: false },
       escalate: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
@@ -212,6 +223,9 @@ async function main(): Promise<void> {
     case "capacity":
     case "quota":
       process.exitCode = await quotaCommandFromCli(values);
+      return;
+    case "approval":
+      process.exitCode = await approvalCommandFromCli(values, positionals);
       return;
     case "daemon":
       process.exitCode = await daemonCommandFromCli(positionals[1]);

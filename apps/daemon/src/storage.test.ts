@@ -804,7 +804,7 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(7);
+    expect(freshVer).toBe(8);
 
     const file = await createV3Fixture();
     const migrated = await RunStore.open(file);
@@ -812,7 +812,7 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(7);
+    expect(migratedVer).toBe(8);
   });
 
   it("re-running migration on v5 is a no-op", async () => {
