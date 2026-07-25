@@ -20,6 +20,7 @@ import { CodexAdapter } from "@bremio/adapter-codex";
 import { MergeManager, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
 import {
   isTerminal,
+  type AuditEvent,
   type CreateSessionConfigInput,
   type PersistedApprovalGrant,
   type PersistedApprovalRequest,
@@ -277,8 +278,8 @@ export class RunRegistry {
     });
   }
 
-  cancelApprovalRequest(id: string): PersistedApprovalRequest | undefined {
-    return this.store.cancelApprovalRequest(id);
+  cancelApprovalRequest(id: string, cancelledBy?: string): PersistedApprovalRequest | undefined {
+    return this.store.cancelApprovalRequest(id, cancelledBy);
   }
 
   getApprovalRequest(id: string): PersistedApprovalRequest | undefined {
@@ -310,12 +311,16 @@ export class RunRegistry {
     return this.store.listApprovalGrants(filters);
   }
 
-  revokeApprovalGrant(id: string): PersistedApprovalGrant | undefined {
-    return this.store.revokeApprovalGrant(id);
+  revokeApprovalGrant(id: string, revokedBy?: string): PersistedApprovalGrant | undefined {
+    return this.store.revokeApprovalGrant(id, revokedBy);
   }
 
   getApprovalGrant(id: string): PersistedApprovalGrant | undefined {
     return this.store.getApprovalGrant(id);
+  }
+
+  listAuditEvents(filters: { sessionId?: string; limit?: number } = {}): AuditEvent[] {
+    return this.store.listAuditEvents(filters);
   }
 
   /**

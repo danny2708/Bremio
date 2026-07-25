@@ -24,7 +24,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -239,6 +239,8 @@ export interface SessionConfig {
   completeness: "complete" | "partial";
   missingFields: string[];
   createdAt: string;
+  changedBy?: string;
+  changeReason?: string;
 }
 
 export interface CreateSessionConfigInput {
@@ -253,6 +255,8 @@ export interface CreateSessionConfigInput {
   cwd?: string;
   baseBranch?: string;
   provenance?: RecordProvenance;
+  changedBy?: string;
+  changeReason?: string;
 }
 
 export interface PersistedSessionContext {
@@ -340,7 +344,9 @@ export interface PersistedApprovalGrant {
   target?: string;
   expiresAt: string;
   revokedAt?: string;
+  revokedBy?: string;
   consumedAt?: string;
+  consumedBy?: string;
   createdAt: string;
   createdBy: string;
   originatingDigest?: string;
@@ -845,8 +851,8 @@ export class RunStore {
       .prepare(
         `INSERT INTO session_config (session_id, revision, mode, lead_agent_id, worker_agent_id,
           model, reasoning_level, permission, approval_mode, cwd, base_branch,
-          provenance, completeness, missing_fields, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          provenance, completeness, missing_fields, created_at, changed_by, change_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.sessionId,
@@ -864,6 +870,8 @@ export class RunStore {
         completeness,
         JSON.stringify(missingFields),
         now,
+        input.changedBy ?? null,
+        input.changeReason ?? null,
       );
     return this.getSessionConfig(input.sessionId)!;
   }
@@ -1023,13 +1031,15 @@ export class RunStore {
     return this.getApprovalRequest(input.id);
   }
 
-  cancelApprovalRequest(id: string): PersistedApprovalRequest | undefined {
+  cancelApprovalRequest(id: string, cancelledBy?: string): PersistedApprovalRequest | undefined {
     const now = new Date().toISOString();
     const res = this.db
       .prepare(
-        "UPDATE approval_requests SET state = 'cancelled', decided_at = ? WHERE id = ? AND state = 'pending'",
+        cancelledBy
+          ? "UPDATE approval_requests SET state = 'cancelled', decided_at = ?, decided_by = ? WHERE id = ? AND state = 'pending'"
+          : "UPDATE approval_requests SET state = 'cancelled', decided_at = ? WHERE id = ? AND state = 'pending'",
       )
-      .run(now, id);
+      .run(...(cancelledBy ? [now, cancelledBy, id] : [now, id]));
     if (Number(res.changes) === 0) return undefined;
     return this.getApprovalRequest(id);
   }
@@ -1100,25 +1110,31 @@ export class RunStore {
     return rows.map(toApprovalGrant);
   }
 
-  revokeApprovalGrant(id: string): PersistedApprovalGrant | undefined {
+  revokeApprovalGrant(id: string, revokedBy?: string): PersistedApprovalGrant | undefined {
     const now = new Date().toISOString();
     this.db
       .prepare(
-        `UPDATE approval_grants SET revoked_at = ?
-         WHERE id = ? AND revoked_at IS NULL AND consumed_at IS NULL`,
+        revokedBy
+          ? `UPDATE approval_grants SET revoked_at = ?, revoked_by = ?
+             WHERE id = ? AND revoked_at IS NULL AND consumed_at IS NULL`
+          : `UPDATE approval_grants SET revoked_at = ?
+             WHERE id = ? AND revoked_at IS NULL AND consumed_at IS NULL`,
       )
-      .run(now, id);
+      .run(...(revokedBy ? [now, revokedBy, id] : [now, id]));
     return this.getApprovalGrant(id);
   }
 
-  consumeApprovalGrant(id: string): PersistedApprovalGrant | undefined {
+  consumeApprovalGrant(id: string, consumedBy?: string): PersistedApprovalGrant | undefined {
     const now = new Date().toISOString();
     this.db
       .prepare(
-        `UPDATE approval_grants SET consumed_at = ?
-         WHERE id = ? AND consumed_at IS NULL AND revoked_at IS NULL`,
+        consumedBy
+          ? `UPDATE approval_grants SET consumed_at = ?, consumed_by = ?
+             WHERE id = ? AND consumed_at IS NULL AND revoked_at IS NULL`
+          : `UPDATE approval_grants SET consumed_at = ?
+             WHERE id = ? AND consumed_at IS NULL AND revoked_at IS NULL`,
       )
-      .run(now, id);
+      .run(...(consumedBy ? [now, consumedBy, id] : [now, id]));
     return this.getApprovalGrant(id);
   }
 
@@ -1132,6 +1148,105 @@ export class RunStore {
       .run(now);
     return Number(result.changes);
   }
+
+  // ── Audit log ─────────────────────────────────────────────────────
+
+  listAuditEvents(filters: {
+    sessionId?: string;
+    limit?: number;
+  } = {}): AuditEvent[] {
+    const limit = filters.limit ?? 50;
+    const results: AuditEvent[] = [];
+
+    // Approval request decisions
+    const reqRows = this.db
+      .prepare(
+        `SELECT 'approval_decision' AS kind, id, session_id, run_id, decided_at AS event_at,
+                decided_by, state, reason, requested_at
+         FROM approval_requests
+         WHERE decided_at IS NOT NULL
+           ${filters.sessionId ? "AND session_id = ?" : ""}
+         ORDER BY decided_at DESC
+         LIMIT ?`,
+      )
+      .all(...(filters.sessionId ? [filters.sessionId, limit] : [limit])) as Array<Record<string, unknown>>;
+    for (const r of reqRows) {
+      results.push({
+        kind: "approval_decision",
+        id: String(r.id),
+        sessionId: String(r.session_id),
+        runId: String(r.run_id),
+        eventAt: String(r.event_at),
+        decidedBy: r.decided_by ? String(r.decided_by) : undefined,
+        state: String(r.state),
+        reason: r.reason ? String(r.reason) : undefined,
+      });
+    }
+
+    // Grant lifecycle events
+    const grantRows = this.db
+      .prepare(
+        `SELECT 'grant_revoked' AS kind, id, session_id, revoked_at AS event_at, revoked_by, 'revoked' AS state
+         FROM approval_grants
+         WHERE revoked_at IS NOT NULL
+           ${filters.sessionId ? "AND session_id = ?" : ""}
+         UNION ALL
+         SELECT 'grant_consumed' AS kind, id, session_id, consumed_at AS event_at, consumed_by, 'consumed' AS state
+         FROM approval_grants
+         WHERE consumed_at IS NOT NULL
+           ${filters.sessionId ? "AND session_id = ?" : ""}
+         ORDER BY event_at DESC
+         LIMIT ?`,
+      )
+      .all(...(filters.sessionId ? [filters.sessionId, filters.sessionId, limit] : [limit])) as Array<Record<string, unknown>>;
+    for (const g of grantRows) {
+      results.push({
+        kind: String(g.kind) as AuditEvent["kind"],
+        id: String(g.id),
+        sessionId: String(g.session_id),
+        eventAt: String(g.event_at),
+        decidedBy: g.revoked_by ? String(g.revoked_by) : undefined,
+        state: String(g.state),
+      });
+    }
+
+    // Session config changes
+    const cfgRows = this.db
+      .prepare(
+        `SELECT 'config_change' AS kind, session_id, revision, changed_by, change_reason, created_at AS event_at
+         FROM session_config
+         WHERE changed_by IS NOT NULL
+           ${filters.sessionId ? "AND session_id = ?" : ""}
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(...(filters.sessionId ? [filters.sessionId, limit] : [limit])) as Array<Record<string, unknown>>;
+    for (const c of cfgRows) {
+      results.push({
+        kind: "config_change",
+        id: `rev-${c.revision}`,
+        sessionId: String(c.session_id),
+        eventAt: String(c.event_at),
+        decidedBy: c.changed_by ? String(c.changed_by) : undefined,
+        reason: c.change_reason ? String(c.change_reason) : undefined,
+      });
+    }
+
+    // Sort all events by event_at descending, then take `limit`
+    results.sort((a, b) => b.eventAt.localeCompare(a.eventAt));
+    return results.slice(0, limit);
+  }
+}
+
+export interface AuditEvent {
+  kind: "approval_decision" | "grant_revoked" | "grant_consumed" | "config_change";
+  id: string;
+  sessionId: string;
+  runId?: string;
+  eventAt: string;
+  decidedBy?: string;
+  state?: string;
+  reason?: string;
 }
 
 export function truncateTitle(prompt: string, maxLen = 80): string {
@@ -1416,6 +1531,16 @@ function migrate(db: Database): void {
       `);
     }
 
+    if (Number(current) < 9) {
+      addColumnIfMissing(db, "session_config", "changed_by", "TEXT");
+      addColumnIfMissing(db, "session_config", "change_reason", "TEXT");
+      addColumnIfMissing(db, "approval_grants", "revoked_by", "TEXT");
+      addColumnIfMissing(db, "approval_grants", "consumed_by", "TEXT");
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_approval_requests_decided_by ON approval_requests(decided_by)",
+      );
+    }
+
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -1474,6 +1599,8 @@ function toSessionConfig(row: Record<string, unknown>): SessionConfig {
       ? (JSON.parse(String(row.missing_fields)) as string[])
       : [],
     createdAt: String(row.created_at),
+    ...(row.changed_by ? { changedBy: String(row.changed_by) } : {}),
+    ...(row.change_reason ? { changeReason: String(row.change_reason) } : {}),
   };
 }
 
@@ -1518,7 +1645,9 @@ function toApprovalGrant(row: Record<string, unknown>): PersistedApprovalGrant {
     ...(row.target ? { target: String(row.target) } : {}),
     expiresAt: String(row.expires_at),
     ...(row.revoked_at ? { revokedAt: String(row.revoked_at) } : {}),
+    ...(row.revoked_by ? { revokedBy: String(row.revoked_by) } : {}),
     ...(row.consumed_at ? { consumedAt: String(row.consumed_at) } : {}),
+    ...(row.consumed_by ? { consumedBy: String(row.consumed_by) } : {}),
     createdAt: String(row.created_at),
     createdBy: String(row.created_by),
     ...(row.originating_digest ? { originatingDigest: String(row.originating_digest) } : {}),

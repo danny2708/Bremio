@@ -393,7 +393,9 @@ async function handle(
   const approvalCancel = /^\/approval\/requests\/([^/]+)\/cancel$/.exec(route);
   if (method === "POST" && approvalCancel) {
     const id = decodeURIComponent(approvalCancel[1] ?? "");
-    const result = registry.cancelApprovalRequest(id);
+    const body = (await readJsonBody(req).catch(() => undefined)) as Record<string, unknown> | undefined;
+    const cancelledBy = body?.cancelledBy as string | undefined;
+    const result = registry.cancelApprovalRequest(id, cancelledBy);
     if (!result) return sendJson(res, 409, { error: `request ${id} is not pending` });
     return sendJson(res, 200, { request: result });
   }
@@ -425,9 +427,21 @@ async function handle(
   const approvalRevoke = /^\/approval\/grants\/([^/]+)\/revoke$/.exec(route);
   if (method === "POST" && approvalRevoke) {
     const id = decodeURIComponent(approvalRevoke[1] ?? "");
-    const result = registry.revokeApprovalGrant(id);
+    const body = (await readJsonBody(req).catch(() => undefined)) as Record<string, unknown> | undefined;
+    const revokedBy = body?.revokedBy as string | undefined;
+    const result = registry.revokeApprovalGrant(id, revokedBy);
     if (!result) return sendJson(res, 409, { error: `grant ${id} is not active` });
     return sendJson(res, 200, { grant: result });
+  }
+
+  if (method === "GET" && route === "/audit") {
+    const sessionId = url.searchParams.get("sessionId") ?? undefined;
+    const limit = url.searchParams.get("limit") ?? undefined;
+    const events = registry.listAuditEvents({
+      sessionId,
+      ...(limit ? { limit: Number(limit) } : {}),
+    });
+    return sendJson(res, 200, { events });
   }
 
   return sendJson(res, 404, { error: `unknown endpoint: ${method} ${route}` });
