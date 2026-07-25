@@ -42,6 +42,30 @@ what blocked, what was learned.
   greps these fields, so the keys and order are fixed.
 
 
+### S3-T7 — Wire readOnlyEnforcement + getRuntimeCapabilities into run selection
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T14:28 → 2026-07-25T14:40
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T7
+- **status:** done
+
+**Did**
+- Added `controlMode` to `RunSingleAgentOptions`, `SingleRunReport`, `RunBremioOptions`, `StartRunInput`, `StartRunSchema`
+- Calls `adapter.getRuntimeCapabilities()` alongside `getCapabilities()` in both `single-run.ts` and `run.ts`
+- Gates execution with `canBackControlMode()` for non-autopilot control modes
+- Exposes `runtimeCapabilities` in daemon `/adapters` endpoint and in `SingleAgentResult`/`SingleRunReport`
+- Added `controlMode` to `RunReport`/`BuildReportInput` in aggregator, threaded through `run.ts`
+- 5 files changed across orchestrator, daemon runs, and daemon server
+
+**Decided**
+- `controlMode` defaults to `"autopilot"` when omitted — preserves backward compatibility for all existing callers
+- `getRuntimeCapabilities()` is called with `.catch(() => undefined)` to degrade gracefully if an adapter doesn't implement it
+- Team mode validates the lead's capabilities; workers inherit the mode-set's constraints from the lead
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 726 passed / 61 files
+
 ### S3-T3 — Protocol routes + fail-closed when non-interactive
 - **agent:** Claude (opencode)
 - **time:** 2026-07-25T11:50 → 2026-07-25T12:30
