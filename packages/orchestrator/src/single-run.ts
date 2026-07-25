@@ -2,7 +2,8 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { WorkspaceStrategy } from "@bremio/policy";
+import { canBackControlMode, type ControlMode, type WorkspaceStrategy } from "@bremio/policy";
+import type { AdapterRuntimeCapabilities } from "@bremio/adapter-sdk";
 import type { AgentEvent, ReasoningLevel, TaskStatus, TestRun, UsageSummary } from "@bremio/protocol";
 import { prepareTurnExecution, type TurnMechanismDecision } from "@bremio/harness";
 import { TaskLog, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
@@ -26,6 +27,7 @@ export interface RunSingleAgentOptions {
   prompt: string;
   registry: AgentRegistry;
   workspaceStrategy?: WorkspaceStrategy;
+  controlMode?: ControlMode;
   model?: string;
   reasoningLevel?: ReasoningLevel;
   maxTurns?: number;
@@ -60,6 +62,7 @@ export interface SingleAgentResult {
   actualReasoningLevel?: ReasoningLevel;
   usage?: UsageSummary;
   error?: string;
+  runtimeCapabilities?: AdapterRuntimeCapabilities;
 }
 
 export interface SingleRunVerification {
@@ -86,6 +89,7 @@ export interface SingleRunReport {
   repoPath: string;
   runDir: string;
   workspaceStrategy?: WorkspaceStrategy;
+  controlMode?: ControlMode;
   worktree?: {
     branch: string;
     path: string;
@@ -121,12 +125,26 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
         `(available: ${[...opts.registry.keys()].join(", ") || "none"})`,
     );
   }
-  const capabilities = await adapter.getCapabilities();
+  const [capabilities, runtimeCaps] = await Promise.all([
+    adapter.getCapabilities(),
+    adapter.getRuntimeCapabilities().catch(() => undefined),
+  ]);
   if (!capabilities.repositoryRead || !capabilities.repositoryWrite) {
     throw new Error(`agent "${opts.primaryAgentId}" cannot run with workspace-write access`);
   }
 
   const workspaceStrategy = opts.workspaceStrategy ?? "direct-workspace";
+  const controlMode = opts.controlMode ?? "autopilot";
+
+  // Validate that the adapter's read-only enforcement can back the control mode.
+  if (controlMode !== "autopilot") {
+    const capCheck = canBackControlMode(controlMode, capabilities.readOnlyEnforcement, workspaceStrategy);
+    if (!capCheck.ok) {
+      throw new Error(
+        `agent "${opts.primaryAgentId}" cannot run in ${controlMode} mode: ${capCheck.reason}`,
+      );
+    }
+  }
   const runId = createRunId();
   const before = await captureWorkspaceState(repoPath);
   opts.hooks?.onWorkspaceReady?.(before.dirtyFiles);
@@ -271,6 +289,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
       : {}),
     ...(collected.usage ? { usage: collected.usage } : {}),
     ...(error ? { error } : {}),
+    ...(runtimeCaps ? { runtimeCapabilities: runtimeCaps } : {}),
   };
   const verification = verifySingleResult(result);
   const report: SingleRunReport = {
@@ -282,6 +301,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     repoPath,
     runDir,
     workspaceStrategy,
+    controlMode,
     ...(taskWorktree ? { worktree: { branch: taskWorktree.branch, path: taskWorktree.path } } : {}),
     result,
     verification,

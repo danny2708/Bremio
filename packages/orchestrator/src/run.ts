@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { Logger } from "pino";
-import type { AgentCapabilities } from "@bremio/adapter-sdk";
+import type { AdapterRuntimeCapabilities, AgentCapabilities } from "@bremio/adapter-sdk";
+import { canBackControlMode, type ControlMode } from "@bremio/policy";
 import type {
   AgentEvent,
   Plan,
@@ -46,6 +47,7 @@ export interface RunBremioOptions {
   repoPath: string;
   prompt: string;
   registry: AgentRegistry;
+  controlMode?: ControlMode;
   /** Model for the lead's planning run (workers use their adapter defaults). */
   model?: string;
   /** Reasoning level for the lead; workers keep their adapter/config defaults. */
@@ -133,8 +135,30 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
   const baseBranch = await getCurrentBranch(repoPath);
 
   const capabilitiesByAgent = new Map<string, AgentCapabilities>();
+  const runtimeCapsByAgent = new Map<string, AdapterRuntimeCapabilities | undefined>();
   for (const [id, adapter] of registry) {
     capabilitiesByAgent.set(id, await adapter.getCapabilities());
+    runtimeCapsByAgent.set(
+      id,
+      await adapter.getRuntimeCapabilities().catch(() => undefined),
+    );
+  }
+
+  const controlMode = opts.controlMode ?? "autopilot";
+  if (controlMode !== "autopilot") {
+    const leadCaps = capabilitiesByAgent.get(leadId);
+    if (leadCaps) {
+      const capCheck = canBackControlMode(
+        controlMode,
+        leadCaps.readOnlyEnforcement,
+        "isolated-worktree",
+      );
+      if (!capCheck.ok) {
+        throw new Error(
+          `lead "${leadId}" cannot run in ${controlMode} mode: ${capCheck.reason}`,
+        );
+      }
+    }
   }
 
   logger?.info({ runId, leadId, workerId, repoPath }, "starting Bremio run");
@@ -321,6 +345,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     ...(leadIdentity.actualReasoningLevel ? { leadActualReasoningLevel: leadIdentity.actualReasoningLevel } : {}),
     repoPath,
     runDir,
+    controlMode,
     baseBranch,
     plan,
     assign,

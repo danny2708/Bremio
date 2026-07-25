@@ -43,6 +43,7 @@ const StartRunSchema = z.object({
   /** Continue an existing session: this run becomes its next turn. */
   sessionId: z.string().min(1).optional(),
   workspaceStrategy: z.enum(["direct-workspace", "isolated-worktree"]).optional(),
+  controlMode: z.enum(["plan", "approve", "autopilot"]).optional(),
 });
 
 const MergeSchema = z.object({
@@ -176,14 +177,16 @@ async function handle(
     const adapters = [new ClaudeAdapter(), new CodexAdapter(), new AntigravityAdapter(), new OpenCodeAdapter()];
     const diagnostics = await Promise.all(
       adapters.map(async (adapter) => {
-        const [health, capabilities] = await Promise.all([
+        const [health, capabilities, runtimeCaps] = await Promise.all([
           adapter.healthCheck(),
           adapter.getCapabilities(),
+          adapter.getRuntimeCapabilities().catch(() => undefined),
         ]);
         return {
           id: adapter.id,
           health,
           capabilities,
+          runtimeCapabilities: runtimeCaps,
           // The capability contract decides eligibility, not a hardcoded list.
           leadEligible: capabilities.planning && capabilities.structuredOutput,
         };

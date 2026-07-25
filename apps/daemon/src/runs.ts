@@ -88,6 +88,8 @@ export interface StartRunInput {
    * review before being applied to the main working tree.
    */
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
+  /** Control mode for execution: plan | approve | autopilot. */
+  controlMode?: import("@bremio/policy").ControlMode;
 }
 
 type Listener = (event: RunEvent) => void;
@@ -595,6 +597,7 @@ export class RunRegistry {
             ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
             ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
             ...(input.workspaceStrategy ? { workspaceStrategy: input.workspaceStrategy } : {}),
+            ...(input.controlMode ? { controlMode: input.controlMode } : {}),
             hooks: {
               onStart: (id) =>
                 this.#emit(runId, { kind: "status", message: `${id} started`, agentId: id }),
@@ -614,6 +617,7 @@ export class RunRegistry {
             ...(input.timeoutMs ? { taskTimeoutMs: input.timeoutMs } : {}),
             ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
             ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
+            ...(input.controlMode ? { controlMode: input.controlMode } : {}),
             hooks: {
               onLeadStart: (id) =>
                 this.#emit(runId, { kind: "lead", message: `lead ${id} planning`, agentId: id }),

@@ -21,6 +21,7 @@ export interface RunReport {
   repoPath: string;
   runDir: string;
   workspaceStrategy?: "isolated-worktree";
+  controlMode?: import("@bremio/policy").ControlMode;
   /** Branch the repo was on when the run started; merge target for tasks. */
   baseBranch?: string;
   plan: Plan;
@@ -49,6 +50,7 @@ export interface BuildReportInput {
   leadActualReasoningLevel?: import("@bremio/protocol").ReasoningLevel;
   repoPath: string;
   runDir: string;
+  controlMode?: import("@bremio/policy").ControlMode;
   baseBranch?: string;
   plan: Plan;
   assign: Map<string, string>;
@@ -97,6 +99,7 @@ export function buildReport(input: BuildReportInput): RunReport {
     repoPath: input.repoPath,
     runDir: input.runDir,
     workspaceStrategy: "isolated-worktree",
+    ...(input.controlMode ? { controlMode: input.controlMode } : {}),
     ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
     plan: input.plan,
     tasks,
