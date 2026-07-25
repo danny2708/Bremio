@@ -42,6 +42,39 @@ what blocked, what was learned.
   greps these fields, so the keys and order are fixed.
 
 
+### S3-T2 — Grant scopes (once / session / workspace), expiry, revoke, precedence
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T11:35 → 2026-07-25T11:45
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T2
+- **status:** done
+
+**Did**
+- Added `consumedAt` to `ApprovalGrant` — marks a `once`-scoped grant as used.
+- Added `workspaceId` to `ApprovalGrant` / `NewApprovalGrantParams` — enables cross-session matching for `workspace`-scoped grants.
+- Added `GrantStatus` type and `getGrantStatus()` helper — `active | consumed | revoked | expired` from highest-priority field.
+- Added `GrantAlreadyConsumedError` error class.
+- Added `consumeGrant(grantId)` — marks consumed, emits `grant-consumed` event; rejects consumed or revoked grants.
+- Updated `findActiveGrant()` — excludes consumed grants; workspace-scoped grants match the owning session OR any session in the same `workspaceId`; `session`/`once` grants match only their `sessionId`.
+- Updated `revokeGrant()` — rejects consumed grants (GrantAlreadyConsumedError).
+- Added `revokeSessionGrants(sessionId)` — batch-revoke all active grants for a session.
+- Added `revokeWorkspaceGrants(workspaceId)` — batch-revoke all active workspace-scoped grants for a workspace.
+- Added `getGrantsByWorkspace(workspaceId)` — query method.
+- Updated `pruneExpiredGrants()` to use `getGrantStatus` for consistent logic.
+- 22 new tests covering all scope behaviors, consumption, batch revocation, status helper, pruning edge cases.
+
+**Decided**
+- `getGrantStatus()` uses a priority check: `revokedAt` > `consumedAt` > `expired` > `active`. This ensures a consumed-then-revoked grant reports as `revoked`, which is the terminal state. The `consumeGrant()` and `revokeGrant()` methods check status before mutating using this same function.
+- Workspace-scoped grants require a `workspaceId` to participate in cross-session matching; a workspace-scoped grant without one will never match (safety: don't accidentally leak grants).
+- `revokeSessionGrants` / `revokeWorkspaceGrants` each call the existing `revokeGrant()` internally so all event emission and guards fire consistently.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/approval` — 57 passed (+22 new).
+- `corepack pnpm test` — 691 passed / 60 files.
+- Red-check 4: removed `consumed` guard in `consumeGrant` → 2 tests fail (double consume, consume revoked). Restored.
+- Red-check 5: removed `consumed` guard in `revokeGrant` → 2 tests fail (double revoke, revoke consumed). Restored.
+
 ### S3-T1 — `ApprovalRequest` / `ApprovalDecision` / `ApprovalGrant` + action digest
 - **agent:** Claude (opencode)
 - **time:** 2026-07-25T10:30 → 2026-07-25T11:30

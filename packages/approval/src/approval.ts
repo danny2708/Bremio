@@ -69,6 +69,8 @@ export interface ApprovalDecision {
 
 export interface NewApprovalGrantParams {
   sessionId: string;
+  /** Required for workspace-scoped grants — the workspace the grant covers. */
+  workspaceId?: string;
   scope: GrantScope;
   actionClass?: ActionClass;
   target?: string;
@@ -78,14 +80,27 @@ export interface NewApprovalGrantParams {
   originatingActionDigest?: ActionDigest;
 }
 
+export type GrantStatus = "active" | "consumed" | "revoked" | "expired";
+
+export function getGrantStatus(grant: ApprovalGrant): GrantStatus {
+  if (grant.revokedAt) return "revoked";
+  if (grant.consumedAt) return "consumed";
+  if (new Date(grant.expiresAt).getTime() <= Date.now()) return "expired";
+  return "active";
+}
+
 export interface ApprovalGrant {
   id: string;
   sessionId: string;
+  /** The workspace the grant covers; only meaningful for workspace-scoped grants. */
+  workspaceId?: string;
   scope: GrantScope;
   actionClass?: ActionClass;
   target?: string;
   expiresAt: string;
   revokedAt?: string;
+  /** When a once-scoped grant was used. */
+  consumedAt?: string;
   createdAt: string;
   createdBy: string;
   originatingDigest?: string;
@@ -145,6 +160,15 @@ export class GrantAlreadyRevokedError extends Error {
   constructor(grantId: string) {
     super(`Grant ${grantId} is already revoked`);
     this.name = "GrantAlreadyRevokedError";
+    this.grantId = grantId;
+  }
+}
+
+export class GrantAlreadyConsumedError extends Error {
+  readonly grantId: string;
+  constructor(grantId: string) {
+    super(`Grant ${grantId} is already consumed`);
+    this.name = "GrantAlreadyConsumedError";
     this.grantId = grantId;
   }
 }
@@ -355,6 +379,7 @@ export class InMemoryApprovalEngine {
     const grant: ApprovalGrant = {
       id: randomUUID(),
       sessionId: params.sessionId,
+      workspaceId: params.workspaceId,
       scope: params.scope,
       actionClass: params.actionClass,
       target: params.target,
@@ -388,8 +413,12 @@ export class InMemoryApprovalEngine {
     if (!grant) {
       throw new Error(`ApprovalGrant ${grantId} not found`);
     }
-    if (grant.revokedAt) {
+    const status = getGrantStatus(grant);
+    if (status === "revoked") {
       throw new GrantAlreadyRevokedError(grantId);
+    }
+    if (status === "consumed") {
+      throw new GrantAlreadyConsumedError(grantId);
     }
 
     grant.revokedAt = nowISO();
@@ -407,18 +436,57 @@ export class InMemoryApprovalEngine {
     return grant;
   }
 
+  consumeGrant(grantId: string): ApprovalGrant {
+    const grant = this.grants.get(grantId);
+    if (!grant) {
+      throw new Error(`ApprovalGrant ${grantId} not found`);
+    }
+    const status = getGrantStatus(grant);
+    if (status === "consumed") {
+      throw new GrantAlreadyConsumedError(grantId);
+    }
+    if (status === "revoked") {
+      throw new GrantAlreadyRevokedError(grantId);
+    }
+
+    grant.consumedAt = nowISO();
+
+    this.emit({
+      type: "grant-consumed",
+      timestamp: grant.consumedAt,
+      grantId: grant.id,
+      data: {
+        sessionId: grant.sessionId,
+        scope: grant.scope,
+      },
+    });
+
+    return grant;
+  }
+
   findActiveGrant(
     sessionId: string,
     actionClass: ActionClass,
     target?: string,
+    workspaceId?: string,
   ): ApprovalGrant | null {
     const now = Date.now();
     const candidates: ApprovalGrant[] = [];
 
     for (const grant of this.grants.values()) {
-      if (grant.sessionId !== sessionId) continue;
-      if (grant.revokedAt) continue;
-      if (new Date(grant.expiresAt).getTime() <= now) continue;
+      const status = getGrantStatus(grant);
+      if (status !== "active") continue;
+
+      // Session-scoped: exact session match.
+      // Workspace-scoped: matches any session in the same workspace.
+      if (grant.scope === "session" && grant.sessionId !== sessionId) continue;
+      if (grant.scope === "workspace") {
+        if (grant.workspaceId === undefined) continue;
+        if (grant.sessionId !== sessionId && (workspaceId === undefined || grant.workspaceId !== workspaceId)) continue;
+      }
+      // Once-scoped: matches the session that owns it.
+      if (grant.scope === "once" && grant.sessionId !== sessionId) continue;
+
       if (grant.actionClass !== undefined && grant.actionClass !== actionClass) continue;
       if (grant.target !== undefined && target !== undefined && grant.target !== target) continue;
 
@@ -450,12 +518,45 @@ export class InMemoryApprovalEngine {
     return result;
   }
 
+  getGrantsByWorkspace(workspaceId: string): ApprovalGrant[] {
+    const result: ApprovalGrant[] = [];
+    for (const grant of this.grants.values()) {
+      if (grant.workspaceId === workspaceId) {
+        result.push(grant);
+      }
+    }
+    return result;
+  }
+
+  revokeSessionGrants(sessionId: string): number {
+    let count = 0;
+    for (const grant of this.grants.values()) {
+      if (grant.sessionId !== sessionId) continue;
+      if (getGrantStatus(grant) !== "active") continue;
+      this.revokeGrant(grant.id);
+      count++;
+    }
+    return count;
+  }
+
+  revokeWorkspaceGrants(workspaceId: string): number {
+    let count = 0;
+    for (const grant of this.grants.values()) {
+      if (grant.scope !== "workspace") continue;
+      if (grant.workspaceId !== workspaceId) continue;
+      if (getGrantStatus(grant) !== "active") continue;
+      this.revokeGrant(grant.id);
+      count++;
+    }
+    return count;
+  }
+
   pruneExpiredGrants(): number {
     const now = Date.now();
     let count = 0;
 
     for (const [id, grant] of this.grants) {
-      if (new Date(grant.expiresAt).getTime() <= now && !grant.revokedAt) {
+      if (getGrantStatus(grant) === "expired") {
         this.grants.delete(id);
         count++;
       }

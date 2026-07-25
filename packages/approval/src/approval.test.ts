@@ -5,7 +5,9 @@ import {
   DuplicateDecisionError,
   InvalidTransitionError,
   GrantAlreadyRevokedError,
+  GrantAlreadyConsumedError,
   InvalidDigestError,
+  getGrantStatus,
 } from "./approval";
 
 // ── ActionDigest ───────────────────────────────────────────────────
@@ -336,6 +338,7 @@ describe("InMemoryApprovalEngine — grants", () => {
 
     engine.createGrant({
       sessionId: "sess-1",
+      workspaceId: "ws-1",
       scope: "workspace",
       actionClass: "write",
       ttlMs: 60_000,
@@ -343,7 +346,7 @@ describe("InMemoryApprovalEngine — grants", () => {
       precedence: 10,
     });
 
-    const result = engine.findActiveGrant("sess-1", "write", "any/file.txt");
+    const result = engine.findActiveGrant("sess-1", "write", "any/file.txt", "ws-1");
     expect(result).not.toBeNull();
     expect(result!.actionClass).toBe("write");
     expect(result!.scope).toBe("workspace");
@@ -354,6 +357,7 @@ describe("InMemoryApprovalEngine — grants", () => {
 
     engine.createGrant({
       sessionId: "sess-1",
+      workspaceId: "ws-1",
       scope: "workspace",
       actionClass: "write",
       ttlMs: 60_000,
@@ -363,6 +367,7 @@ describe("InMemoryApprovalEngine — grants", () => {
 
     engine.createGrant({
       sessionId: "sess-1",
+      workspaceId: "ws-1",
       scope: "session",
       actionClass: "write",
       target: "specific.ts",
@@ -371,7 +376,7 @@ describe("InMemoryApprovalEngine — grants", () => {
       precedence: 20,
     });
 
-    const result = engine.findActiveGrant("sess-1", "write", "specific.ts");
+    const result = engine.findActiveGrant("sess-1", "write", "specific.ts", "ws-1");
     expect(result).not.toBeNull();
     expect(result!.target).toBe("specific.ts");
     expect(result!.precedence).toBe(20);
@@ -382,6 +387,7 @@ describe("InMemoryApprovalEngine — grants", () => {
 
     const low = engine.createGrant({
       sessionId: "sess-1",
+      workspaceId: "ws-1",
       scope: "workspace",
       ttlMs: 60_000,
       createdBy: "user-1",
@@ -397,7 +403,7 @@ describe("InMemoryApprovalEngine — grants", () => {
       precedence: 100,
     });
 
-    const result = engine.findActiveGrant("sess-1", "write");
+    const result = engine.findActiveGrant("sess-1", "write", undefined, "ws-1");
     expect(result).not.toBeNull();
     expect(result!.id).toBe(high.id);
     expect(result!.id).not.toBe(low.id);
@@ -492,6 +498,324 @@ describe("InMemoryApprovalEngine — grants", () => {
     const grantsB = engine.getGrantsBySession("sess-b");
     expect(grantsB).toHaveLength(1);
     expect(grantsB[0]!.scope).toBe("once");
+  });
+});
+
+// ── Grant scope consumption ────────────────────────────────────────
+
+describe("InMemoryApprovalEngine — grant consumption", () => {
+  it("consumes a once-scoped grant", () => {
+    const engine = new InMemoryApprovalEngine();
+    const grant = engine.createGrant({
+      sessionId: "sess-1",
+      scope: "once",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    const consumed = engine.consumeGrant(grant.id);
+    expect(consumed.consumedAt).toBeTruthy();
+    expect(getGrantStatus(consumed)).toBe("consumed");
+  });
+
+  it("throws GrantAlreadyConsumedError on double consume", () => {
+    const engine = new InMemoryApprovalEngine();
+    const grant = engine.createGrant({
+      sessionId: "sess-1",
+      scope: "once",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    engine.consumeGrant(grant.id);
+    expect(() => engine.consumeGrant(grant.id)).toThrow(GrantAlreadyConsumedError);
+  });
+
+  it("throws GrantAlreadyRevokedError when consuming a revoked grant", () => {
+    const engine = new InMemoryApprovalEngine();
+    const grant = engine.createGrant({
+      sessionId: "sess-1",
+      scope: "once",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    engine.revokeGrant(grant.id);
+    expect(() => engine.consumeGrant(grant.id)).toThrow(GrantAlreadyRevokedError);
+  });
+
+  it("findActiveGrant excludes consumed grants", () => {
+    const engine = new InMemoryApprovalEngine();
+    const grant = engine.createGrant({
+      sessionId: "sess-1",
+      scope: "once",
+      actionClass: "write",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    engine.consumeGrant(grant.id);
+    const result = engine.findActiveGrant("sess-1", "write");
+    expect(result).toBeNull();
+  });
+
+  it("revokeGrant refuses consumed grants", () => {
+    const engine = new InMemoryApprovalEngine();
+    const grant = engine.createGrant({
+      sessionId: "sess-1",
+      scope: "once",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    engine.consumeGrant(grant.id);
+    expect(() => engine.revokeGrant(grant.id)).toThrow(GrantAlreadyConsumedError);
+  });
+
+  it("emits grant-consumed event", () => {
+    const engine = new InMemoryApprovalEngine();
+    const events: string[] = [];
+    engine.onEvent((e) => events.push(e.type));
+
+    const grant = engine.createGrant({
+      sessionId: "sess-1",
+      scope: "once",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    engine.consumeGrant(grant.id);
+    expect(events).toContain("grant-consumed");
+  });
+});
+
+// ── Workspace-scoped grants ────────────────────────────────────────
+
+describe("InMemoryApprovalEngine — workspace scope", () => {
+  it("workspace-scoped grant matches the owning session", () => {
+    const engine = new InMemoryApprovalEngine();
+    engine.createGrant({
+      sessionId: "sess-1",
+      workspaceId: "ws-1",
+      scope: "workspace",
+      actionClass: "write",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    const result = engine.findActiveGrant("sess-1", "write", undefined, "ws-1");
+    expect(result).not.toBeNull();
+    expect(result!.scope).toBe("workspace");
+  });
+
+  it("workspace-scoped grant matches a different session in the same workspace", () => {
+    const engine = new InMemoryApprovalEngine();
+    engine.createGrant({
+      sessionId: "sess-1",
+      workspaceId: "ws-1",
+      scope: "workspace",
+      actionClass: "write",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    const result = engine.findActiveGrant("sess-2", "write", undefined, "ws-1");
+    expect(result).not.toBeNull();
+    expect(result!.sessionId).toBe("sess-1");
+  });
+
+  it("workspace-scoped grant does not match outside its workspace", () => {
+    const engine = new InMemoryApprovalEngine();
+    engine.createGrant({
+      sessionId: "sess-1",
+      workspaceId: "ws-1",
+      scope: "workspace",
+      actionClass: "write",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    const result = engine.findActiveGrant("sess-2", "write", undefined, "ws-2");
+    expect(result).toBeNull();
+  });
+
+  it("workspace-scoped grant without workspaceId never matches cross-session", () => {
+    const engine = new InMemoryApprovalEngine();
+    engine.createGrant({
+      sessionId: "sess-1",
+      scope: "workspace",
+      actionClass: "write",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    const result = engine.findActiveGrant("sess-2", "write", undefined, "ws-1");
+    expect(result).toBeNull();
+  });
+
+  it("session-scoped grant does not match other sessions", () => {
+    const engine = new InMemoryApprovalEngine();
+    engine.createGrant({
+      sessionId: "sess-1",
+      scope: "session",
+      actionClass: "write",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    const result = engine.findActiveGrant("sess-2", "write");
+    expect(result).toBeNull();
+  });
+
+  it("once-scoped grant only matches its owning session", () => {
+    const engine = new InMemoryApprovalEngine();
+    engine.createGrant({
+      sessionId: "sess-1",
+      scope: "once",
+      actionClass: "write",
+      ttlMs: 60_000,
+      createdBy: "user-1",
+      precedence: 10,
+    });
+
+    const same = engine.findActiveGrant("sess-1", "write");
+    expect(same).not.toBeNull();
+
+    const other = engine.findActiveGrant("sess-2", "write");
+    expect(other).toBeNull();
+  });
+});
+
+// ── Batch revocation ───────────────────────────────────────────────
+
+describe("InMemoryApprovalEngine — batch revocation", () => {
+  it("revokeSessionGrants revokes all active grants for a session", () => {
+    const engine = new InMemoryApprovalEngine();
+    engine.createGrant({ sessionId: "sess-1", scope: "session", ttlMs: 60_000, createdBy: "u1", precedence: 10 });
+    engine.createGrant({ sessionId: "sess-1", scope: "once", ttlMs: 60_000, createdBy: "u1", precedence: 10 });
+    engine.createGrant({ sessionId: "sess-2", scope: "session", ttlMs: 60_000, createdBy: "u1", precedence: 10 });
+
+    const count = engine.revokeSessionGrants("sess-1");
+    expect(count).toBe(2);
+
+    const sess1Grants = engine.getGrantsBySession("sess-1");
+    for (const g of sess1Grants) {
+      expect(getGrantStatus(g)).toBe("revoked");
+    }
+  });
+
+  it("revokeSessionGrants does not affect revoked or consumed grants", () => {
+    const engine = new InMemoryApprovalEngine();
+    const g1 = engine.createGrant({ sessionId: "sess-1", scope: "once", ttlMs: 60_000, createdBy: "u1", precedence: 10 });
+    const g2 = engine.createGrant({ sessionId: "sess-1", scope: "once", ttlMs: 60_000, createdBy: "u1", precedence: 10 });
+
+    engine.consumeGrant(g1.id);
+    engine.revokeGrant(g2.id);
+
+    const count = engine.revokeSessionGrants("sess-1");
+    expect(count).toBe(0);
+  });
+
+  it("revokeWorkspaceGrants revokes all active workspace-scoped grants", () => {
+    const engine = new InMemoryApprovalEngine();
+    engine.createGrant({ sessionId: "sess-1", workspaceId: "ws-1", scope: "workspace", ttlMs: 60_000, createdBy: "u1", precedence: 10 });
+    engine.createGrant({ sessionId: "sess-2", workspaceId: "ws-1", scope: "workspace", ttlMs: 60_000, createdBy: "u1", precedence: 10 });
+    engine.createGrant({ sessionId: "sess-3", workspaceId: "ws-2", scope: "workspace", ttlMs: 60_000, createdBy: "u1", precedence: 10 });
+
+    const count = engine.revokeWorkspaceGrants("ws-1");
+    expect(count).toBe(2);
+
+    const ws1 = engine.getGrantsByWorkspace("ws-1");
+    for (const g of ws1) {
+      expect(getGrantStatus(g)).toBe("revoked");
+    }
+
+    const ws2 = engine.getGrantsByWorkspace("ws-2");
+    expect(getGrantStatus(ws2[0]!)).toBe("active");
+  });
+
+  it("revokeWorkspaceGrants skips non-workspace grants", () => {
+    const engine = new InMemoryApprovalEngine();
+    engine.createGrant({ sessionId: "sess-1", workspaceId: "ws-1", scope: "workspace", ttlMs: 60_000, createdBy: "u1", precedence: 10 });
+    engine.createGrant({ sessionId: "sess-1", scope: "session", ttlMs: 60_000, createdBy: "u1", precedence: 10 });
+
+    const count = engine.revokeWorkspaceGrants("ws-1");
+    expect(count).toBe(1);
+  });
+});
+
+// ── Grant status helper ────────────────────────────────────────────
+
+describe("getGrantStatus", () => {
+  it("returns active for a valid grant", () => {
+    const g: Parameters<typeof getGrantStatus>[0] = {
+      id: "g1", sessionId: "s1", scope: "session", expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      createdAt: new Date().toISOString(), createdBy: "u1", precedence: 10,
+    };
+    expect(getGrantStatus(g)).toBe("active");
+  });
+
+  it("returns revoked when revokedAt is set", () => {
+    const g: Parameters<typeof getGrantStatus>[0] = {
+      id: "g1", sessionId: "s1", scope: "session", expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      revokedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(), createdBy: "u1", precedence: 10,
+    };
+    expect(getGrantStatus(g)).toBe("revoked");
+  });
+
+  it("returns consumed when consumedAt is set (before expiry)", () => {
+    const g: Parameters<typeof getGrantStatus>[0] = {
+      id: "g1", sessionId: "s1", scope: "once", expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      consumedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(), createdBy: "u1", precedence: 10,
+    };
+    expect(getGrantStatus(g)).toBe("consumed");
+  });
+
+  it("returns expired when past expiry", () => {
+    const g: Parameters<typeof getGrantStatus>[0] = {
+      id: "g1", sessionId: "s1", scope: "session", expiresAt: new Date(Date.now() - 1).toISOString(),
+      createdAt: new Date().toISOString(), createdBy: "u1", precedence: 10,
+    };
+    expect(getGrantStatus(g)).toBe("expired");
+  });
+});
+
+// ── Grant pruning with consumed/revoked ────────────────────────────
+
+describe("InMemoryApprovalEngine — pruneExpiredGrants", () => {
+  it("does not remove consumed or revoked grants", () => {
+    const engine = new InMemoryApprovalEngine();
+    const g1 = engine.createGrant({ sessionId: "sess-1", scope: "once", ttlMs: -1, createdBy: "u1", precedence: 10 });
+    const g2 = engine.createGrant({ sessionId: "sess-1", scope: "once", ttlMs: -1, createdBy: "u1", precedence: 10 });
+
+    engine.consumeGrant(g1.id);
+    engine.revokeGrant(g2.id);
+
+    const count = engine.pruneExpiredGrants();
+    expect(count).toBe(0);
+  });
+
+  it("removes only truly expired grants", () => {
+    const engine = new InMemoryApprovalEngine();
+    engine.createGrant({ sessionId: "sess-1", scope: "once", ttlMs: -1, createdBy: "u1", precedence: 10 }); // will be pruned
+    engine.createGrant({ sessionId: "sess-1", scope: "session", ttlMs: 60_000, createdBy: "u1", precedence: 10 }); // stays
+
+    const count = engine.pruneExpiredGrants();
+    expect(count).toBe(1);
+    expect(engine.getGrantsBySession("sess-1")).toHaveLength(1);
   });
 });
 
