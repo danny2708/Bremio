@@ -701,7 +701,7 @@ Rules:
 
 ### S4-T1 — Shared daemon client + version/capability handshake
 - **agent:** Claude (opencode)
-- **time:** 2026-07-25T15:00 → open
+- **time:** 2026-07-25T15:00 → 2026-07-25T15:10
 - **branch:** s4/one-source-of-truth
 - **task(s):** S4-T1
 - **status:** done
@@ -725,6 +725,33 @@ Rules:
 - `corepack pnpm typecheck` — clean
 - `corepack pnpm test` — 741 passed / 62 files (+10 new daemon-client tests, +1 new test file)
 - Red-check: removed the `if (!compatibility.compatible)` guard in `handshake()` → both "daemon too old" and "client too old" tests resolve instead of throwing `ProtocolMismatchError`. Restored.
+
+### S4-T2 — `bremio run` starts runs through the daemon
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T15:10 → 2026-07-26T14:52
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T2
+- **status:** done
+
+**Did**
+- Added `startRun()`, `streamEvents()`, `cancelRun()`, `runDetail()` to `DaemonClient` class in `packages/daemon-client/src/client.ts`
+- Added `RunEvent`, `StartRunRequest` types to daemon-client
+- Exported new symbols from `packages/daemon-client/src/index.ts`
+- Added 4 new tests (14 total): startRun via POST /runs, SSE streaming, cancel 404, cancel success
+- Updated fake daemon in tests to handle /runs, /runs/:id/events, /runs/:id/cancel with pathname-based URL matching
+- Added `runViaDaemon()` function in `apps/cli/src/index.ts` that connects to daemon, POSTs the run, streams SSE events, handles Ctrl-C cancellation
+- Wired daemon path into `runCommand()`: attempts daemon first when mode is resolved, falls back to in-process if daemon unavailable
+
+**Decided**
+- When daemon is not running, `runViaDaemon` returns `false` silently (graceful fallback, no error shown)
+- SSE events printed with `kind` bold prefix + message; no fancy formatting yet (can improve in follow-up)
+- Ctrl-C handler reuses AbortController pattern: first Ctrl-C cancels via `cancelRun()`, second forces exit
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 745 passed / 62 files (+4 daemon-client tests)
+- Red-check A: SSE pathname matching with query string — fake daemon's earlier `endsWith("/events")` failed for `?afterSeq=0`; switched to URL pathname-based matching
+- Red-check B: cancel test's standalone server missing `/health` — `connect()` threw `DaemonUnavailableError`; added `/health` route
 
 ### S3-REVIEW — tech-lead audit of Sprint 3
 - **agent:** Claude (Opus 4.8), acting as tech lead

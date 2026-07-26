@@ -48,6 +48,32 @@ export function daemonEndpointPath(home = os.homedir()): string {
   return path.join(home, ".bremio", "daemon.json");
 }
 
+export interface RunEvent {
+  seq: number;
+  ts: number;
+  kind: string;
+  message: string;
+  taskId?: string;
+  agentId?: string;
+  data?: unknown;
+}
+
+export interface StartRunRequest {
+  mode: "single" | "team" | "auto";
+  repoPath: string;
+  prompt: string;
+  agentId: string;
+  workerId?: string;
+  model?: string;
+  reasoningLevel?: string;
+  timeoutMs?: number;
+  maxConcurrency?: number;
+  comparisonId?: string;
+  sessionId?: string;
+  workspaceStrategy?: "direct-workspace" | "isolated-worktree";
+  controlMode?: string;
+}
+
 async function readEndpointFile(file: string): Promise<DaemonEndpoint | undefined> {
   try {
     const parsed = JSON.parse(await fs.readFile(file, "utf8")) as Partial<DaemonEndpoint>;
@@ -173,5 +199,69 @@ export class DaemonClient {
 
     this.#meta = meta;
     return meta;
+  }
+
+  async startRun(request: StartRunRequest): Promise<{ run: { id: string } }> {
+    return this.post<{ run: { id: string } }>("/runs", request);
+  }
+
+  async cancelRun(id: string): Promise<{ cancelled: boolean }> {
+    return this.post<{ cancelled: boolean }>(`/runs/${encodeURIComponent(id)}/cancel`);
+  }
+
+  async runDetail(id: string, repoPath: string): Promise<{
+    run?: { id: string; status: string };
+    events?: RunEvent[];
+  }> {
+    return this.get<{
+      run?: { id: string; status: string };
+      events?: RunEvent[];
+    }>(`/runs/${encodeURIComponent(id)}?repo=${encodeURIComponent(repoPath)}`);
+  }
+
+  async streamEvents(
+    id: string,
+    onEvent: (event: RunEvent) => void,
+    signal: AbortSignal,
+    afterSeq = 0,
+  ): Promise<void> {
+    const endpoint = this.#endpoint ?? (await this.connect());
+    const response = await this.#fetch(
+      endpoint,
+      `/runs/${encodeURIComponent(id)}/events?afterSeq=${afterSeq}`,
+      { signal },
+    );
+    if (!response.ok || !response.body) {
+      throw new Error(`could not stream run ${id}: ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (!signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let separator = buffer.indexOf("\n\n");
+      while (separator !== -1) {
+        const frame = buffer.slice(0, separator);
+        buffer = buffer.slice(separator + 2);
+        const data = frame
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trim())
+          .join("");
+        if (data) {
+          try {
+            onEvent(JSON.parse(data) as RunEvent);
+          } catch {
+            // a malformed frame must not kill the stream
+          }
+        }
+        separator = buffer.indexOf("\n\n");
+      }
+    }
   }
 }

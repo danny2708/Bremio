@@ -388,6 +388,68 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
   }
 }
 
+async function runViaDaemon(values: Values, prompt: string, mode: "single" | "team"): Promise<boolean> {
+  const client = new DaemonClient();
+  try {
+    await client.connect();
+  } catch {
+    return false;
+  }
+
+  const repoPath = path.resolve(values.repo as string);
+  const request = {
+    mode,
+    repoPath,
+    prompt,
+    agentId: (mode === "single" ? values.agent : values.lead) as string,
+    ...(values.worker ? { workerId: values.worker } : {}),
+    ...(values.model ? { model: values.model } : {}),
+    ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
+    ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
+    ...(values.concurrency !== undefined ? { maxConcurrency: Number(values.concurrency) } : {}),
+    ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
+    ...(values["workspace-strategy"]
+      ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
+      : values.isolated ? { workspaceStrategy: "isolated-worktree" as const } : {}),
+  };
+
+  const ac = new AbortController();
+  let cancelling = false;
+  let runId: string | undefined;
+
+  const onInt = () => {
+    if (cancelling) {
+      console.error(c.red("\nforce exit"));
+      process.exit(130);
+    }
+    cancelling = true;
+    console.error(c.yellow("\n⚠ cancelling run…"));
+    ac.abort();
+    if (runId) client.cancelRun(runId).catch(() => {});
+  };
+
+  process.on("SIGINT", onInt);
+
+  try {
+    const { run } = await client.startRun(request);
+    runId = run.id;
+    console.log(c.dim(`run started via daemon (id: ${runId})`));
+
+    await client.streamEvents(runId, (event) => {
+      const line = event.message ? `${c.bold(event.kind)} ${event.message}` : c.bold(event.kind);
+      console.log(line);
+    }, ac.signal);
+  } catch (err) {
+    if (!ac.signal.aborted) {
+      console.error(c.red(`\ndaemon run failed: ${(err as Error).message}`));
+    }
+  } finally {
+    process.off("SIGINT", onInt);
+  }
+
+  return true;
+}
+
 async function runCommand(values: Values, positionals: string[]): Promise<void> {
   const prompt = (values.prompt ?? positionals.slice(1).join(" ")).trim();
   const errors: string[] = [];
@@ -543,6 +605,9 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       return;
     }
   }
+
+  // S4-T2: attempt run via daemon when available; fall back to in-process.
+  if (mode && await runViaDaemon(values, prompt, mode)) return;
 
   const json = values.json === true;
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
