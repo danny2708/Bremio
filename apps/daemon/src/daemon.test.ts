@@ -3,7 +3,7 @@ import { connect } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RunRegistry, type RunEvent, type SessionEvent } from "./runs";
+import { RunRegistry, defaultAdapters, type RunEvent, type SessionEvent } from "./runs";
 import { RunStore, type PersistedSession, type SessionDetail } from "./storage";
 import { startDaemonServer, type DaemonHandle } from "./server";
 import { publishEndpoint, readEndpoint, retractEndpoint } from "./endpoint";
@@ -152,6 +152,19 @@ describe("daemon HTTP surface", () => {
     expect(ids).toContain("claude");
     expect(ids).toContain("codex");
     expect(ids).toContain("antigravity");
+  }, 15_000);
+
+  it("advertises exactly the adapters the run path can execute", async () => {
+    // These were two separate literals. S4-T4 made the daemon the default path
+    // for `bremio run`, at which point the route offered opencode while
+    // `#execute` built a registry of three — so the advertised agent failed
+    // with "not registered". Both sides now read `defaultAdapters()`.
+    const handle = await daemon();
+    const response = await call(handle, "/adapters");
+    const body = (await response.json()) as { adapters: Array<{ id: string }> };
+    expect(body.adapters.map((a) => a.id).sort()).toEqual(
+      defaultAdapters().map((a) => a.id).sort(),
+    );
   }, 15_000);
 
   it("reports opencode lead-eligibility from the capability contract", async () => {

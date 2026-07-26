@@ -1025,3 +1025,32 @@ Rules:
 - Red-check A: removed outer try/catch → "startDaemonServer throws" and "connect throws" tests both throw unhandled `Error` instead of returning `false`. Restored.
 - Red-check B: removed `fs.rm(tmpDir)` from finally → all 3 cleanup tests fail (temp dir left behind). Restored.
 
+
+### S4-REVIEW — tech-lead audit of Sprint 4
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-26T18:55 → 2026-07-26T19:35
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T1 … S4-T10
+- **status:** done
+
+**Did**
+- Audited all 10 tasks by reading production code and mutating it, not by reading the blocks above.
+- **Fixed a regression S4-T4 introduced.** `/adapters` advertised four adapters while `RunRegistry.#execute` built a registry of three — opencode was missing. Before the cutover this was harmless, since `bremio run` executed in-process from the CLI's own four-adapter registry; making the daemon the default path turned `--agent opencode` into "agent not registered". Both sides now read one `defaultAdapters()`.
+- **Fixed a hang in the review path.** `#startReview` destructured only `request` from `createApprovalRequest`, discarding `autoDenied`. With no client subscribed the request was auto-rejected and the run then awaited a promise only a client could resolve: it stayed `pending_approval` for the life of the daemon, held its worktree, and its execution promise never settled — so `awaitCancellations()` would block shutdown too. The unattended case now settles as `review_unattended` and **keeps** the branch, because nobody saw those changes and so nobody chose to discard them.
+- **Gave S4-T10 a test at its production call site.** Its four tests all hashed strings directly; deleting the digest comparison in `#execute` left all 721 green. Added `apps/daemon/src/review-apply.test.ts`, which drives a real run through a real worktree and a real approval: merge-on-approve, refuse-on-drift, discard-on-reject, settle-when-unattended.
+- Made `RunRegistry`'s adapter set injectable — the seam that both fixes needed, and the reason the review path was untestable at all.
+- Scheduled **S5-T7** (grants) and **S5-T8** (`sessionId: runId`) in `TASKS.md`.
+
+**Decided**
+- S4-T9's deletion of `packages/approval` was right: nothing but a tsconfig path alias referenced it. But the sprint's claim that the daemon is now "the single source of truth" overstates it — the survivor is a CRUD store, not an authority. `consumeApprovalGrant`, `pruneExpiredApprovalGrants` and `expireApprovalRequests` have no production callers, `consumeApprovalGrant` never checks `expires_at`, and `overrideableByGrant` is read by nothing. The *more complete* of the two implementations was the one deleted. Recorded as S5-T7 rather than fixed here: wiring grants in is a design decision, not a review fix.
+- Kept the worktree on an unattended rejection but discard it on an explicit one. Fail-closed governs whether changes are *applied*; it does not authorise destroying work no human ever saw.
+- Left the now-dead `WorktreeManager` / `TaskWorktree` imports in `runs.ts` alone — not orphaned by this review.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 726 passed / 63 files (was 721 / 62).
+- `corepack pnpm release:check` — PASS (726 tests, build, `PASS clean packed install: bremio 1.2.0`).
+- Red-check A: replaced the digest comparison with a tautology → "refuses to merge a worktree that changed after it was approved" failed with `expected 'completed' to be 'failed'` — the substituted content merged. Restored.
+- Red-check B: disabled the `autoDenied` early return → "settles an unattended run" failed with `never settled (last status: pending_approval)`, reproducing the hang exactly. Restored.
+- Red-check C: dropped `OpenCodeAdapter` from `defaultAdapters()` → both existing `/adapters` tests failed (`length 4 but got 3`), proving the route and the run path now share one source. Restored.
+- Pre-existing suite before the review: 721 passed / 62 files, typecheck clean, `release:check` PASS.

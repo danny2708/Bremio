@@ -12,12 +12,14 @@ import { createHash } from "node:crypto";
 import {
   classifyAgentError,
   processSupervisor,
+  type AgentAdapter,
   type ProcessSupervisor,
   type TerminationOutcome,
 } from "@bremio/adapter-sdk";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
+import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import { MergeManager, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
 import {
   isTerminal,
@@ -93,6 +95,24 @@ export interface StartRunInput {
   controlMode?: import("@bremio/policy").ControlMode;
 }
 
+/**
+ * Every adapter the daemon can execute.
+ *
+ * `/adapters` advertises this same list. They were two literals until S4-T4 made
+ * the daemon the default path for `bremio run`: the route offered opencode while
+ * the run path was built from three adapters, so choosing the advertised agent
+ * failed with "not registered". One source removes the class of bug, not just
+ * the instance.
+ */
+export function defaultAdapters(): AgentAdapter[] {
+  return [
+    new ClaudeAdapter(),
+    new CodexAdapter(),
+    new AntigravityAdapter(),
+    new OpenCodeAdapter(),
+  ];
+}
+
 type Listener = (event: RunEvent) => void;
 type SessionListener = (event: SessionEvent) => void;
 
@@ -144,6 +164,8 @@ export class RunRegistry {
   constructor(
     private readonly store: RunStore,
     private readonly supervisor: ProcessSupervisor = processSupervisor,
+    /** Overridden only by tests, so the review path can run without a provider. */
+    private readonly adapters: () => AgentAdapter[] = defaultAdapters,
   ) {}
 
   /**
@@ -596,13 +618,18 @@ export class RunRegistry {
     runId: string,
     report: import("@bremio/orchestrator").SingleRunReport,
     repoPath: string,
-  ): Promise<{ decision: "approved" | "rejected"; actionDigest: string }> {
+  ): Promise<{
+    decision: "approved" | "rejected";
+    actionDigest: string;
+    /** Rejected by the fail-closed rule rather than by a person. */
+    unattended?: boolean;
+  }> {
     const wt = report.worktree!;
     const baseBranch = await new MergeManager(repoPath).currentBranch();
     const diff = await new MergeManager(repoPath).getDiff(wt.branch, baseBranch);
     const actionDigest = computeDigest(diff.patch);
 
-    const { request } = this.createApprovalRequest({
+    const { request, autoDenied } = this.createApprovalRequest({
       sessionId: runId,
       runId,
       actionClass: "write",
@@ -611,6 +638,19 @@ export class RunRegistry {
       actionDigest,
       risk: "medium",
     });
+
+    // The fail-closed rule already decided this one: no client is subscribed,
+    // so nothing will ever call `resolvePendingApproval`. Awaiting the promise
+    // below would strand the run at `pending_approval` for the life of the
+    // daemon, holding its worktree and never settling its execution.
+    if (autoDenied) {
+      this.#emit(runId, {
+        kind: "review-requested",
+        message: `approval required but no client was connected: ${wt.branch} left for manual review`,
+        data: { requestId: request.id, branch: wt.branch, worktreePath: wt.path, autoDenied: true },
+      });
+      return { decision: "rejected", actionDigest, unattended: true };
+    }
 
     this.store.updateRun(runId, { status: "pending_approval" });
     this.#emit(runId, {
@@ -660,11 +700,7 @@ export class RunRegistry {
     input: StartRunInput,
     controller: AbortController,
   ): Promise<void> {
-    const registry = createRegistry([
-      new ClaudeAdapter(),
-      new CodexAdapter(),
-      new AntigravityAdapter(),
-    ]);
+    const registry = createRegistry(this.adapters());
 
     try {
       const report: BremioRunReport = input.mode === "single"
@@ -758,7 +794,7 @@ export class RunRegistry {
         report.worktree &&
         report.result.status === "completed"
       ) {
-        const { decision, actionDigest } = await this.#startReview(runId, report, input.repoPath);
+        const { decision, actionDigest, unattended } = await this.#startReview(runId, report, input.repoPath);
         if (decision === "approved") {
           // Verify the worktree hasn't drifted since approval: recompute the
           // diff and compare the digest. A mismatch means the changes the user
@@ -788,6 +824,16 @@ export class RunRegistry {
               { finalSummary: summarize(report) },
             );
           }
+        } else if (unattended) {
+          // Nobody saw these changes, so nobody decided to discard them. The
+          // worktree stays put and the message says where to find it.
+          const detail = `no client was connected to review the changes; they are kept on ${report.worktree.branch} at ${report.worktree.path}`;
+          this.#emitTerminal(
+            runId,
+            { kind: "failed", message: detail, data: report },
+            "failed",
+            { failureCode: "review_unattended", failureMessage: detail },
+          );
         } else {
           // Rejected: clean up the worktree without merging.
           try {

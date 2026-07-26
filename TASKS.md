@@ -94,7 +94,7 @@ by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 
 ---
 
-## Sprint 4 — One source of truth
+## Sprint 4 — One source of truth ✅ COMPLETE
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
@@ -124,6 +124,8 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 | [ ] | S5-T4 | Panel diff viewer | M | S5-T3 | — |
 | [ ] | S5-T5 | Apply / revert per file and per task | M | S5-T3 | — |
 | [ ] | S5-T6 | Conflict handling when the user edited the same file | M | S5-T2, S5-T5 | — |
+| [ ] | S5-T7 | **Wire `ApprovalGrant` into evaluation, or delete the grant surface.** `evaluate()` returns `overrideableByGrant` and nothing reads it; `consumeApprovalGrant`, `pruneExpiredApprovalGrants` and `expireApprovalRequests` have zero production callers; `consumeApprovalGrant` does not check `expires_at`, so an expired grant is still consumable. `docs/15` §2.5 documents an override path that does not exist. Same shape as S4-T9 — **needs a decision before starting.** | L | — | ‖ everything |
+| [ ] | S5-T8 | `#startReview` files its approval request with `sessionId: runId`, so review approvals are grouped under a session id that is really a run id. `/approval/requests?sessionId=` and the audit log both inherit the mistake. | S | — | ‖ everything |
 
 ---
 

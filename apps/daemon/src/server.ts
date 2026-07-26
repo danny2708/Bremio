@@ -1,9 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { z } from "zod";
-import { AntigravityAdapter } from "@bremio/adapter-antigravity";
-import { ClaudeAdapter } from "@bremio/adapter-claude";
-import { CodexAdapter } from "@bremio/adapter-codex";
-import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import {
   CreateApprovalGrantSchema,
   CreateApprovalRequestSchema,
@@ -19,7 +15,7 @@ import {
   toAqtCapacitySnapshots,
 } from "@bremio/quota";
 import { MergeManager } from "@bremio/workspace";
-import { RunRegistry, type SessionEvent } from "./runs";
+import { RunRegistry, defaultAdapters, type SessionEvent } from "./runs";
 import { isTerminal } from "./storage";
 import { mergeRun } from "./merge";
 import { loadReportByRunId } from "@bremio/orchestrator";
@@ -174,7 +170,8 @@ async function handle(
   }
 
   if (method === "GET" && route === "/adapters") {
-    const adapters = [new ClaudeAdapter(), new CodexAdapter(), new AntigravityAdapter(), new OpenCodeAdapter()];
+    // Same list the run path executes with — see `defaultAdapters`.
+    const adapters = defaultAdapters();
     const diagnostics = await Promise.all(
       adapters.map(async (adapter) => {
         const [health, capabilities, runtimeCaps] = await Promise.all([
