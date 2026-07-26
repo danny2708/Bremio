@@ -1088,6 +1088,36 @@ Rules:
 **Blocked / handed off**
 - None
 
+### S5-T4 — Panel diff viewer
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T23:10 → 2026-07-26T23:20
+- **branch:** s5/change-transparency
+- **task(s):** S5-T4
+- **status:** done
+
+**Did**
+- Added `renderDiffViewer(diff)` function to `webview.ts` — parses unified-diff patch and renders color-coded HTML (green for additions, red for deletions, dim for hunk headers and metadata)
+- Inlined `renderDiffViewer` into the panel webview script (same pattern as `renderCapacityCards`, `renderDecisionReasons`, etc.)
+- Added CSS styles for the inline diff viewer: `diff-add`/`diff-remove`/`diff-hunk`/`diff-meta` classes with VS Code theme variables
+- Added `"showDiff"` message handler in the inline script — renders the diff viewer in the `#gate` div
+- Added `"back-to-gate"` action handler — returns from the diff view to the gate/run view
+- Modified `viewDiff` in `extension.ts` to read the diff from the report's `result.diff` or `tasks[].result.diff` (S5-T3) first, falling back to the daemon `/diff` endpoint for pre-S5-T3 reports, then sends it to the panel as `{ type: "showDiff", diff }` instead of opening a separate editor tab
+- 56 extension tests pass, root typecheck clean, 732 orchestrator tests pass
+
+**Decided**
+- Diff viewer lives in the `#gate` div (same slot as the quality gate / merge card) — clicking "View diff" replaces the gate content with the diff; "Back" restores the gate view via `openRun`
+- Diff is read from the stored report first (S5-T3's `diff` field) rather than always calling the `/diff` daemon endpoint — the daemon fallback exists for pre-S5-T3 reports
+- The diff viewer uses simple CSS classes per line type rather than a full diff parser — the format is well-known (`+`, `-`, `@@` prefix), and the pre block with `white-space: pre` preserves alignment
+
+**Verification**
+- `corepack pnpm vitest run apps/vscode-extension/src/extension.test.ts` — 56/56 passed
+- `corepack pnpm typecheck` — clean (root + extension)
+- `corepack pnpm test` — 732 passed / 63 files
+- Red-check: disabled `renderDiffViewer` handler in the inline script → clicking "View diff" does nothing → restored
+
+**Blocked / handed off**
+- None
+
 ### S5-T3 — Diff API
 - **agent:** Claude (opencode)
 - **time:** 2026-07-26T22:30 → 2026-07-26T23:05

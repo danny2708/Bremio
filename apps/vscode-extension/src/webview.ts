@@ -345,6 +345,47 @@ export function formatTaskExecution(input: {
   return parts.join(" | ");
 }
 
+/**
+ * Parse a unified-diff patch and return HTML with syntax-highlighted lines.
+ * Self-contained (no module-scope references) because `panelHtml` inlines its
+ * source into the webview script via `.toString()`, matching `renderCapacityCards`.
+ */
+export function renderDiffViewer(diff: { stat: string; patch: string }): string {
+  const esc = (value: unknown): string =>
+    String(value ?? "").replace(
+      /[&<>"']/g,
+      (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }) as Record<string, string>)[c] ?? c,
+    );
+  if (!diff.patch && !diff.stat) return '<div class="muted">No changes in this run.</div>';
+
+  const statHtml = diff.stat
+    ? '<div class="diff-stat">' + esc(diff.stat).replace(/\n/g, "<br>") + "</div>"
+    : "";
+
+  const lines = diff.patch.split("\n");
+  let patchHtml = "";
+  for (const line of lines) {
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      patchHtml += '<div class="diff-add">' + esc(line) + "</div>";
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      patchHtml += '<div class="diff-remove">' + esc(line) + "</div>";
+    } else if (line.startsWith("@")) {
+      patchHtml += '<div class="diff-hunk">' + esc(line) + "</div>";
+    } else if (line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("---") || line.startsWith("+++")) {
+      patchHtml += '<div class="diff-meta">' + esc(line) + "</div>";
+    } else {
+      patchHtml += "<div>" + esc(line) + "</div>";
+    }
+  }
+
+  return '<div class="diff-viewer">'
+    + '<div class="diff-header"><span class="card-title">Diff</span></div>'
+    + statHtml
+    + '<pre class="diff-patch">' + patchHtml + "</pre>"
+    + '<button class="ghost" data-action="back-to-gate">Back</button>'
+    + "</div>";
+}
+
 export function renderLogLine(event: { kind?: string; taskId?: string; message?: string; data?: unknown }): {
   summary: string;
   detail?: string;
@@ -731,6 +772,17 @@ pre.log {
 .process summary { cursor: pointer; }
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
+
+/* Diff viewer: syntax-highlighted unified-diff inside the panel. */
+.diff-viewer { margin-bottom: 10px; }
+.diff-header { margin-bottom: 8px; }
+.diff-stat { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; padding: 6px 8px; background: var(--surface-raised); border-radius: 4px; }
+.diff-patch { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.6; background: var(--vscode-textCodeBlock-background, var(--surface-raised)); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 480px; overflow: auto; white-space: pre; margin: 0 0 10px; }
+.diff-patch div { min-height: 1em; }
+.diff-add { background: rgba(55, 200, 55, 0.12); color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950); }
+.diff-remove { background: rgba(200, 55, 55, 0.12); color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149); }
+.diff-hunk { color: var(--text-muted); font-weight: 600; }
+.diff-meta { color: var(--text-muted); }
 </style>
 </head>
 <body>
@@ -1021,6 +1073,9 @@ window.addEventListener("message", (event) => {
     $("gate").insertAdjacentHTML("beforeend",
       '<div class="banner ' + cls + '">' + escapeHtml(message.detail) + "</div>");
   }
+  if (message.type === "showDiff") {
+    $("gate").innerHTML = renderDiffViewer(message.diff);
+  }
 });
 
 function renderGate(gate, runId) {
@@ -1053,6 +1108,7 @@ const formatTaskExecution = ${formatTaskExecution.toString()};
 const renderLogLine = ${renderLogLine.toString()};
 const assembleTaskLanes = ${assembleTaskLanes.toString()};
 const extractResponse = ${extractResponse.toString()};
+const renderDiffViewer = ${renderDiffViewer.toString()};
 
 function renderSessionList(sessions) {
   if (!sessions || sessions.length === 0) {
@@ -1218,6 +1274,11 @@ document.addEventListener("click", (event) => {
   if (!button) return;
   if (button.dataset.action === "back-to-sessions") {
     vscode.postMessage({ type: "tab", tab: "sessions" });
+    return;
+  }
+  if (button.dataset.action === "back-to-gate") {
+    const runId = activeRunId;
+    if (runId) vscode.postMessage({ type: "openRun", runId });
     return;
   }
   if (button.dataset.action === "continue-session") {
