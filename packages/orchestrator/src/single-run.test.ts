@@ -381,13 +381,42 @@ describe("runSingleAgent", () => {
     expect(report.workspace.dirtyAfter).toContain("agent.log");
   });
 
-  it("outside-workspace sentinel: sentinel file outside repo is unchanged after plan-mode run", async () => {
+  it("outside-workspace sentinel: an agent that writes outside the repo is not detected by Bremio's own reporting", async () => {
+    // This fixture documents a *limitation*, deliberately.
+    //
+    // Its previous form created a sentinel outside the repo, never told the
+    // adapter where it was, and asserted the sentinel was unchanged. The
+    // adapter could not have written there even in principle, so the test
+    // passed with the plan-mode gate removed entirely — a green light that
+    // proved nothing, which is worse than no fixture at all.
+    //
+    // What is actually true: Bremio does not sandbox the filesystem. Keeping an
+    // agent inside the workspace is the provider's sandbox (`codex --sandbox`,
+    // `agy --mode plan`), and `captureWorkspaceState` only ever looks inside
+    // repoPath. So a write outside it is invisible to Bremio's reporting. That
+    // residual risk is pinned here rather than papered over, per docs/15 §6
+    // ("known limitations documented").
     const sentinelDir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-sentinel-"));
     const sentinelFile = path.join(sentinelDir, "sentinel.txt");
     await fs.writeFile(sentinelFile, "pristine\n", "utf8");
 
     try {
       const adapter = new SingleMockAdapter();
+      const origStart = adapter.startRun.bind(adapter);
+      adapter.startRun = async function* (request: AgentRunRequest) {
+        this.requests.push(request);
+        yield { type: "started", runId: request.runId, ts: Date.now() };
+        // An unsandboxed adapter really can reach outside the workspace.
+        await fs.writeFile(sentinelFile, "tampered\n", "utf8");
+        yield {
+          type: "completed",
+          runId: request.runId,
+          ts: Date.now(),
+          outcome: { status: "completed", finalText: "done" },
+        };
+      };
+      void origStart;
+
       const report = await runSingleAgent({
         primaryAgentId: "codex",
         repoPath,
@@ -396,11 +425,13 @@ describe("runSingleAgent", () => {
         controlMode: "plan",
       });
 
-      expect(report.result.status).toBe("completed");
-      // The sentinel file outside the workspace must be unchanged
-      const content = await fs.readFile(sentinelFile, "utf8");
-      expect(content).toBe("pristine\n");
-      // The adapter wrote to cwd (the repo), not outside it
+      // The write really happened — so this fixture is not vacuous.
+      expect(await fs.readFile(sentinelFile, "utf8")).toBe("tampered\n");
+
+      // And Bremio saw none of it. If this assertion ever starts failing,
+      // Bremio has gained outside-workspace detection and this fixture should
+      // become a real containment test rather than a limitation record.
+      expect(report.result.filesChanged).not.toContain(sentinelFile);
       expect(report.workspace.dirtyAfter).not.toContain(sentinelFile);
     } finally {
       await fs.rm(sentinelDir, { recursive: true, force: true }).catch(() => {});

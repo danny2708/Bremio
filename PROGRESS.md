@@ -1,38 +1,11 @@
-# Bremio progress log
+﻿# Bremio progress log
 
 Narrative record of parallel agent work. The task board ([`TASKS.md`](TASKS.md))
 says *what* and *whether done*; this file says *how it went* — what was decided,
 what blocked, what was learned.
 
 
-### S2-T3 — Plan mode enforced per transport, guarantee declared honestly
-- **agent:** Claude (opencode)
-- **time:** 2026-07-25T09:30 → 2026-07-25T09:55
-- **branch:** s2/policy-and-enforcement
-- **task(s):** S2-T3
-- **status:** done
-
-**Did**
-- Added `ReadOnlyEnforcement` union type (`hard-sandbox | provider-native | worktree-contained | advisory | unsupported`) to `AgentCapabilitiesSchema` in `packages/adapter-sdk`.
-- Declared `readOnlyEnforcement` honestly on all 4 production adapters + conservative default:
-  - OpenCode: `"provider-native"` (skips `--auto` in read-only mode)
-  - Claude: `"provider-native"` (`canUseTool` denies write tools)
-  - Codex: `"hard-sandbox"` (`--sandbox read-only`)
-  - Antigravity: `"provider-native"` (`--mode plan` without `--dangerously-skip-permissions`)
-  - Local (CONSERVATIVE_CAPABILITIES): `"unsupported"` (no read-only mechanism)
-- Fixed 12+ test files missing `readOnlyEnforcement` in mock capabilities.
-- Fixed `router.test.ts` type widening across spread objects.
-- Fixed `local-adapter.test.ts` "all-false" check to skip the non-boolean field.
-
-**Decided**
-- Each adapter's declaration must match observable behavior — the contract is that the guarantee is honest, not aspirational.
-- `unsupported` is the safe default for the conservative (unroutable) posture: if an adapter has no read-only mechanism, it's the caller's responsibility not to send it read-only requests.
-
-**Verification**
-- `corepack pnpm typecheck` — clean.
-- `corepack pnpm test` — 621 passed / 59 files.
-- Committed: `18e9cc1 feat(adapter-sdk, adapters): S2-T3 plan mode enforced per transport, guarantee declared honestly`
-
+## How this file is structured
 
 - One `## Sprint N — <theme>` heading per sprint, newest sprint at the bottom.
 - Inside a sprint, one `### block` per agent working session. An agent that comes
@@ -41,247 +14,7 @@ what blocked, what was learned.
 - Every block **must** open with the metadata header shown below. The tech lead
   greps these fields, so the keys and order are fixed.
 
-
-### S3-T9 — Safety fixtures: outside-workspace sentinel, ignored-file write, home-dir write
-- **agent:** Claude (opencode)
-- **time:** 2026-07-25T14:55 → 2026-07-25T15:00
-- **branch:** s3/approval-lifecycle
-- **task(s):** S3-T9
-- **status:** done
-
-**Did**
-- Added `--ignored` flag to `captureWorkspaceState` git status call in `single-run.ts` — gitignored files are now detected in `dirtyFiles` and `filesChanged`
-- Added 3 safety fixture integration tests in `single-run.test.ts`:
-  1. **ignored-file write**: creates `.gitignore` with `*.log`, mock writes `agent.log`, verifies it appears in `filesChanged` and `dirtyAfter`
-  2. **outside-workspace sentinel**: creates sentinel file outside the repo, runs plan mode, verifies sentinel unchanged and workspace clean
-  3. **home-dir sentinel**: weak adapter with `"advisory"` enforcement is rejected by `canBackControlMode` gate, home sentinel unchanged
-
-**Decided**
-- `--ignored` is safe to add unconditionally because git porcelain `!!` entries are parsed correctly by the existing `parsePorcelainStatus` (handles any 2-char code)
-- The sentinel tests verify the contract at the orchestrator level: (1) the workspace capture catches all file changes including ignored, (2) plan mode passes the `canBackControlMode` gate for capable adapters, (3) weak adapters are rejected before any run threatens sentinel files
-
-**Verification**
-- `corepack pnpm typecheck` — clean
-- `corepack pnpm test` — 729 passed / 61 files (+3 new)
-- Red-check 1: removed `--ignored` → "ignored-file write" test fails (`expected [] to include 'agent.log'`). Restored.
-- Red-check 2: removed `canBackControlMode` guard → "home-dir sentinel" test resolves instead of rejecting. Restored.
-
-### S3-T8 — Autopilot deny list in AUTOPILOT_RULES per docs/15 §2.5
-- **agent:** Claude (opencode)
-- **time:** 2026-07-25T14:45 → 2026-07-25T14:50
-- **branch:** s3/approval-lifecycle
-- **task(s):** S3-T8
-- **status:** done
-
-**Did**
-- Updated `AUTOPILOT_RULES` in `packages/policy/src/policy.ts`: denies `git-destructive`, `outside-workspace`, `user-config` with `allowed: false, overrideableByGrant: true`
-- Added `overrideableByGrant?: true` to `PolicyEvaluation` interface to signal a denial can be overridden by an `ApprovalGrant`
-- Kept `read`, `write`, `create`, `delete`, `command`, `network`, `mcp-tool` allowed in autopilot (no approval needed)
-- Updated tests: split the "all actions allowed" test into "safe actions allowed" (7 classes) and "dangerous actions denied but overrideable" (3 classes)
-
-**Decided**
-- `overrideableByGrant: true` on denied entries is cleaner than repurposing `approvalRequired: "per-action"` to mean "overrideable" — the latter conflates approve mode's "allowed + needs approval" with autopilot's "denied but can be overridden"
-- The grant-verification logic is the caller's responsibility, keeping `evaluate()` as a pure function
-
-**Verification**
-- `corepack pnpm typecheck` — clean
-- `corepack pnpm test` — 726 passed / 61 files
-- Red-check: flipped `git-destructive` to `allowed: true` → test "denies git-destructive but marks it overrideable by grant" failed with `expected true to be false`. Restored.
-
-### S3-T7 — Wire readOnlyEnforcement + getRuntimeCapabilities into run selection
-- **agent:** Claude (opencode)
-- **time:** 2026-07-25T14:28 → 2026-07-25T14:40
-- **branch:** s3/approval-lifecycle
-- **task(s):** S3-T7
-- **status:** done
-
-**Did**
-- Added `controlMode` to `RunSingleAgentOptions`, `SingleRunReport`, `RunBremioOptions`, `StartRunInput`, `StartRunSchema`
-- Calls `adapter.getRuntimeCapabilities()` alongside `getCapabilities()` in both `single-run.ts` and `run.ts`
-- Gates execution with `canBackControlMode()` for non-autopilot control modes
-- Exposes `runtimeCapabilities` in daemon `/adapters` endpoint and in `SingleAgentResult`/`SingleRunReport`
-- Added `controlMode` to `RunReport`/`BuildReportInput` in aggregator, threaded through `run.ts`
-- 5 files changed across orchestrator, daemon runs, and daemon server
-
-**Decided**
-- `controlMode` defaults to `"autopilot"` when omitted — preserves backward compatibility for all existing callers
-- `getRuntimeCapabilities()` is called with `.catch(() => undefined)` to degrade gracefully if an adapter doesn't implement it
-- Team mode validates the lead's capabilities; workers inherit the mode-set's constraints from the lead
-
-**Verification**
-- `corepack pnpm typecheck` — clean
-- `corepack pnpm test` — 726 passed / 61 files
-
-### S3-T3 — Protocol routes + fail-closed when non-interactive
-- **agent:** Claude (opencode)
-- **time:** 2026-07-25T11:50 → 2026-07-25T12:30
-- **branch:** s3/approval-lifecycle
-- **task(s):** S3-T3
-- **status:** done
-
-**Did**
-- `packages/protocol/src/approval.ts`: ActionClassSchema, ActionDigestSchema, ApprovalRequestSchema, ApprovalDecisionSchema, ApprovalGrantSchema, CreateApprovalRequestSchema, DecideApprovalRequestSchema, CreateApprovalGrantSchema — all exported from `index.ts`
-- `apps/daemon/src/storage.ts`: SCHEMA_VERSION 8, migration for `approval_requests` and `approval_grants` (no FK on sessions), CRUD methods, `PersistedApprovalRequest`/`PersistedApprovalGrant` types, `toApprovalRequest`/`toApprovalGrant` helpers
-- `apps/daemon/src/runs.ts`: RunRegistry pass-through with fail-closed — `createApprovalRequest` auto-rejects when `#listeners.get(runId)?.size === 0`
-- `apps/daemon/src/server.ts`: full route set (list/create/get/decide/cancel for requests; list/create/get/revoke for grants) + `approvals: true` capability in `/meta`
-- `apps/daemon/src/protocol.test.ts`: 15 integration tests covering auto-deny (fail-closed), pending, validation, fetch, 404, filtering, approve/reject with reason, 409 double-decide, cancel, 409 cancel-non-pending, create/revoke/list grants
-- Typecheck: clean. Full suite: 140 tests pass across 6 files.
-**Decided**
-
-**Verification**
-
-### S3-T4 — Review-before-apply in an isolated worktree
-- **agent:** Claude (opencode)
-- **time:** 2026-07-25T12:30 → 2026-07-25T13:05
-- **branch:** s3/approval-lifecycle
-- **task(s):** S3-T4
-- **status:** done
-
-**Did**
-- `apps/daemon/src/storage.ts`: added `"pending_approval"` to `RunStatus`
-- `apps/daemon/src/runs.ts`:
-  - Added `"review-requested"` event kind, `PendingReview` interface, `#pendingReviews` map
-  - Added `workspaceStrategy` to `StartRunInput`
-  - Added `#startReview()` — creates approval request, emits `review-requested` with diff, sets `pending_approval`, returns a promise that resolves when the user decides
-  - Added `resolvePendingApproval(requestId, decision)` — unlocks a waiting review, called from the route handler
-  - Modified `#execute` — after `runSingleAgent` returns for an isolated-worktree run with completed status, inserts the review gate: pause, wait for decision, then merge (on approve) or cleanup + fail (on reject)
-  - Passes `workspaceStrategy` through to `runSingleAgent` options
-- `apps/daemon/src/server.ts`: added `workspaceStrategy` to `StartRunSchema`; wired `registry.resolvePendingApproval()` into the decide route
-- `apps/daemon/src/protocol.test.ts`: 4 new tests covering `workspaceStrategy` acceptance, capability advertisement, recovery options for `pending_approval` runs, and `resolvePendingApproval` lifecycle
-
-**Decided**
-- The review gate lives in the daemon's `#execute` method (not in the orchestrator) because approval decisions are daemon-level concerns involving SSE events, run status transitions, and merge/cleanup of worktrees
-- `#startReview` blocks `#execute` via a Promise stored in `#pendingReviews`, resolved by the existing approval route handler
-- On approval: merge worktree branch into the current branch using `MergeManager.merge()`, then clean up
-- On rejection: clean up the worktree without merging, emit `failed` with `review_rejected` code
-- Merge errors are caught and logged but do not fail the run — the worktree is left in place for manual resolution
-
-**Verification**
-- `corepack pnpm typecheck` — clean.
-- `corepack pnpm vitest run apps/daemon` — 144 passed (140 + 4 new).
-- `corepack pnpm vitest run packages/orchestrator` — 116 passed.
-- `corepack pnpm vitest run packages/workspace` — 9 passed.
-- Full suite: 144 daemon tests + 116 orchestrator tests + 9 workspace tests all pass.
-
-### S3-T2 — Grant scopes (once / session / workspace), expiry, revoke, precedence
-- **agent:** Claude (opencode)
-- **time:** 2026-07-25T11:35 → 2026-07-25T11:45
-- **branch:** s3/approval-lifecycle
-- **task(s):** S3-T2
-- **status:** done
-
-**Did**
-- Added `consumedAt` to `ApprovalGrant` — marks a `once`-scoped grant as used.
-- Added `workspaceId` to `ApprovalGrant` / `NewApprovalGrantParams` — enables cross-session matching for `workspace`-scoped grants.
-- Added `GrantStatus` type and `getGrantStatus()` helper — `active | consumed | revoked | expired` from highest-priority field.
-- Added `GrantAlreadyConsumedError` error class.
-- Added `consumeGrant(grantId)` — marks consumed, emits `grant-consumed` event; rejects consumed or revoked grants.
-- Updated `findActiveGrant()` — excludes consumed grants; workspace-scoped grants match the owning session OR any session in the same `workspaceId`; `session`/`once` grants match only their `sessionId`.
-- Updated `revokeGrant()` — rejects consumed grants (GrantAlreadyConsumedError).
-- Added `revokeSessionGrants(sessionId)` — batch-revoke all active grants for a session.
-- Added `revokeWorkspaceGrants(workspaceId)` — batch-revoke all active workspace-scoped grants for a workspace.
-- Added `getGrantsByWorkspace(workspaceId)` — query method.
-- Updated `pruneExpiredGrants()` to use `getGrantStatus` for consistent logic.
-- 22 new tests covering all scope behaviors, consumption, batch revocation, status helper, pruning edge cases.
-
-**Decided**
-- `getGrantStatus()` uses a priority check: `revokedAt` > `consumedAt` > `expired` > `active`. This ensures a consumed-then-revoked grant reports as `revoked`, which is the terminal state. The `consumeGrant()` and `revokeGrant()` methods check status before mutating using this same function.
-- Workspace-scoped grants require a `workspaceId` to participate in cross-session matching; a workspace-scoped grant without one will never match (safety: don't accidentally leak grants).
-- `revokeSessionGrants` / `revokeWorkspaceGrants` each call the existing `revokeGrant()` internally so all event emission and guards fire consistently.
-
-**Verification**
-- `corepack pnpm typecheck` — clean.
-- `corepack pnpm vitest run packages/approval` — 57 passed (+22 new).
-- `corepack pnpm test` — 691 passed / 60 files.
-- Red-check 4: removed `consumed` guard in `consumeGrant` → 2 tests fail (double consume, consume revoked). Restored.
-- Red-check 5: removed `consumed` guard in `revokeGrant` → 2 tests fail (double revoke, revoke consumed). Restored.
-
-### S3-T1 — `ApprovalRequest` / `ApprovalDecision` / `ApprovalGrant` + action digest
-- **agent:** Claude (opencode)
-- **time:** 2026-07-25T10:30 → 2026-07-25T11:30
-- **branch:** s3/approval-lifecycle
-- **task(s):** S3-T1
-- **status:** done
-
-**Did**
-- Created `packages/approval` with core approval types and an in-memory engine:
-  - `ActionDigest` — SHA-256 digest of `{actionClass}\0{target}`; `create()` / `verify()` to prevent command substitution (docs/15 §9 amendment 5).
-  - `ApprovalRequest` — `pending → approved | rejected | expired | cancelled` state machine, with `sessionId`, `runId`, `actionDigest`, `risk`, timestamps, `decidedBy`.
-  - `ApprovalDecision` — value object for `decide()`.
-  - `ApprovalGrant` — scoped grant with `once | session | workspace` scope, `target`/`actionClass` filters, `expiresAt`, `revokedAt`, `precedence` for first-decision-wins.
-  - `InMemoryApprovalEngine` — stores requests + grants, enforces `first-decision-wins` (DuplicateDecisionError), state machine validation (InvalidTransitionError), `expirePendingRequests()`, `pruneExpiredGrants()`, `findActiveGrant()` with precedence+target matching.
-  - Event system — typed `ApprovalEvent` log + listener subscription.
-- 35 tests covering ActionDigest (determinism, tamper detection), request lifecycle (create, approve, reject, cancel, expire, duplicate decision), grant lifecycle (create, revoke, prune, findActiveGrant with precedence/session/target matching, revoked-grant exclusion), and event emission.
-- Red-checked 3 guards (InvalidDigestError, DuplicateDecisionError, GrantAlreadyRevokedError).
-
-**Decided**
-- `DuplicateDecisionError` is a separate, domain-meaningful error (not just InvalidTransitionError) because "first-decision-wins" is the semantics docs/15 requires, and a caller should see the reason explicitly.
-- `packages/approval` is a new package rather than extending `packages/policy` because the approval lifecycle is a separate runtime concern with its own state machine, event system, and storage needs; policy is pure evaluation.
-- In-memory engine first; persistence (DB schema, protocol routes) belongs to S3-T2/S3-T3.
-
-**Verification**
-- `corepack pnpm typecheck` — clean.
-- `corepack pnpm vitest run packages/approval` — 35 passed.
-- `corepack pnpm test` — 669 passed / 60 files (0 failed).
-- Red-check 1: removed `InvalidDigestError` guard → test "throws InvalidDigestError when creating with a tampered digest" fails. Restored.
-- Red-check 2: removed `DuplicateDecisionError` guard → test "first-decision-wins: rejects duplicate decision" fails (catches `InvalidTransitionError` instead). Restored.
-- Red-check 3: removed `GrantAlreadyRevokedError` guard → test "throws GrantAlreadyRevokedError on double revoke" fails. Restored.
-
-### S2-T4 — AdapterRuntimeCapabilities replaces name-based capability checks
-- **agent:** Claude (opencode)
-- **time:** 2026-07-25T09:55 → 2026-07-25T10:15
-- **branch:** s2/policy-and-enforcement
-- **task(s):** S2-T4
-- **status:** done
-
-**Did**
-- Added `AdapterRuntimeCapabilities` type (Zod schema + type) to `packages/adapter-sdk/src/capabilities.ts`: `adapterId`, `transport` (cli|sdk|app-server), `approval` (per-action|before-apply|none), `structuredToolEvents`, `contextMetrics` (reported|estimated|none), `manualCompact`, `mcp`, `webSearch`, `cancellation`.
-- Added `getRuntimeCapabilities()` method to `AgentAdapter` interface.
-- Implemented honestly on all adapters (values from docs/15 §3.1 probe table):
-  - **Claude**: transport=sdk, approval=per-action (canUseTool), cancellation=true
-  - **Codex**: transport=cli, approval=none (--sandbox is all-or-nothing), cancellation=true
-  - **Antigravity**: transport=cli, approval=none, cancellation=false (no cancel mechanism)
-  - **OpenCode**: transport=cli, approval=none, cancellation=false
-  - **Local**: transport=app-server (HTTP), approval=none, cancellation=true (AbortSignal)
-- Replaced `validateCombination`'s ad-hoc `options?.hasPerActionSeam` with a formal `ApprovalSeam` parameter; exported `ApprovalSeam` from `@bremio/policy`.
-- Fixed 9 test files missing `getRuntimeCapabilities` in mock adapters.
-
-**Decided**
-- `approval` seam is the first concrete field that formalizes what was previously an ad-hoc option — future fields from docs/15 §3 (structuredToolEvents, contextMetrics, etc.) follow the same pattern.
-- The `approval: "per-action"` declaration is what enables approve+direct-workspace combinations; without it, approve mode requires isolated-worktree.
-- `contextMetrics: "estimated"` for CLI adapters (we estimate from output) vs `"none"` for the local HTTP adapter (no metrics at all).
-- `cancellation: false` for Antigravity and OpenCode because they lack a cancellation mechanism.
-
-**Verification**
-- `corepack pnpm typecheck` — clean.
-- `corepack pnpm test` — 621 passed / 59 files.
-- Committed: `30210c9 feat(adapter-sdk, policy, adapters): S2-T4 AdapterRuntimeCapabilities replaces name-based capability checks`
-
-### S2-T5 — OpenCode `--auto` opt-in, mirroring S0-T4
-- **agent:** Claude (opencode)
-- **time:** 2026-07-25T10:15 → 2026-07-25T10:25
-- **branch:** s2/policy-and-enforcement
-- **task(s):** S2-T5
-- **status:** done
-
-**Did**
-- Added `allowAutoPermissionBypass` option (default `false`) to `OpenCodeAdapterOptions`.
-- Added `OpenCodePermissionError` class (same defect class as Antigravity's `AntigravityPermissionError`).
-- Refuse writable runs without the opt-in before spawn — yield a `completed` event with `status: "failed"` and an actionable message naming the opt-in flag.
-- Only pass `--auto` when both `!readOnly` AND `allowAutoPermissionBypass` are true.
-- Added 3 new tests: refusal without bypass, success with bypass, read-only allowed regardless.
-- Updated 5 existing tests to use a `writableAdapter()` helper with `allowAutoPermissionBypass: true`.
-
-**Decided**
-- Same shape as Antigravity's `allowDangerousPermissionBypass` (S0-T4): off by default, must be asked for.
-- Refusal happens before spawn and yields a failed outcome (not a thrown error) so the caller can attribute the failure to the adapter rather than a configuration crash.
-
-**Verification**
-- `corepack pnpm typecheck` — clean.
-- `corepack pnpm vitest run packages/adapter-opencode/src/opencode-adapter.test.ts` — 26 passed (+3 new).
-- `corepack pnpm test` — 624 passed / 59 files (1 flaky process-supervisor test fails intermittently).
-- Committed: `552b37a feat(adapter-opencode): S2-T5 --auto opt-in, mirroring S0-T4`
-
+## Block template — copy this exactly
 
 ```md
 ### <TASK-ID> — <one-line title>
@@ -367,6 +100,8 @@ Rules:
 - Next task per the lock: **S1-T1** (session_config schema v4 + migration),
   following the transactional/idempotent v1→v2 pattern in `storage.ts`. It blocks
   the rest of Sprint 1, so it runs alone first.
+
+---
 
 ---
 
@@ -573,6 +308,8 @@ Rules:
 
 ---
 
+---
+
 ## Sprint 2 — Policy and enforcement
 
 ### S2-T1 — packages/policy: ControlMode × ActionClass matrix, pure evaluate()
@@ -627,6 +364,92 @@ Rules:
 - `corepack pnpm typecheck` — clean.
 - `corepack pnpm test` — 621 passed across 59 test files (+7 new tests).
 - Red-check: removed `targetCwd = taskWorktree.path` in `single-run.ts` → `isolated-worktree` test failed (`expected [] to include 'DIRECT.txt'`) because edits landed in main repo instead of worktree. Restored and test passed.
+
+
+### S2-T3 — Plan mode enforced per transport, guarantee declared honestly
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T09:30 → 2026-07-25T09:55
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T3
+- **status:** done
+
+**Did**
+- Added `ReadOnlyEnforcement` union type (`hard-sandbox | provider-native | worktree-contained | advisory | unsupported`) to `AgentCapabilitiesSchema` in `packages/adapter-sdk`.
+- Declared `readOnlyEnforcement` honestly on all 4 production adapters + conservative default:
+  - OpenCode: `"provider-native"` (skips `--auto` in read-only mode)
+  - Claude: `"provider-native"` (`canUseTool` denies write tools)
+  - Codex: `"hard-sandbox"` (`--sandbox read-only`)
+  - Antigravity: `"provider-native"` (`--mode plan` without `--dangerously-skip-permissions`)
+  - Local (CONSERVATIVE_CAPABILITIES): `"unsupported"` (no read-only mechanism)
+- Fixed 12+ test files missing `readOnlyEnforcement` in mock capabilities.
+- Fixed `router.test.ts` type widening across spread objects.
+- Fixed `local-adapter.test.ts` "all-false" check to skip the non-boolean field.
+
+**Decided**
+- Each adapter's declaration must match observable behavior — the contract is that the guarantee is honest, not aspirational.
+- `unsupported` is the safe default for the conservative (unroutable) posture: if an adapter has no read-only mechanism, it's the caller's responsibility not to send it read-only requests.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 621 passed / 59 files.
+- Committed: `18e9cc1 feat(adapter-sdk, adapters): S2-T3 plan mode enforced per transport, guarantee declared honestly`
+
+
+### S2-T4 — AdapterRuntimeCapabilities replaces name-based capability checks
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T09:55 → 2026-07-25T10:15
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T4
+- **status:** done
+
+**Did**
+- Added `AdapterRuntimeCapabilities` type (Zod schema + type) to `packages/adapter-sdk/src/capabilities.ts`: `adapterId`, `transport` (cli|sdk|app-server), `approval` (per-action|before-apply|none), `structuredToolEvents`, `contextMetrics` (reported|estimated|none), `manualCompact`, `mcp`, `webSearch`, `cancellation`.
+- Added `getRuntimeCapabilities()` method to `AgentAdapter` interface.
+- Implemented honestly on all adapters (values from docs/15 §3.1 probe table):
+  - **Claude**: transport=sdk, approval=per-action (canUseTool), cancellation=true
+  - **Codex**: transport=cli, approval=none (--sandbox is all-or-nothing), cancellation=true
+  - **Antigravity**: transport=cli, approval=none, cancellation=false (no cancel mechanism)
+  - **OpenCode**: transport=cli, approval=none, cancellation=false
+  - **Local**: transport=app-server (HTTP), approval=none, cancellation=true (AbortSignal)
+- Replaced `validateCombination`'s ad-hoc `options?.hasPerActionSeam` with a formal `ApprovalSeam` parameter; exported `ApprovalSeam` from `@bremio/policy`.
+- Fixed 9 test files missing `getRuntimeCapabilities` in mock adapters.
+
+**Decided**
+- `approval` seam is the first concrete field that formalizes what was previously an ad-hoc option — future fields from docs/15 §3 (structuredToolEvents, contextMetrics, etc.) follow the same pattern.
+- The `approval: "per-action"` declaration is what enables approve+direct-workspace combinations; without it, approve mode requires isolated-worktree.
+- `contextMetrics: "estimated"` for CLI adapters (we estimate from output) vs `"none"` for the local HTTP adapter (no metrics at all).
+- `cancellation: false` for Antigravity and OpenCode because they lack a cancellation mechanism.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 621 passed / 59 files.
+- Committed: `30210c9 feat(adapter-sdk, policy, adapters): S2-T4 AdapterRuntimeCapabilities replaces name-based capability checks`
+
+### S2-T5 — OpenCode `--auto` opt-in, mirroring S0-T4
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T10:15 → 2026-07-25T10:25
+- **branch:** s2/policy-and-enforcement
+- **task(s):** S2-T5
+- **status:** done
+
+**Did**
+- Added `allowAutoPermissionBypass` option (default `false`) to `OpenCodeAdapterOptions`.
+- Added `OpenCodePermissionError` class (same defect class as Antigravity's `AntigravityPermissionError`).
+- Refuse writable runs without the opt-in before spawn — yield a `completed` event with `status: "failed"` and an actionable message naming the opt-in flag.
+- Only pass `--auto` when both `!readOnly` AND `allowAutoPermissionBypass` are true.
+- Added 3 new tests: refusal without bypass, success with bypass, read-only allowed regardless.
+- Updated 5 existing tests to use a `writableAdapter()` helper with `allowAutoPermissionBypass: true`.
+
+**Decided**
+- Same shape as Antigravity's `allowDangerousPermissionBypass` (S0-T4): off by default, must be asked for.
+- Refusal happens before spawn and yields a failed outcome (not a thrown error) so the caller can attribute the failure to the adapter rather than a configuration crash.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/adapter-opencode/src/opencode-adapter.test.ts` — 26 passed (+3 new).
+- `corepack pnpm test` — 624 passed / 59 files (1 flaky process-supervisor test fails intermittently).
+- Committed: `552b37a feat(adapter-opencode): S2-T5 --auto opt-in, mirroring S0-T4`
+
 
 ### S2-REVIEW — tech-lead audit of Sprint 2
 - **agent:** Claude (Opus 4.8), acting as tech lead
@@ -683,4 +506,260 @@ Rules:
   failed. Restored.
 
 
+
+
+---
+
+## Sprint 3 — Approval lifecycle
+
+### S3-T1 — `ApprovalRequest` / `ApprovalDecision` / `ApprovalGrant` + action digest
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T10:30 → 2026-07-25T11:30
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T1
+- **status:** done
+
+**Did**
+- Created `packages/approval` with core approval types and an in-memory engine:
+  - `ActionDigest` — SHA-256 digest of `{actionClass}\0{target}`; `create()` / `verify()` to prevent command substitution (docs/15 §9 amendment 5).
+  - `ApprovalRequest` — `pending → approved | rejected | expired | cancelled` state machine, with `sessionId`, `runId`, `actionDigest`, `risk`, timestamps, `decidedBy`.
+  - `ApprovalDecision` — value object for `decide()`.
+  - `ApprovalGrant` — scoped grant with `once | session | workspace` scope, `target`/`actionClass` filters, `expiresAt`, `revokedAt`, `precedence` for first-decision-wins.
+  - `InMemoryApprovalEngine` — stores requests + grants, enforces `first-decision-wins` (DuplicateDecisionError), state machine validation (InvalidTransitionError), `expirePendingRequests()`, `pruneExpiredGrants()`, `findActiveGrant()` with precedence+target matching.
+  - Event system — typed `ApprovalEvent` log + listener subscription.
+- 35 tests covering ActionDigest (determinism, tamper detection), request lifecycle (create, approve, reject, cancel, expire, duplicate decision), grant lifecycle (create, revoke, prune, findActiveGrant with precedence/session/target matching, revoked-grant exclusion), and event emission.
+- Red-checked 3 guards (InvalidDigestError, DuplicateDecisionError, GrantAlreadyRevokedError).
+
+**Decided**
+- `DuplicateDecisionError` is a separate, domain-meaningful error (not just InvalidTransitionError) because "first-decision-wins" is the semantics docs/15 requires, and a caller should see the reason explicitly.
+- `packages/approval` is a new package rather than extending `packages/policy` because the approval lifecycle is a separate runtime concern with its own state machine, event system, and storage needs; policy is pure evaluation.
+- In-memory engine first; persistence (DB schema, protocol routes) belongs to S3-T2/S3-T3.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/approval` — 35 passed.
+- `corepack pnpm test` — 669 passed / 60 files (0 failed).
+- Red-check 1: removed `InvalidDigestError` guard → test "throws InvalidDigestError when creating with a tampered digest" fails. Restored.
+- Red-check 2: removed `DuplicateDecisionError` guard → test "first-decision-wins: rejects duplicate decision" fails (catches `InvalidTransitionError` instead). Restored.
+- Red-check 3: removed `GrantAlreadyRevokedError` guard → test "throws GrantAlreadyRevokedError on double revoke" fails. Restored.
+
+### S3-T2 — Grant scopes (once / session / workspace), expiry, revoke, precedence
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T11:35 → 2026-07-25T11:45
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T2
+- **status:** done
+
+**Did**
+- Added `consumedAt` to `ApprovalGrant` — marks a `once`-scoped grant as used.
+- Added `workspaceId` to `ApprovalGrant` / `NewApprovalGrantParams` — enables cross-session matching for `workspace`-scoped grants.
+- Added `GrantStatus` type and `getGrantStatus()` helper — `active | consumed | revoked | expired` from highest-priority field.
+- Added `GrantAlreadyConsumedError` error class.
+- Added `consumeGrant(grantId)` — marks consumed, emits `grant-consumed` event; rejects consumed or revoked grants.
+- Updated `findActiveGrant()` — excludes consumed grants; workspace-scoped grants match the owning session OR any session in the same `workspaceId`; `session`/`once` grants match only their `sessionId`.
+- Updated `revokeGrant()` — rejects consumed grants (GrantAlreadyConsumedError).
+- Added `revokeSessionGrants(sessionId)` — batch-revoke all active grants for a session.
+- Added `revokeWorkspaceGrants(workspaceId)` — batch-revoke all active workspace-scoped grants for a workspace.
+- Added `getGrantsByWorkspace(workspaceId)` — query method.
+- Updated `pruneExpiredGrants()` to use `getGrantStatus` for consistent logic.
+- 22 new tests covering all scope behaviors, consumption, batch revocation, status helper, pruning edge cases.
+
+**Decided**
+- `getGrantStatus()` uses a priority check: `revokedAt` > `consumedAt` > `expired` > `active`. This ensures a consumed-then-revoked grant reports as `revoked`, which is the terminal state. The `consumeGrant()` and `revokeGrant()` methods check status before mutating using this same function.
+- Workspace-scoped grants require a `workspaceId` to participate in cross-session matching; a workspace-scoped grant without one will never match (safety: don't accidentally leak grants).
+- `revokeSessionGrants` / `revokeWorkspaceGrants` each call the existing `revokeGrant()` internally so all event emission and guards fire consistently.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/approval` — 57 passed (+22 new).
+- `corepack pnpm test` — 691 passed / 60 files.
+- Red-check 4: removed `consumed` guard in `consumeGrant` → 2 tests fail (double consume, consume revoked). Restored.
+- Red-check 5: removed `consumed` guard in `revokeGrant` → 2 tests fail (double revoke, revoke consumed). Restored.
+
+### S3-T3 — Protocol routes + fail-closed when non-interactive
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T11:50 → 2026-07-25T12:30
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T3
+- **status:** done
+
+**Did**
+- `packages/protocol/src/approval.ts`: ActionClassSchema, ActionDigestSchema, ApprovalRequestSchema, ApprovalDecisionSchema, ApprovalGrantSchema, CreateApprovalRequestSchema, DecideApprovalRequestSchema, CreateApprovalGrantSchema — all exported from `index.ts`
+- `apps/daemon/src/storage.ts`: SCHEMA_VERSION 8, migration for `approval_requests` and `approval_grants` (no FK on sessions), CRUD methods, `PersistedApprovalRequest`/`PersistedApprovalGrant` types, `toApprovalRequest`/`toApprovalGrant` helpers
+- `apps/daemon/src/runs.ts`: RunRegistry pass-through with fail-closed — `createApprovalRequest` auto-rejects when `#listeners.get(runId)?.size === 0`
+- `apps/daemon/src/server.ts`: full route set (list/create/get/decide/cancel for requests; list/create/get/revoke for grants) + `approvals: true` capability in `/meta`
+- `apps/daemon/src/protocol.test.ts`: 15 integration tests covering auto-deny (fail-closed), pending, validation, fetch, 404, filtering, approve/reject with reason, 409 double-decide, cancel, 409 cancel-non-pending, create/revoke/list grants
+- Typecheck: clean. Full suite: 140 tests pass across 6 files.
+**Decided**
+
+**Verification**
+
+### S3-T4 — Review-before-apply in an isolated worktree
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T12:30 → 2026-07-25T13:05
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T4
+- **status:** done
+
+**Did**
+- `apps/daemon/src/storage.ts`: added `"pending_approval"` to `RunStatus`
+- `apps/daemon/src/runs.ts`:
+  - Added `"review-requested"` event kind, `PendingReview` interface, `#pendingReviews` map
+  - Added `workspaceStrategy` to `StartRunInput`
+  - Added `#startReview()` — creates approval request, emits `review-requested` with diff, sets `pending_approval`, returns a promise that resolves when the user decides
+  - Added `resolvePendingApproval(requestId, decision)` — unlocks a waiting review, called from the route handler
+  - Modified `#execute` — after `runSingleAgent` returns for an isolated-worktree run with completed status, inserts the review gate: pause, wait for decision, then merge (on approve) or cleanup + fail (on reject)
+  - Passes `workspaceStrategy` through to `runSingleAgent` options
+- `apps/daemon/src/server.ts`: added `workspaceStrategy` to `StartRunSchema`; wired `registry.resolvePendingApproval()` into the decide route
+- `apps/daemon/src/protocol.test.ts`: 4 new tests covering `workspaceStrategy` acceptance, capability advertisement, recovery options for `pending_approval` runs, and `resolvePendingApproval` lifecycle
+
+**Decided**
+- The review gate lives in the daemon's `#execute` method (not in the orchestrator) because approval decisions are daemon-level concerns involving SSE events, run status transitions, and merge/cleanup of worktrees
+- `#startReview` blocks `#execute` via a Promise stored in `#pendingReviews`, resolved by the existing approval route handler
+- On approval: merge worktree branch into the current branch using `MergeManager.merge()`, then clean up
+- On rejection: clean up the worktree without merging, emit `failed` with `review_rejected` code
+- Merge errors are caught and logged but do not fail the run — the worktree is left in place for manual resolution
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run apps/daemon` — 144 passed (140 + 4 new).
+- `corepack pnpm vitest run packages/orchestrator` — 116 passed.
+- `corepack pnpm vitest run packages/workspace` — 9 passed.
+- Full suite: 144 daemon tests + 116 orchestrator tests + 9 workspace tests all pass.
+
+### S3-T7 — Wire readOnlyEnforcement + getRuntimeCapabilities into run selection
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T14:28 → 2026-07-25T14:40
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T7
+- **status:** done
+
+**Did**
+- Added `controlMode` to `RunSingleAgentOptions`, `SingleRunReport`, `RunBremioOptions`, `StartRunInput`, `StartRunSchema`
+- Calls `adapter.getRuntimeCapabilities()` alongside `getCapabilities()` in both `single-run.ts` and `run.ts`
+- Gates execution with `canBackControlMode()` for non-autopilot control modes
+- Exposes `runtimeCapabilities` in daemon `/adapters` endpoint and in `SingleAgentResult`/`SingleRunReport`
+- Added `controlMode` to `RunReport`/`BuildReportInput` in aggregator, threaded through `run.ts`
+- 5 files changed across orchestrator, daemon runs, and daemon server
+
+**Decided**
+- `controlMode` defaults to `"autopilot"` when omitted — preserves backward compatibility for all existing callers
+- `getRuntimeCapabilities()` is called with `.catch(() => undefined)` to degrade gracefully if an adapter doesn't implement it
+- Team mode validates the lead's capabilities; workers inherit the mode-set's constraints from the lead
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 726 passed / 61 files
+
+### S3-T8 — Autopilot deny list in AUTOPILOT_RULES per docs/15 §2.5
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T14:45 → 2026-07-25T14:50
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T8
+- **status:** done
+
+**Did**
+- Updated `AUTOPILOT_RULES` in `packages/policy/src/policy.ts`: denies `git-destructive`, `outside-workspace`, `user-config` with `allowed: false, overrideableByGrant: true`
+- Added `overrideableByGrant?: true` to `PolicyEvaluation` interface to signal a denial can be overridden by an `ApprovalGrant`
+- Kept `read`, `write`, `create`, `delete`, `command`, `network`, `mcp-tool` allowed in autopilot (no approval needed)
+- Updated tests: split the "all actions allowed" test into "safe actions allowed" (7 classes) and "dangerous actions denied but overrideable" (3 classes)
+
+**Decided**
+- `overrideableByGrant: true` on denied entries is cleaner than repurposing `approvalRequired: "per-action"` to mean "overrideable" — the latter conflates approve mode's "allowed + needs approval" with autopilot's "denied but can be overridden"
+- The grant-verification logic is the caller's responsibility, keeping `evaluate()` as a pure function
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 726 passed / 61 files
+- Red-check: flipped `git-destructive` to `allowed: true` → test "denies git-destructive but marks it overrideable by grant" failed with `expected true to be false`. Restored.
+
+### S3-T9 — Safety fixtures: outside-workspace sentinel, ignored-file write, home-dir write
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T14:55 → 2026-07-25T15:00
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T9
+- **status:** done
+
+**Did**
+- Added `--ignored` flag to `captureWorkspaceState` git status call in `single-run.ts` — gitignored files are now detected in `dirtyFiles` and `filesChanged`
+- Added 3 safety fixture integration tests in `single-run.test.ts`:
+  1. **ignored-file write**: creates `.gitignore` with `*.log`, mock writes `agent.log`, verifies it appears in `filesChanged` and `dirtyAfter`
+  2. **outside-workspace sentinel**: creates sentinel file outside the repo, runs plan mode, verifies sentinel unchanged and workspace clean
+  3. **home-dir sentinel**: weak adapter with `"advisory"` enforcement is rejected by `canBackControlMode` gate, home sentinel unchanged
+
+**Decided**
+- `--ignored` is safe to add unconditionally because git porcelain `!!` entries are parsed correctly by the existing `parsePorcelainStatus` (handles any 2-char code)
+- The sentinel tests verify the contract at the orchestrator level: (1) the workspace capture catches all file changes including ignored, (2) plan mode passes the `canBackControlMode` gate for capable adapters, (3) weak adapters are rejected before any run threatens sentinel files
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 729 passed / 61 files (+3 new)
+- Red-check 1: removed `--ignored` → "ignored-file write" test fails (`expected [] to include 'agent.log'`). Restored.
+- Red-check 2: removed `canBackControlMode` guard → "home-dir sentinel" test resolves instead of rejecting. Restored.
+
+### S3-REVIEW — tech-lead audit of Sprint 3
+- **agent:** Claude (Opus 4.8), acting as tech lead
+- **time:** 2026-07-25 → 2026-07-25
+- **branch:** s3/approval-lifecycle
+- **task(s):** S3-T1..T9 (review), fixes to run.ts + safety fixture + PROGRESS.md
+- **status:** done
+
+**Did**
+- Gates on the branch: typecheck clean, 729 tests / 61 files.
+- Verified the safety-critical claims by mutating production code, not by
+  reading the log. Fail-closed auto-deny is real (removing the listener check
+  fails `auto-denies a request when no SSE subscriber is watching`).
+  Review-before-apply genuinely blocks on a promise, sets `pending_approval`,
+  and emits the diff. The Autopilot deny list matches `docs/15` §2.5 exactly.
+
+**Found & fixed**
+- **The plan-mode gate checked the wrong agent in Co-lab.** `run.ts` validated
+  only the lead's `readOnlyEnforcement`. In Co-lab the *worker* is the agent
+  that edits files, so a plan-mode run with an `advisory` worker passed the gate
+  and executed. Fixed to check both roles; red-checked (dropping the worker from
+  the loop lets the run complete instead of rejecting).
+- **One of the three S3-T9 safety fixtures was vacuous.** The
+  "outside-workspace sentinel" created a file outside the repo, never told the
+  adapter where it was, and asserted it was unchanged — so it passed with the
+  plan-mode gate removed entirely. Proven by mutation: with the gate gone, the
+  home-dir fixture failed and this one still passed. Rewritten to have the mock
+  actually write outside the workspace, which surfaces the real, verified
+  limitation: Bremio does not sandbox the filesystem, `captureWorkspaceState`
+  only looks inside `repoPath`, so an outside write is invisible to its
+  reporting. Containment is the provider's sandbox. That is now pinned rather
+  than papered over.
+- **`PROGRESS.md` had lost its own structure.** The "How this file is
+  structured" and "Block template" headings were gone, an S2-T3 block sat
+  between the intro and the remaining bullets, and Sprint 3's blocks were
+  prepended above everything with no `## Sprint 3` heading. Reassembled in
+  order; all 22 blocks preserved verbatim. Second sprint running where a
+  coordination file was structurally damaged — the template is what keeps
+  parallel agents consistent, so losing it degrades every later block.
+
+**Decided**
+- Merged. Nothing found is a safety regression; the two structural findings
+  below are scheduled rather than fixed here because both need a decision.
+- **`packages/approval` is imported by nothing.** 567 LOC plus 934 test LOC
+  implementing an in-memory engine, while the daemon re-implements the same
+  state machine — scope, expiry, revoke, consume, precedence — over SQLite.
+  Two sources of truth for one domain, free to drift. Scheduled as S4-T9;
+  deleting ~1,500 lines of tested work is the user's call, not mine.
+- **The action digest is cosmetic where it is actually used.** `#startReview`
+  passes the literal `sha256:worktree-${runId}` — not a hash of anything — and
+  `resolvePendingApproval` verifies nothing. The anti-substitution property
+  S3-T1 exists for is therefore absent at the one production call site.
+  `ActionDigest.create` appears only in tests. Scheduled as S4-T10.
+- S3-T5 and S3-T6 shipped without their own PROGRESS blocks (their work is
+  inside T3/T4's commits). Noted, not reconstructed.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 731 passed / 61 files (+2 worker-gate tests).
+- `corepack pnpm release:check` — PASS.
+- Red-check A: worker dropped from the control-mode loop → plan-mode run with an
+  `advisory` worker resolves instead of rejecting. Restored.
+- Red-check B: `hasListener` forced true → fail-closed auto-deny test fails.
+  Restored.
+- Red-check C: plan-mode gate removed → home-dir fixture fails, outside-workspace
+  fixture still passes, which is what identified it as vacuous. Restored.
 

@@ -146,16 +146,24 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
 
   const controlMode = opts.controlMode ?? "autopilot";
   if (controlMode !== "autopilot") {
-    const leadCaps = capabilitiesByAgent.get(leadId);
-    if (leadCaps) {
+    // Both roles are checked, not just the lead. In Co-lab the *worker* is the
+    // agent that edits files, so gating only the lead would check the one
+    // participant that mostly reads and wave through the one that writes.
+    for (const [role, agentId] of [
+      ["lead", leadId],
+      ["worker", workerId],
+    ] as const) {
+      if (!agentId) continue;
+      const caps = capabilitiesByAgent.get(agentId);
+      if (!caps) continue;
       const capCheck = canBackControlMode(
         controlMode,
-        leadCaps.readOnlyEnforcement,
+        caps.readOnlyEnforcement,
         "isolated-worktree",
       );
       if (!capCheck.ok) {
         throw new Error(
-          `lead "${leadId}" cannot run in ${controlMode} mode: ${capCheck.reason}`,
+          `${role} "${agentId}" cannot run in ${controlMode} mode: ${capCheck.reason}`,
         );
       }
     }
