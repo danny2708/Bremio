@@ -753,6 +753,33 @@ Rules:
 - Red-check A: SSE pathname matching with query string — fake daemon's earlier `endsWith("/events")` failed for `?afterSeq=0`; switched to URL pathname-based matching
 - Red-check B: cancel test's standalone server missing `/health` — `connect()` threw `DaemonUnavailableError`; added `/health` route
 
+### S4-T3 — SSE rendering + cancellation parity with the in-process path
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T14:55 → 2026-07-26T15:44
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T3
+- **status:** done
+
+**Did**
+- Added `renderRunEvent()` pure function in `apps/cli/src/ui.ts` that maps daemon `RunEvent` objects through the same `renderEvent()` + `formatEventView()` pipeline as the in-process path, giving parity in output format
+- Rewrote `runViaDaemon()` in `apps/cli/src/index.ts` to use `renderRunEvent()` for rich SSE event rendering instead of raw kind+message output
+- Matched cancellation messages exactly to in-process path: `"⚠ cancelling run (Ctrl+C again to force)…"` (was `"⚠ cancelling run…"`)
+- Added post-stream run summary via `client.runDetail()` — displays status glyph and file count after stream ends
+- Added `--json` mode support to daemon path: collects all events into an array, fetches final run detail, prints `{ run, events }` as JSON
+- Added 7 unit tests for `renderRunEvent()` covering: known events through data pipeline, unknown kind fallback, failed→error mapping, tool_use/tool_result with data, started type, lead default fallback
+- Updated `TaskStatus` import in `index.ts` for `statusGlyph()` call
+
+**Decided**
+- `renderRunEvent()` lives in `ui.ts` (alongside `formatEventView()`) rather than inline, so it's testable without mocking the daemon
+- High-level daemon event kinds ("status", "lead", "plan", "finished") are not known to `renderEvent()` so they render as `[kind]` fallback — same behavior as `assembleTaskLanes()` in the event-view package; the important parity is that `task-event` with embedded agent data goes through the full agent rendering pipeline
+- `--json` mode in daemon path buffers all events then prints at end, which trades real-time output for a clean JSON report — acceptable for scripting use
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 752 passed / 62 files (+7 new renderRunEvent tests)
+- Red-check A: removed `"failed" → "error"` mapping guard → `renderRunEvent({ kind: "failed", message: "connection refused" })` returns `[failed]` instead of `✗ connection refused`. Restored.
+- Red-check B: removed `dataObj` branch guard → `renderRunEvent` with tool_use in data falls back to message text `"Wrote src/index.ts"` instead of rich output `"→ write src/index.ts"`. Restored.
+
 ### S3-REVIEW — tech-lead audit of Sprint 3
 - **agent:** Claude (Opus 4.8), acting as tech lead
 - **time:** 2026-07-25 → 2026-07-25

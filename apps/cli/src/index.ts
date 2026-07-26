@@ -24,7 +24,7 @@ import {
   type SingleRunHooks,
 } from "@bremio/orchestrator";
 import { validateCombination, type WorkspaceStrategy } from "@bremio/policy";
-import { ExecutionModeSchema, type ReasoningLevel } from "@bremio/protocol";
+import { ExecutionModeSchema, type ReasoningLevel, type TaskStatus } from "@bremio/protocol";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
   defaultAqtDatabasePath,
@@ -41,6 +41,7 @@ import {
   DaemonClient,
   DaemonUnavailableError,
   ProtocolMismatchError,
+  type RunEvent,
 } from "@bremio/daemon-client";
 import { mergeCommand } from "./merge";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
@@ -51,7 +52,7 @@ import { sessionCommandFromCli } from "./session";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
 import { renderEvent } from "@bremio/event-view";
-import { c, formatEventView, printPlan, printReport, statusGlyph } from "./ui";
+import { c, formatEventView, printPlan, printReport, renderRunEvent, statusGlyph } from "./ui";
 
 declare const __BREMIO_VERSION__: string | undefined;
 const VERSION = typeof __BREMIO_VERSION__ === "string"
@@ -388,7 +389,7 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
   }
 }
 
-async function runViaDaemon(values: Values, prompt: string, mode: "single" | "team"): Promise<boolean> {
+async function runViaDaemon(values: Values, prompt: string, mode: "single" | "team", json: boolean): Promise<boolean> {
   const client = new DaemonClient();
   try {
     await client.connect();
@@ -416,6 +417,7 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
   const ac = new AbortController();
   let cancelling = false;
   let runId: string | undefined;
+  const collectedEvents: RunEvent[] = [];
 
   const onInt = () => {
     if (cancelling) {
@@ -423,7 +425,7 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
       process.exit(130);
     }
     cancelling = true;
-    console.error(c.yellow("\n⚠ cancelling run…"));
+    console.error(c.yellow("\n⚠ cancelling run (Ctrl+C again to force)…"));
     ac.abort();
     if (runId) client.cancelRun(runId).catch(() => {});
   };
@@ -433,18 +435,40 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
   try {
     const { run } = await client.startRun(request);
     runId = run.id;
-    console.log(c.dim(`run started via daemon (id: ${runId})`));
+    if (!json) console.log(c.dim(`run started via daemon (id: ${runId})`));
 
     await client.streamEvents(runId, (event) => {
-      const line = event.message ? `${c.bold(event.kind)} ${event.message}` : c.bold(event.kind);
-      console.log(line);
+      if (json) {
+        collectedEvents.push(event);
+        return;
+      }
+      console.log(renderRunEvent(event));
     }, ac.signal);
   } catch (err) {
     if (!ac.signal.aborted) {
       console.error(c.red(`\ndaemon run failed: ${(err as Error).message}`));
+      return true;
     }
+    // Aborted due to cancellation — stream stop is expected
   } finally {
     process.off("SIGINT", onInt);
+  }
+
+  // Post-stream: show run summary
+  if (runId) {
+    try {
+      const detail = await client.runDetail(runId, repoPath);
+      if (json) {
+        console.log(JSON.stringify({ run: detail.run, events: collectedEvents }, null, 2));
+      } else if (detail.run?.status) {
+        const glyph = statusGlyph(detail.run.status as TaskStatus);
+        const events = detail.events;
+        const fileCount = events?.filter((e) => e.kind === "task-complete").length ?? 0;
+        console.log(`  ${glyph} ${c.dim(`${fileCount > 0 ? `${fileCount} file(s), ` : ""}run: ${detail.run.id}`)}`);
+      }
+    } catch {
+      // best-effort; the daemon might have shut down already
+    }
   }
 
   return true;
@@ -607,9 +631,9 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   }
 
   // S4-T2: attempt run via daemon when available; fall back to in-process.
-  if (mode && await runViaDaemon(values, prompt, mode)) return;
-
   const json = values.json === true;
+  if (mode && await runViaDaemon(values, prompt, mode, json)) return;
+
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
   const registry = createRegistry([
     new ClaudeAdapter(),
