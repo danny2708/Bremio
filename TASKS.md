@@ -102,7 +102,7 @@ by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 | [x] | S4-T2 | `bremio run` starts runs through the daemon | L | S4-T1 | — |
 | [x] | S4-T3 | SSE rendering + cancellation parity with the in-process path | M | S4-T2 | — |
 | [x] | S4-T4 | Default-path cutover; `--standalone` marks runs `not-shared` | M | S4-T3 | — |
-| [ ] | S4-T5 | Ephemeral daemon for CI/one-shot (same protocol, no 2nd impl) | M | S4-T2 | — |
+| [x] | S4-T5 | Ephemeral daemon for CI/one-shot (same protocol, no 2nd impl) | M | S4-T2 | — |
 | [ ] | S4-T6 | Import `.bremio/runs/*/report.json` as `legacy-import`, idempotent | M | S4-T2 | ‖ S4-T5 |
 | [ ] | S4-T7 | Daemon startup reconciliation → `interrupted` / `supervision_lost` | M | S4-T1 | ‖ S4-T5 |
 | [ ] | S4-T8 | Multi-client SSE fan-out + replay | M | S4-T1 | ‖ S4-T7 |

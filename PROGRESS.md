@@ -872,3 +872,29 @@ Rules:
 - Red-check C: plan-mode gate removed → home-dir fixture fails, outside-workspace
   fixture still passes, which is what identified it as vacuous. Restored.
 
+### S4-T5 — Ephemeral daemon for CI/one-shot (same protocol, no 2nd impl)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T16:25 → 2026-07-26T17:10
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T5
+- **status:** done
+
+**Did**
+- Created `apps/cli/src/ephemeral.ts` — `runViaEphemeralDaemon()` creates a temp SQLite store, starts `startDaemonServer` in-process on an ephemeral port, writes endpoint JSON, creates `DaemonClient` with custom `endpointPath`, POSTs the run, streams SSE events with same rendering + cancellation as persistent daemon path, then cleans up temp files.
+- Modified the cutover in `index.ts`: when persistent daemon is unavailable, falls through to `runViaEphemeralDaemon()` instead of erroring. Last resort still errors with `--standalone` hint.
+- Extracted `runViaEphemeralDaemon` into its own module for testability.
+- 3 new tests: success path (daemon + run + cleanup), setup failure (cleanup on startDaemonServer error), connect failure (cleanup on client error). All verify temp directory is cleaned up in `finally`.
+- Error handling: outer try/catch catches setup errors (startDaemonServer, connect), logs them, returns `false`. Inner try/catch handles run errors the same way as `runViaDaemon`.
+
+**Decided**
+- Ephemeral daemon runs in-process (not a child process): same binary, same version, no IPC boundary to manage. Uses same `startDaemonServer` as the persistent daemon — "same protocol, no 2nd implementation" per docs/15 §5.
+- Temp dir, SQLite DB, and endpoint file are all created under `os.tmpdir()` and cleaned up in a `finally` block.
+- `tmpRoot` override parameter for tests to avoid polluting real `os.tmpdir()`.
+- Mock `@bremio/daemon` and `@bremio/daemon-client` in tests rather than starting a real daemon (which would need a real port, adapter, etc.).
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 761 passed / 63 files (+1 file, +3 tests, was 758).
+- Red-check A: removed outer try/catch → "startDaemonServer throws" and "connect throws" tests both throw unhandled `Error` instead of returning `false`. Restored.
+- Red-check B: removed `fs.rm(tmpDir)` from finally → all 3 cleanup tests fail (temp dir left behind). Restored.
+

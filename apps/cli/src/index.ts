@@ -53,6 +53,7 @@ import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
 import { renderEvent } from "@bremio/event-view";
 import { c, formatEventView, printPlan, printReport, renderRunEvent, statusGlyph, tagStandalone } from "./ui";
+import { runViaEphemeralDaemon } from "./ephemeral";
 
 declare const __BREMIO_VERSION__: string | undefined;
 const VERSION = typeof __BREMIO_VERSION__ === "string"
@@ -633,11 +634,27 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     }
   }
 
-  // S4-T4: daemon is the default path.  Without --standalone, the daemon must
-  // be available; with --standalone, skip the daemon and run in-process.
+  // S4-T5: try the persistent daemon first; if unavailable, start an ephemeral
+  // daemon in-process (same protocol, no 2nd implementation — docs/15 §5).
+  // Only --standalone skips both and runs in-process directly.
   const json = values.json === true;
   if (!values.standalone) {
     if (mode && await runViaDaemon(values, prompt, mode, json)) return;
+    if (mode && await runViaEphemeralDaemon({
+      mode,
+      repoPath: path.resolve(values.repo as string),
+      prompt,
+      agentId: (mode === "single" ? values.agent : values.lead) as string,
+      ...(values.worker ? { workerId: values.worker } : {}),
+      ...(values.model ? { model: values.model } : {}),
+      ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
+      ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
+      ...(values.concurrency !== undefined ? { maxConcurrency: Number(values.concurrency) } : {}),
+      ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
+      ...(values["workspace-strategy"]
+        ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
+        : values.isolated ? { workspaceStrategy: "isolated-worktree" as const } : {}),
+    }, json, VERSION)) return;
     console.error(c.red("error: the Bremio daemon is not running."
       + "\n  Start it with:  bremio daemon start"
       + "\n  Or bypass it:   bremio run --standalone ..."));
