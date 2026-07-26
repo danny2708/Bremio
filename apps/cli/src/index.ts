@@ -34,10 +34,14 @@ import {
 } from "@bremio/quota";
 import {
   DaemonAlreadyRunningError,
-  daemonStatus,
   startDaemon,
   stopDaemon,
 } from "@bremio/daemon";
+import {
+  DaemonClient,
+  DaemonUnavailableError,
+  ProtocolMismatchError,
+} from "@bremio/daemon-client";
 import { mergeCommand } from "./merge";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
 import { collectComparison, printComparison, type ComparisonSide } from "./compare";
@@ -977,15 +981,23 @@ async function runDaemonForeground(): Promise<number> {
 }
 
 async function reportDaemonStatus(): Promise<number> {
-  const status = await daemonStatus();
-  if (status.running) {
-    console.log(`${c.green("running")} — 127.0.0.1:${status.endpoint.port} (pid ${status.endpoint.pid})`);
-    console.log(c.dim(`  version ${status.endpoint.daemonVersion} · protocol ${status.endpoint.protocolVersion}`));
-    console.log(c.dim(`  started ${status.endpoint.startedAt}`));
+  const client = new DaemonClient();
+  try {
+    const endpoint = await client.connect();
+    const meta = await client.handshake();
+    console.log(`${c.green("running")} — 127.0.0.1:${endpoint.port} (pid ${endpoint.pid})`);
+    console.log(c.dim(`  version ${meta.daemonVersion} · protocol ${meta.protocolVersion}`));
+    if (endpoint.startedAt) console.log(c.dim(`  started ${endpoint.startedAt}`));
+    return 0;
+  } catch (err) {
+    if (err instanceof ProtocolMismatchError) {
+      console.error(err.message);
+      return 1;
+    }
+    const detail = err instanceof DaemonUnavailableError ? err.message : String(err);
+    console.log(`${c.yellow("not running")} — ${detail}`);
     return 0;
   }
-  console.log(`${c.yellow("not running")} — ${status.detail}`);
-  return status.staleEndpoint ? 1 : 0;
 }
 
 async function stopDaemonCommand(): Promise<number> {

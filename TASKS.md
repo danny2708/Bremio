@@ -98,7 +98,7 @@ by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S4-T1 | Shared daemon client + version/capability handshake | M | S1-T1 | — |
+| [x] | S4-T1 | Shared daemon client + version/capability handshake | M | S1-T1 | — |
 | [ ] | S4-T2 | `bremio run` starts runs through the daemon | L | S4-T1 | — |
 | [ ] | S4-T3 | SSE rendering + cancellation parity with the in-process path | M | S4-T2 | — |
 | [ ] | S4-T4 | Default-path cutover; `--standalone` marks runs `not-shared` | M | S4-T3 | — |

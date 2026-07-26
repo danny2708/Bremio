@@ -697,6 +697,35 @@ Rules:
 - Red-check 1: removed `--ignored` → "ignored-file write" test fails (`expected [] to include 'agent.log'`). Restored.
 - Red-check 2: removed `canBackControlMode` guard → "home-dir sentinel" test resolves instead of rejecting. Restored.
 
+## Sprint 4 — One source of truth
+
+### S4-T1 — Shared daemon client + version/capability handshake
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T15:00 → open
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T1
+- **status:** done
+
+**Did**
+- Created `packages/daemon-client/` (new shared package) with:
+  - `DaemonClient` class: `connect()` (discover endpoint + health check), `waitUntilReady()` (poll `/ready`), `handshake()` (GET `/meta` + `checkProtocolCompatibility`), `get()`/`post()` authenticated HTTP helpers
+  - Error types: `DaemonUnavailableError`, `ProtocolMismatchError` (with `RemedyKind` for actionable diagnostics)
+  - `daemonEndpointPath()` — canonical path for `~/.bremio/daemon.json`
+  - 10 tests: connect success, missing endpoint, unresponsive daemon, handshake match, daemon too old, client too old, waitUntilReady, endpoint caching, endpoint+meta accessors, default constructor
+- Added path alias and vitest alias for `@bremio/daemon-client`
+- Refactored CLI `reportDaemonStatus()` to use `DaemonClient` — now performs version/capability handshake alongside status display
+- Updated `SPRINT-LOG.md`
+
+**Decided**
+- The VS Code extension keeps its own `BremioClient` (zero-dep constraint per docs/14 M1-T1 design decision) — the shared package is for the CLI and future clients
+- `ProtocolMismatchError` extends `DaemonUnavailableError` so callers can catch the base error and optionally inspect the specific mismatch
+- The handshake delegates to `checkProtocolCompatibility` from `@bremio/protocol` — the canonical implementation, not a copy
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 741 passed / 62 files (+10 new daemon-client tests, +1 new test file)
+- Red-check: removed the `if (!compatibility.compatible)` guard in `handshake()` → both "daemon too old" and "client too old" tests resolve instead of throwing `ProtocolMismatchError`. Restored.
+
 ### S3-REVIEW — tech-lead audit of Sprint 3
 - **agent:** Claude (Opus 4.8), acting as tech lead
 - **time:** 2026-07-25 → 2026-07-25

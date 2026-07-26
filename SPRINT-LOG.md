@@ -1741,14 +1741,15 @@ configuration production never reaches.
 
 **Typecheck:** clean. **Test:** 511/511 across 55 files.
 
+## S4-T1 — packages/daemon-client
 
+**Done:** Created `@bremio/daemon-client` — a shared package exposing `DaemonClient` (connect, waitUntilReady, handshake, get, post), `DaemonUnavailableError`, `ProtocolMismatchError`, and `daemonEndpointPath`. The CLI's `bremio daemon status` now uses `DaemonClient` instead of importing `daemonStatus()` from `@bremio/daemon`, gaining the version/capability handshake. The VS Code extension's `BremioClient` is a separate, zero-dep implementation that predates this package and is kept as-is for the extension's isolation requirements.
 
+**Hard:** None — the extraction was straightforward because the extension's client.ts already had a clean, well-tested design to follow.
 
+**Assumed:** The extension will keep its own `BremioClient` indefinitely (zero-dep constraint for the extension host). The CLI is the consumer of the shared package. Tested with a fake daemon server.
 
-
-
-
-
+**Deviations:** None.
 
 
 
