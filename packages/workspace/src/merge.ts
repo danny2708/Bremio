@@ -1,4 +1,17 @@
+import { mkdtempSync, writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { simpleGit, type SimpleGit } from "simple-git";
+
+/** Raised when applying a patch conflicts; the apply is aborted first. */
+export class ApplyConflictError extends Error {
+  constructor(
+    public readonly files: string[],
+  ) {
+    super(`apply hit conflicts in: ${files.join(", ") || "(unknown files)"}`);
+    this.name = "ApplyConflictError";
+  }
+}
 
 /** Raised when merging a task branch hits conflicts; the merge is aborted first. */
 export class MergeConflictError extends Error {
@@ -194,6 +207,102 @@ export class MergeManager {
     } catch {
       // branch may already be gone
     }
+  }
+
+  /** Require a clean working tree (no uncommitted tracked changes). */
+  private async assertCleanTree(): Promise<void> {
+    if (await this.hasTrackedChanges()) {
+      throw new MergeStateError(
+        "the working tree has uncommitted changes to tracked files. Commit or stash them first.",
+      );
+    }
+  }
+
+  /** Write a patch to a temp file and return the path. */
+  private writeTempPatch(patch: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "bremio-patch-"));
+    const file = join(dir, "patch.diff");
+    writeFileSync(file, patch, "utf8");
+    return file;
+  }
+
+  /** Run `git apply` with a temp patch file and report conflicts. */
+  private async runApply(args: string[], patch: string): Promise<{ output: string }> {
+    const tmpFile = this.writeTempPatch(patch);
+    try {
+      let applyError: unknown;
+      let output = "";
+      try {
+        output = await this.git.raw([...args, tmpFile]);
+      } catch (err) {
+        applyError = err;
+      }
+
+      const conflicted = (await this.git.status()).conflicted;
+      if (conflicted.length > 0) {
+        try {
+          await this.git.raw(["apply", "--abort"]);
+        } catch {
+          // best-effort restore
+        }
+        throw new ApplyConflictError(conflicted);
+      }
+      if (applyError) throw applyError;
+
+      return { output: output.trim() };
+    } finally {
+      try {
+        unlinkSync(tmpFile);
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  }
+
+  /**
+   * Apply a unified diff patch to the working tree via `git apply`.
+   * On conflict, aborts and throws ApplyConflictError.
+   */
+  async applyPatch(patch: string): Promise<{ output: string }> {
+    await this.assertCleanTree();
+    return this.runApply(["apply"], patch);
+  }
+
+  /**
+   * Reverse-apply a unified diff (revert changes) via `git apply --reverse`.
+   * On conflict, aborts and throws ApplyConflictError.
+   */
+  async revertPatch(patch: string): Promise<{ output: string }> {
+    await this.assertCleanTree();
+    return this.runApply(["apply", "--reverse"], patch);
+  }
+
+  /**
+   * Extract the hunks for a single file from a unified diff patch.
+   * Returns a patch that applies only to that file, or empty string if
+   * the file is not mentioned in the patch.
+   */
+  extractFilePatch(patch: string, filePath: string): string {
+    const normalizedPath = filePath.replace(/\\/g, "/");
+    const lines = patch.split("\n");
+    const result: string[] = [];
+    let inTarget = false;
+
+    for (const line of lines) {
+      if (line.startsWith("diff --git ")) {
+        inTarget = line.includes(normalizedPath);
+      }
+      if (inTarget) {
+        result.push(line);
+      }
+    }
+
+    // Remove the trailing empty line if present
+    while (result.length > 0 && result[result.length - 1] === "") {
+      result.pop();
+    }
+    // git apply requires a trailing newline
+    return result.join("\n") + (result.length > 0 ? "\n" : "");
   }
 }
 

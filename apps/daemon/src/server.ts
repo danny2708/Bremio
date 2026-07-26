@@ -18,6 +18,7 @@ import { MergeManager } from "@bremio/workspace";
 import { RunRegistry, defaultAdapters, type SessionEvent } from "./runs";
 import { isTerminal } from "./storage";
 import { mergeRun } from "./merge";
+import { applyRunPatch, revertRunPatch } from "./apply";
 import { loadReportByRunId } from "@bremio/orchestrator";
 
 /** Requests carry a prompt at most; anything larger is malformed or hostile. */
@@ -48,6 +49,13 @@ const MergeSchema = z.object({
   runId: z.string().min(1).optional(),
   base: z.string().min(1).optional(),
   strategy: z.enum(["merge", "cherry-pick"]).optional(),
+});
+
+const ApplyRevertSchema = z.object({
+  repoPath: z.string().min(1),
+  runId: z.string().min(1),
+  taskId: z.string().optional(),
+  filePath: z.string().optional(),
 });
 
 export interface DaemonServerOptions {
@@ -152,6 +160,8 @@ async function handle(
         merge: true,
         retry: true,
         approvals: true,
+        apply: true,
+        revert: true,
         // No adapter exposes a safe mid-run resume, so this stays false rather
         // than offering a button that would silently start over.
         resume: false,
@@ -334,6 +344,32 @@ async function handle(
     // A refused merge is a normal answer, not a server fault: the gate and the
     // dirty-tree checks are expected outcomes the UI must render.
     return sendJson(res, outcome.ok ? 200 : 409, outcome);
+  }
+
+  if (method === "POST" && route === "/apply") {
+    const parsed = ApplyRevertSchema.safeParse(await readJsonBody(req));
+    if (!parsed.success) {
+      return sendJson(res, 400, { error: "invalid apply request", detail: parsed.error.issues });
+    }
+    try {
+      const outcome = await applyRunPatch(parsed.data);
+      return sendJson(res, outcome.ok ? 200 : 409, outcome);
+    } catch (err) {
+      return sendJson(res, 500, { error: (err as Error).message });
+    }
+  }
+
+  if (method === "POST" && route === "/revert") {
+    const parsed = ApplyRevertSchema.safeParse(await readJsonBody(req));
+    if (!parsed.success) {
+      return sendJson(res, 400, { error: "invalid revert request", detail: parsed.error.issues });
+    }
+    try {
+      const outcome = await revertRunPatch(parsed.data);
+      return sendJson(res, outcome.ok ? 200 : 409, outcome);
+    } catch (err) {
+      return sendJson(res, 500, { error: (err as Error).message });
+    }
   }
 
   // ── Approval routes ────────────────────────────────────────────────

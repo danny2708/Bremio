@@ -233,6 +233,12 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
       case "viewDiff":
         await viewDiff(String(message.runId ?? ""));
         return;
+      case "applyDiff":
+        await applyDiff(String(message.runId ?? ""));
+        return;
+      case "revertDiff":
+        await revertDiff(String(message.runId ?? ""));
+        return;
       case "merge":
         await merge(String(message.runId ?? ""));
         return;
@@ -604,4 +610,34 @@ async function merge(runId: string): Promise<void> {
       : (result.error ?? "merge refused"),
   });
   await sendRuns();
+}
+
+/** Apply a run's stored diff to the working tree. */
+async function applyDiff(runId: string): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) throw new Error("no workspace folder is open");
+
+  const result = await client.applyPatch({ repoPath, runId });
+  post({
+    type: "applyResult",
+    ok: result.ok,
+    detail: result.ok
+      ? "Changes applied."
+      : (result.error ?? "apply refused"),
+  });
+}
+
+/** Revert a run's stored diff from the working tree. */
+async function revertDiff(runId: string): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) throw new Error("no workspace folder is open");
+
+  const result = await client.revertPatch({ repoPath, runId });
+  post({
+    type: "revertResult",
+    ok: result.ok,
+    detail: result.ok
+      ? "Changes reverted."
+      : (result.error ?? "revert refused"),
+  });
 }

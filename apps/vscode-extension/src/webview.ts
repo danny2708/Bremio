@@ -382,8 +382,12 @@ export function renderDiffViewer(diff: { stat: string; patch: string }): string 
     + '<div class="diff-header"><span class="card-title">Diff</span></div>'
     + statHtml
     + '<pre class="diff-patch">' + patchHtml + "</pre>"
+    + '<div class="row" style="margin-top:8px">'
+    + '<button class="ghost" data-action="apply-diff">Apply</button>'
+    + '<button class="ghost" data-action="revert-diff">Revert</button>'
+    + '<div class="spacer"></div>'
     + '<button class="ghost" data-action="back-to-gate">Back</button>'
-    + "</div>";
+    + "</div></div>";
 }
 
 export function renderLogLine(event: { kind?: string; taskId?: string; message?: string; data?: unknown }): {
@@ -1076,6 +1080,11 @@ window.addEventListener("message", (event) => {
   if (message.type === "showDiff") {
     $("gate").innerHTML = renderDiffViewer(message.diff);
   }
+  if (message.type === "applyResult" || message.type === "revertResult") {
+    const cls = message.ok ? "warn" : "bad";
+    $("gate").insertAdjacentHTML("beforeend",
+      '<div class="banner ' + cls + '">' + escapeHtml(message.detail) + "</div>");
+  }
 });
 
 function renderGate(gate, runId) {
@@ -1086,9 +1095,12 @@ function renderGate(gate, runId) {
   }
   return '<div class="card"><div class="card-head"><span class="card-title">Quality gate passed</span>'
     + '<span class="badge ok">ready</span></div>'
-    + '<div class="secondary">Review the diff, then merge into the base branch.</div>'
+    + '<div class="secondary">Review the diff, then apply, revert or merge changes.</div>'
     + '<div class="row" style="margin-top:10px">'
     + '<button class="ghost" data-action="diff" data-run="' + escapeHtml(runId) + '">View diff</button>'
+    + '<button class="ghost" data-action="apply-diff">Apply</button>'
+    + '<button class="ghost" data-action="revert-diff">Revert</button>'
+    + '<div class="spacer"></div>'
     + '<button class="primary" data-action="merge" data-run="' + escapeHtml(runId) + '">Merge</button>'
     + "</div></div>";
 }
@@ -1297,6 +1309,11 @@ document.addEventListener("click", (event) => {
       sessionId: button.dataset.session,
       attachments: [],
     });
+    return;
+  }
+  if (button.dataset.action === "apply-diff" || button.dataset.action === "revert-diff") {
+    const runId = activeRunId;
+    if (runId) vscode.postMessage({ type: button.dataset.action === "apply-diff" ? "applyDiff" : "revertDiff", runId });
     return;
   }
   const runId = button.dataset.run;

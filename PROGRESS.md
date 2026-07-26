@@ -1180,3 +1180,36 @@ Rules:
 
 **Blocked / handed off**
 - None
+
+### S5-T5 — Apply / revert per file and per task
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T23:25 → 2026-07-26T23:45
+- **branch:** s5/change-transparency
+- **task(s):** S5-T5
+- **status:** done
+
+**Did**
+- Added `ApplyConflictError` class and `applyPatch()`, `revertPatch()`, `extractFilePatch()` methods to `MergeManager` in `packages/workspace/src/merge.ts` — applies/reverses unified diff patches via `git apply`/`git apply --reverse` using temp files (simple-git's `.raw()` does not support stdin), with clean-tree precondition and conflict detection
+- Added `apply.ts` in the daemon — `resolvePatch()` extracts the diff from a stored report (Single or Team), optionally filtered by `taskId` and/or `filePath`; `applyRunPatch()` and `revertRunPatch()` delegate to `MergeManager`
+- Added `POST /apply` and `POST /revert` routes in `apps/daemon/src/server.ts` with `ApplyRevertSchema` validation, returning `{ ok, output?, error? }`
+- Added `apply` and `revert` capabilities to `/meta` endpoint
+- Added `applyPatch()` and `revertPatch()` methods to both the VS Code extension client (`apps/vscode-extension/src/client.ts`) and the daemon-client package (`packages/daemon-client/src/client.ts`)
+- Updated the panel: "Apply" and "Revert" buttons in the quality-gate card and the diff viewer; `applyDiff`/`revertDiff` message handlers in `extension.ts`; `applyResult`/`revertResult` display in the inline webview script
+- Added `bremio apply <runId> [--task <taskId>] [--file <path>]` and `bremio revert <runId> [--task <taskId>] [--file <path>]` CLI commands
+
+**Decided**
+- Apply/revert operate on the working tree via `git apply`/`git apply --reverse`, not on isolated worktrees — the merge endpoint already handles worktree branch integration. This approach works for both direct-workspace runs (re-applying or reverting) and as a lighter alternative to merge for single-file changes.
+- `extractFilePatch` identifies file sections by `diff --git` lines — a simple but reliable approach for unified-diff format.
+- Temp files are used for applying patches because simple-git's `.raw()` does not support stdin — files are written to `os.tmpdir()` and cleaned up in a `finally` block.
+- Capacity caps are set to `apply: true, revert: true` in the daemon's `/meta` to match the convention.
+
+**Verification**
+- `corepack pnpm typecheck` — clean (root + extension)
+- `corepack pnpm vitest run packages/workspace/src/merge.test.ts` — 15/15 passed (includes 7 new tests: apply/unidiff, revert, dirty-tree guard, conflict, double-apply, extractFilePatch multi-file, extractFilePatch missing)
+- `corepack pnpm vitest run apps/vscode-extension/src/extension.test.ts` — 56/56 passed
+- `corepack pnpm test` — 739 passed / 63 files (732 + 7 new workspace tests)
+- Red-check: removed the `assertCleanTree()` call from `applyPatch` → dirty-tree test fails with `expected MergeStateError` → restored
+- Red-check: replaced `filePath.includes(normalizedPath)` with a hard-coded `false` in `extractFilePatch` → the "extracts hunks" test returns an empty result → restored
+
+**Blocked / handed off**
+- None

@@ -360,6 +360,32 @@ export class BremioClient {
     });
   }
 
+  applyPatch(request: {
+    repoPath: string;
+    runId: string;
+    taskId?: string;
+    filePath?: string;
+  }): Promise<{ ok: boolean; output?: string; error?: string }> {
+    return this.#call("/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
+  revertPatch(request: {
+    repoPath: string;
+    runId: string;
+    taskId?: string;
+    filePath?: string;
+  }): Promise<{ ok: boolean; output?: string; error?: string }> {
+    return this.#call("/revert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
   /**
    * Consume a run's event stream. Resumes from `afterSeq` so a reconnect never
    * replays what the caller already rendered.
