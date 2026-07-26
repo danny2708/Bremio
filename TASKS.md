@@ -94,20 +94,20 @@ by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 
 ---
 
-## Sprint 4 — One source of truth
+## Sprint 4 — One source of truth ✅ COMPLETE
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S4-T1 | Shared daemon client + version/capability handshake | M | S1-T1 | — |
-| [ ] | S4-T2 | `bremio run` starts runs through the daemon | L | S4-T1 | — |
-| [ ] | S4-T3 | SSE rendering + cancellation parity with the in-process path | M | S4-T2 | — |
-| [ ] | S4-T4 | Default-path cutover; `--standalone` marks runs `not-shared` | M | S4-T3 | — |
-| [ ] | S4-T5 | Ephemeral daemon for CI/one-shot (same protocol, no 2nd impl) | M | S4-T2 | — |
-| [ ] | S4-T6 | Import `.bremio/runs/*/report.json` as `legacy-import`, idempotent | M | S4-T2 | ‖ S4-T5 |
-| [ ] | S4-T7 | Daemon startup reconciliation → `interrupted` / `supervision_lost` | M | S4-T1 | ‖ S4-T5 |
-| [ ] | S4-T8 | Multi-client SSE fan-out + replay | M | S4-T1 | ‖ S4-T7 |
-| [ ] | S4-T9 | **Resolve the two approval implementations.** `packages/approval` (567 LOC + 934 test LOC, in-memory) is imported by nothing; the daemon re-implements the same state machine — scope, expiry, revoke, consume, precedence — over SQLite. Two sources of truth for one domain, free to drift. Either delete the package or make the daemon delegate to it. **Needs a decision before starting.** | L | — | ‖ everything |
-| [ ] | S4-T10 | Make the action digest real at its one production call site. `runs.ts` `#startReview` passes the literal `sha256:worktree-<runId>`, so nothing is bound and nothing is verified on apply — the anti-substitution property S3-T1 exists for is not delivered where approvals actually happen. Bind the diff, and verify before merging the worktree. | M | S4-T9 | — |
+| [x] | S4-T1 | Shared daemon client + version/capability handshake | M | S1-T1 | — |
+| [x] | S4-T2 | `bremio run` starts runs through the daemon | L | S4-T1 | — |
+| [x] | S4-T3 | SSE rendering + cancellation parity with the in-process path | M | S4-T2 | — |
+| [x] | S4-T4 | Default-path cutover; `--standalone` marks runs `not-shared` | M | S4-T3 | — |
+| [x] | S4-T5 | Ephemeral daemon for CI/one-shot (same protocol, no 2nd impl) | M | S4-T2 | — |
+| [x] | S4-T6 | Import `.bremio/runs/*/report.json` as `legacy-import`, idempotent | M | S4-T2 | ‖ S4-T5 |
+| [x] | S4-T7 | Daemon startup reconciliation → `interrupted` / `supervision_lost` | M | S4-T1 | ‖ S4-T5 |
+| [x] | S4-T8 | Multi-client SSE fan-out + replay | M | S4-T1 | ‖ S4-T7 |
+| [x] | S4-T9 | **Resolve the two approval implementations.** Deleted `packages/approval` (dead, in-memory, imported by nothing). The daemon's SQLite implementation is the single source of truth. | L | — | ‖ everything |
+| [x] | S4-T10 | Make the action digest real at its one production call site. `runs.ts` `#startReview` passes the literal `sha256:worktree-<runId>`, so nothing is bound and nothing is verified on apply — the anti-substitution property S3-T1 exists for is not delivered where approvals actually happen. Bind the diff, and verify before merging the worktree. | M | S4-T9 | — |
 
 **Sprint gate:** a run started in the CLI appears live in the panel with the same
 run id, and vice versa. No `legacy-` pseudo-sessions remain.
@@ -124,6 +124,8 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 | [ ] | S5-T4 | Panel diff viewer | M | S5-T3 | — |
 | [ ] | S5-T5 | Apply / revert per file and per task | M | S5-T3 | — |
 | [ ] | S5-T6 | Conflict handling when the user edited the same file | M | S5-T2, S5-T5 | — |
+| [ ] | S5-T7 | **Wire `ApprovalGrant` into evaluation, or delete the grant surface.** `evaluate()` returns `overrideableByGrant` and nothing reads it; `consumeApprovalGrant`, `pruneExpiredApprovalGrants` and `expireApprovalRequests` have zero production callers; `consumeApprovalGrant` does not check `expires_at`, so an expired grant is still consumable. `docs/15` §2.5 documents an override path that does not exist. Same shape as S4-T9 — **needs a decision before starting.** | L | — | ‖ everything |
+| [ ] | S5-T8 | `#startReview` files its approval request with `sessionId: runId`, so review approvals are grouped under a session id that is really a run id. `/approval/requests?sessionId=` and the audit log both inherit the mistake. | S | — | ‖ everything |
 
 ---
 

@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { BremioRunReport, RunReport, SingleRunReport } from "@bremio/orchestrator";
-import { formatTaskExecution, type EventView } from "@bremio/event-view";
+import { formatTaskExecution, renderEvent, type EventView } from "@bremio/event-view";
 import type { Plan, TaskStatus } from "@bremio/protocol";
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -34,6 +34,38 @@ export function formatEventView(view: EventView): string {
     case "warn": return c.yellow(view.summary);
     case "notice": return c.dim(view.summary);
     case "info": return view.summary;
+  }
+}
+
+/**
+ * Render a daemon RunEvent through the same {@link renderEvent} pipeline that
+ * the in-process path uses, giving parity in output format between the two.
+ */
+export function renderRunEvent(event: {
+  kind: string;
+  message?: string;
+  data?: unknown;
+}): string {
+  const dataObj =
+    typeof event.data === "object" && event.data !== null
+      ? (event.data as Record<string, unknown>)
+      : undefined;
+  const evType =
+    event.kind === "failed" ? "error"
+      : event.kind === "task-event" ? "message"
+        : event.kind;
+  const agentEv: Parameters<typeof renderEvent>[0] = dataObj
+    ? Object.assign({ type: evType } as { type: string }, dataObj)
+    : { type: evType, text: event.message ?? "", message: event.message };
+  return formatEventView(renderEvent(agentEv));
+}
+
+export function tagStandalone(report: unknown, standalone: boolean | undefined): void {
+  if (standalone && typeof report === "object" && report !== null) {
+    const r = report as Record<string, unknown>;
+    r.standalone = true;
+    r.persistence = "standalone";
+    r.syncStatus = "not-shared";
   }
 }
 

@@ -697,6 +697,140 @@ Rules:
 - Red-check 1: removed `--ignored` → "ignored-file write" test fails (`expected [] to include 'agent.log'`). Restored.
 - Red-check 2: removed `canBackControlMode` guard → "home-dir sentinel" test resolves instead of rejecting. Restored.
 
+## Sprint 4 — One source of truth
+
+### S4-T7 — Daemon startup reconciliation → `interrupted` / `supervision_lost`
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T17:40 → 2026-07-26T17:45
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T7
+- **status:** done
+
+**Did**
+- Added `supervision_lost` to `RunStatus` union and `TERMINAL_STATUSES` in `storage.ts` — a terminal status distinct from `interrupted`, signalling the daemon lost track of a child process that may still be alive.
+- Changed `reconcileOnStartup()` in `runs.ts` to differentiate by prior run status: `running` → `supervision_lost` with `failureCode: "supervision_lost"` and message about child process; `queued`/`cancelling` → `interrupted` with `failureCode: "daemon_restart"`.
+- Updated `RunningDaemon.reconciled` doc in `index.ts` to reflect the split.
+- Modified existing lifecycle test: "marks a running run as supervision_lost, not interrupted". Two new tests: "marks a queued run as interrupted", "marks a cancelling run as interrupted, not supervision_lost".
+- Confirmed existing cancellation test ("reconciles a run stranded mid-cancellation") still expects `interrupted` — unchanged.
+- Added terminal-status test in `storage.test.ts` verifying both `supervision_lost` and `interrupted` are `isTerminal()`.
+- VSCode extension webview does not include `supervision_lost` in its rendering — not fixed in this task (falls back to "bad" badge; acceptable).
+
+**Decided**
+- `supervision_lost` is a separate terminal status (not a subclass of `interrupted`) so that clients can distinguish "daemon died during active execution" from "daemon restarted while the run was queued". The child process of a `supervision_lost` run may still be alive — the daemon just lost the pipe.
+- The VSCode webview type and badge rendering is out of scope: `supervision_lost` falls through to the "bad" badge and shows the failure message, which is not ideal but not broken. Fixing it belongs in a future panel UX task.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 768 passed / 63 files (+2 tests, was 766).
+- Red-check: removed `if (run.status === "running")` branch → "marks a running run as supervision_lost" test fails with `expected 'interrupted' to be 'supervision_lost'`. Restored.
+
+### S4-T1 — Shared daemon client + version/capability handshake
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T15:00 → 2026-07-25T15:10
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T1
+- **status:** done
+
+**Did**
+- Created `packages/daemon-client/` (new shared package) with:
+  - `DaemonClient` class: `connect()` (discover endpoint + health check), `waitUntilReady()` (poll `/ready`), `handshake()` (GET `/meta` + `checkProtocolCompatibility`), `get()`/`post()` authenticated HTTP helpers
+  - Error types: `DaemonUnavailableError`, `ProtocolMismatchError` (with `RemedyKind` for actionable diagnostics)
+  - `daemonEndpointPath()` — canonical path for `~/.bremio/daemon.json`
+  - 10 tests: connect success, missing endpoint, unresponsive daemon, handshake match, daemon too old, client too old, waitUntilReady, endpoint caching, endpoint+meta accessors, default constructor
+- Added path alias and vitest alias for `@bremio/daemon-client`
+- Refactored CLI `reportDaemonStatus()` to use `DaemonClient` — now performs version/capability handshake alongside status display
+- Updated `SPRINT-LOG.md`
+
+**Decided**
+- The VS Code extension keeps its own `BremioClient` (zero-dep constraint per docs/14 M1-T1 design decision) — the shared package is for the CLI and future clients
+- `ProtocolMismatchError` extends `DaemonUnavailableError` so callers can catch the base error and optionally inspect the specific mismatch
+- The handshake delegates to `checkProtocolCompatibility` from `@bremio/protocol` — the canonical implementation, not a copy
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 741 passed / 62 files (+10 new daemon-client tests, +1 new test file)
+- Red-check: removed the `if (!compatibility.compatible)` guard in `handshake()` → both "daemon too old" and "client too old" tests resolve instead of throwing `ProtocolMismatchError`. Restored.
+
+### S4-T2 — `bremio run` starts runs through the daemon
+- **agent:** Claude (opencode)
+- **time:** 2026-07-25T15:10 → 2026-07-26T14:52
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T2
+- **status:** done
+
+**Did**
+- Added `startRun()`, `streamEvents()`, `cancelRun()`, `runDetail()` to `DaemonClient` class in `packages/daemon-client/src/client.ts`
+- Added `RunEvent`, `StartRunRequest` types to daemon-client
+- Exported new symbols from `packages/daemon-client/src/index.ts`
+- Added 4 new tests (14 total): startRun via POST /runs, SSE streaming, cancel 404, cancel success
+- Updated fake daemon in tests to handle /runs, /runs/:id/events, /runs/:id/cancel with pathname-based URL matching
+- Added `runViaDaemon()` function in `apps/cli/src/index.ts` that connects to daemon, POSTs the run, streams SSE events, handles Ctrl-C cancellation
+- Wired daemon path into `runCommand()`: attempts daemon first when mode is resolved, falls back to in-process if daemon unavailable
+
+**Decided**
+- When daemon is not running, `runViaDaemon` returns `false` silently (graceful fallback, no error shown)
+- SSE events printed with `kind` bold prefix + message; no fancy formatting yet (can improve in follow-up)
+- Ctrl-C handler reuses AbortController pattern: first Ctrl-C cancels via `cancelRun()`, second forces exit
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 745 passed / 62 files (+4 daemon-client tests)
+- Red-check A: SSE pathname matching with query string — fake daemon's earlier `endsWith("/events")` failed for `?afterSeq=0`; switched to URL pathname-based matching
+- Red-check B: cancel test's standalone server missing `/health` — `connect()` threw `DaemonUnavailableError`; added `/health` route
+
+### S4-T3 — SSE rendering + cancellation parity with the in-process path
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T14:55 → 2026-07-26T15:44
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T3
+- **status:** done
+
+**Did**
+- Added `renderRunEvent()` pure function in `apps/cli/src/ui.ts` that maps daemon `RunEvent` objects through the same `renderEvent()` + `formatEventView()` pipeline as the in-process path, giving parity in output format
+- Rewrote `runViaDaemon()` in `apps/cli/src/index.ts` to use `renderRunEvent()` for rich SSE event rendering instead of raw kind+message output
+- Matched cancellation messages exactly to in-process path: `"⚠ cancelling run (Ctrl+C again to force)…"` (was `"⚠ cancelling run…"`)
+- Added post-stream run summary via `client.runDetail()` — displays status glyph and file count after stream ends
+- Added `--json` mode support to daemon path: collects all events into an array, fetches final run detail, prints `{ run, events }` as JSON
+- Added 7 unit tests for `renderRunEvent()` covering: known events through data pipeline, unknown kind fallback, failed→error mapping, tool_use/tool_result with data, started type, lead default fallback
+- Updated `TaskStatus` import in `index.ts` for `statusGlyph()` call
+
+**Decided**
+- `renderRunEvent()` lives in `ui.ts` (alongside `formatEventView()`) rather than inline, so it's testable without mocking the daemon
+- High-level daemon event kinds ("status", "lead", "plan", "finished") are not known to `renderEvent()` so they render as `[kind]` fallback — same behavior as `assembleTaskLanes()` in the event-view package; the important parity is that `task-event` with embedded agent data goes through the full agent rendering pipeline
+- `--json` mode in daemon path buffers all events then prints at end, which trades real-time output for a clean JSON report — acceptable for scripting use
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 752 passed / 62 files (+7 new renderRunEvent tests)
+- Red-check A: removed `"failed" → "error"` mapping guard → `renderRunEvent({ kind: "failed", message: "connection refused" })` returns `[failed]` instead of `✗ connection refused`. Restored.
+- Red-check B: removed `dataObj` branch guard → `renderRunEvent` with tool_use in data falls back to message text `"Wrote src/index.ts"` instead of rich output `"→ write src/index.ts"`. Restored.
+
+### S4-T4 — Default-path cutover; `--standalone` marks runs `not-shared`
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T15:45 → 2026-07-26T16:20
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T4
+- **status:** done
+
+**Did**
+- Daemon is now the default path: without `--standalone`, `bremio run` tries the daemon and errors if unavailable (was: silent fallback to in-process). `--standalone` skips the daemon and runs in-process.
+- Added `--standalone` flag to CLI: `parseCli()` options, `USAGE` text for `bremio run`.
+- Created `tagStandalone()` helper in `ui.ts` that sets `standalone: true`, `persistence: "standalone"`, `syncStatus: "not-shared"` on report objects when `--standalone` is active.
+- Called `tagStandalone()` before every report print/serialization site: Single (post-run and post-escalation) and Team (3 sites total).
+- Moved `tagStandalone` from `index.ts` to `ui.ts` (testable, alongside `renderRunEvent`).
+- 6 new unit tests for `tagStandalone`: tag on true, no-op on false, no-op on undefined, null safety, non-object safety, false-on-null safety.
+
+**Decided**
+- Name is `--standalone`, not `--no-daemon` (per docs/15 convention: positive flag names).
+- `tagStandalone()` uses `unknown` parameter + `(report as Record<string, unknown>)` cast (single cast with local `const r`, not repeated) because report interfaces lack index signatures.
+- `renderRunEvent()` stays in `ui.ts` — testable without daemon.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 758 passed / 62 files (+6 new tagStandalone tests, was 752).
+- Red-check A: removed `typeof report === "object" && report !== null` guard from `tagStandalone` → null test and non-object test both throw `TypeError`. Restored.
+- Red-check B: removed `standalone` check in `tagStandalone` → tests still pass logically (would tag when shouldn't). Restored — the guard IS load-bearing for type safety, tested by null/non-object tests.
+
 ### S3-REVIEW — tech-lead audit of Sprint 3
 - **agent:** Claude (Opus 4.8), acting as tech lead
 - **time:** 2026-07-25 → 2026-07-25
@@ -763,3 +897,160 @@ Rules:
 - Red-check C: plan-mode gate removed → home-dir fixture fails, outside-workspace
   fixture still passes, which is what identified it as vacuous. Restored.
 
+### S4-T6 — Import `.bremio/runs/*/report.json` as `legacy-import`, idempotent
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T17:20 → 2026-07-26T17:35
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T6
+- **status:** done
+
+**Did**
+- Added `importReport(reportRunId, report, repoPath)` to `RunStore` in `storage.ts`: creates a session + run with `provenance: "legacy-import"`, preserves original timestamps, idempotent via `orchestrator_run_id` lookup, creates a terminal event so the TUI has content to display.
+- Added `deriveReportStatus()` helper to `storage.ts`: maps report result status to `RunStatus`.
+- Added `importReports(repoPath)` to `RunRegistry` in `runs.ts`: scans `.bremio/runs/*/report.json` via `listReports()` from `@bremio/orchestrator`, calls `store.importReport()` for each, returns `{ imported, skipped }`.
+- Added `POST /legacy/import` route to `server.ts`: accepts `{ repoPath }`, calls `registry.importReports(repoPath)`, returns import counts.
+- Removed `legacyReports` field from `GET /runs` response — after import, all runs come from the store.
+- Removed the `legacy-` pseudo-session fallback from `data.ts` `loadSessions()`: replaced with import-then-read (via daemon HTTP or direct store).
+- Removed all `legacy-` handling from `data.ts` `loadSessionDetail()`: after import, sessions have real IDs; `startsWith("legacy-")` dead code deleted.
+- 5 new integration tests: happy path (import → session appears in `/sessions`), idempotency (second call skips), artifacts untouched on disk (file content unchanged), missing repoPath → 400, team report import with `legacy-import` provenance in session config.
+
+**Decided**
+- Import lives in the store layer (`storage.ts`) as a pure SQL operation; filesystem scanning happens in `RunRegistry` (and in the TUI's direct-store fallback) via `listReports()` from the orchestrator. This avoids coupling the SQL store to filesystem I/O.
+- Idempotency key is `orchestrator_run_id` — the original report's `runId` — which is not populated by native `createRun()`. This gives a clean collision domain that doesn't interfere with native runs.
+- Removed `legacyReports` from `GET /runs` response: after import, all runs are real store entries. The client no longer has two paths to reconcile.
+- `legacy-` pseudo-sessions are fully removed: no code path creates or reads them. The sprint gate "No `legacy-` pseudo-sessions remain" is satisfied.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 766 passed / 63 files (+5 tests, was 761).
+- Red-check A: removed `orchestrator_run_id` lookup in `importReport()` → idempotency test fails: `expected 1 to be +0` (second import creates a duplicate). Restored.
+- Red-check B: "leaves report.json untouched" test covers the acceptance criterion directly — compares file content SHA before and after import.
+
+### S4-T8 — Multi-client SSE fan-out + session-updated broadcast
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T17:45 → 2026-07-26T17:55
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T8
+- **status:** done
+
+**Did**
+- Verified existing `#publish()` fans out to all subscribers per run (no patch needed — the `Set<Listener>` design already supports N).
+- Added `#sessionListeners` map and `subscribeSession(sessionId, listener)` to `RunRegistry` — notification-only (no store replay), matching the ephemeral nature of session-level broadcasts.
+- Added `#publishSession()` that iterates session listeners, with the same try/catch isolation as `#publish()`.
+- Emit `session-updated` in `start()` when a run is added to an existing session (via `input.sessionId`), with event payload carrying `addedRunId` and `turnCount`.
+- Emit `session-updated` in `createSessionConfig()` when config changes, with event payload carrying `configRevision`.
+- Added `GET /sessions/:id/events` SSE endpoint in `server.ts` via `streamSessionEvents()`, returning `text/event-stream` with keep-alive pings.
+- Added `SessionEvent` export from both `runs.ts` and `index.ts`.
+- 6 new tests: (1) two subscribers get identical event sequences, (2) mid-run replay delivers the full history, (3) session-updated on run addition, (4) session-updated on config change, (5) HTTP SSE endpoint content-type, (6) no broadcast for standalone runs without sessionId.
+
+**Decided**
+- Session events are notification-only and not persisted — a reconnecting client should re-fetch the session state via `GET /sessions/:id` rather than replaying from the store. This keeps session SSE simple and avoids storing ephemeral notification events in the run_events table.
+- The existing fan-out via `Set<Listener>` in `#publish()` already works correctly for N subscribers. No changes needed to the run-level event path.
+- `isTerminalKind()` in `server.ts` already handles `supervision_lost` correctly (event kind is still `"interrupted"`), so no patch needed there either.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 774 passed / 63 files (+6 tests, was 768).
+- Red-check A: removed `#publishSession` in `start()` → "broadcasts session-updated when a run is added" fails with `expected +0 to be 1`. Restored.
+- Red-check B: removed `#publishSession` in `createSessionConfig()` → "broadcasts session-updated when session config is created" fails with `expected +0 to be 1`. Restored.
+
+### S4-T10 — Make the action digest real at its one production call site
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T18:30 → closed
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T10
+- **status:** done
+
+**Did**
+- Added `computeDigest()` helper that SHA-256 hashes `diff.patch`
+- Modified `#startReview` to hash `diff.patch` and return `actionDigest` alongside decision
+- Added verification in `#execute`: recompute diff on approval, compare digest, fail with `review_drifted` on mismatch, proceed with merge on match
+- 4 new tests (pure function, different-input, git-integration, drift-detection)
+- 721 tests pass
+
+**Decided**
+- Digest format: `sha256:<64-char-hex>` — a single token, parsable by prefix
+- Wrap digest computation in `computeDigest()` (exported, unit-testable) rather than inlining
+- Return digest from `#startReview` rather than storing in `PendingReview` (cleaner ownership)
+
+**Verification**
+- `computeDigest` produces `createHash`-verified output
+- Git integration test verifies real `MergeManager.getDiff` + `computeDigest` round-trip
+- Drift test confirms changed worktree produces different digest
+
+### S4-T9 — Resolve the two approval implementations (delete `packages/approval`)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T18:15 → 2026-07-26T18:25
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T9
+- **status:** done
+
+**Did**
+- Deleted `packages/approval/` (567 LOC implementation + 934 LOC tests, in-memory, imported by nothing).
+- Removed `@bremio/approval` path alias from `tsconfig.base.json`.
+- Ran `pnpm install` to update lockfile — clean.
+- Confirmed `findActiveGrant()` grant-matching logic (scope × action class × target × precedence ranking) existed only in the dead package. Not ported — it's unused code and can be added as a SQL query when/if auto-approve workflows arrive.
+
+**Decided**
+- Delete, don't delegate. Making the daemon's SQLite implementation delegate to an in-memory engine would add an indirection layer with no benefit — the SQLite code is already the production path. Any missing feature (like `findActiveGrant()`) can be added later as a store-level SQL query.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 717 passed / 62 files (minus the 57 approval tests, as expected).
+- No red-checks needed — this is a deletion, not a guard addition.
+
+### S4-T5 — Ephemeral daemon for CI/one-shot (same protocol, no 2nd impl)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T16:25 → 2026-07-26T17:10
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T5
+- **status:** done
+
+**Did**
+- Created `apps/cli/src/ephemeral.ts` — `runViaEphemeralDaemon()` creates a temp SQLite store, starts `startDaemonServer` in-process on an ephemeral port, writes endpoint JSON, creates `DaemonClient` with custom `endpointPath`, POSTs the run, streams SSE events with same rendering + cancellation as persistent daemon path, then cleans up temp files.
+- Modified the cutover in `index.ts`: when persistent daemon is unavailable, falls through to `runViaEphemeralDaemon()` instead of erroring. Last resort still errors with `--standalone` hint.
+- Extracted `runViaEphemeralDaemon` into its own module for testability.
+- 3 new tests: success path (daemon + run + cleanup), setup failure (cleanup on startDaemonServer error), connect failure (cleanup on client error). All verify temp directory is cleaned up in `finally`.
+- Error handling: outer try/catch catches setup errors (startDaemonServer, connect), logs them, returns `false`. Inner try/catch handles run errors the same way as `runViaDaemon`.
+
+**Decided**
+- Ephemeral daemon runs in-process (not a child process): same binary, same version, no IPC boundary to manage. Uses same `startDaemonServer` as the persistent daemon — "same protocol, no 2nd implementation" per docs/15 §5.
+- Temp dir, SQLite DB, and endpoint file are all created under `os.tmpdir()` and cleaned up in a `finally` block.
+- `tmpRoot` override parameter for tests to avoid polluting real `os.tmpdir()`.
+- Mock `@bremio/daemon` and `@bremio/daemon-client` in tests rather than starting a real daemon (which would need a real port, adapter, etc.).
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 761 passed / 63 files (+1 file, +3 tests, was 758).
+- Red-check A: removed outer try/catch → "startDaemonServer throws" and "connect throws" tests both throw unhandled `Error` instead of returning `false`. Restored.
+- Red-check B: removed `fs.rm(tmpDir)` from finally → all 3 cleanup tests fail (temp dir left behind). Restored.
+
+
+### S4-REVIEW — tech-lead audit of Sprint 4
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-26T18:55 → 2026-07-26T19:35
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T1 … S4-T10
+- **status:** done
+
+**Did**
+- Audited all 10 tasks by reading production code and mutating it, not by reading the blocks above.
+- **Fixed a regression S4-T4 introduced.** `/adapters` advertised four adapters while `RunRegistry.#execute` built a registry of three — opencode was missing. Before the cutover this was harmless, since `bremio run` executed in-process from the CLI's own four-adapter registry; making the daemon the default path turned `--agent opencode` into "agent not registered". Both sides now read one `defaultAdapters()`.
+- **Fixed a hang in the review path.** `#startReview` destructured only `request` from `createApprovalRequest`, discarding `autoDenied`. With no client subscribed the request was auto-rejected and the run then awaited a promise only a client could resolve: it stayed `pending_approval` for the life of the daemon, held its worktree, and its execution promise never settled — so `awaitCancellations()` would block shutdown too. The unattended case now settles as `review_unattended` and **keeps** the branch, because nobody saw those changes and so nobody chose to discard them.
+- **Gave S4-T10 a test at its production call site.** Its four tests all hashed strings directly; deleting the digest comparison in `#execute` left all 721 green. Added `apps/daemon/src/review-apply.test.ts`, which drives a real run through a real worktree and a real approval: merge-on-approve, refuse-on-drift, discard-on-reject, settle-when-unattended.
+- Made `RunRegistry`'s adapter set injectable — the seam that both fixes needed, and the reason the review path was untestable at all.
+- Scheduled **S5-T7** (grants) and **S5-T8** (`sessionId: runId`) in `TASKS.md`.
+
+**Decided**
+- S4-T9's deletion of `packages/approval` was right: nothing but a tsconfig path alias referenced it. But the sprint's claim that the daemon is now "the single source of truth" overstates it — the survivor is a CRUD store, not an authority. `consumeApprovalGrant`, `pruneExpiredApprovalGrants` and `expireApprovalRequests` have no production callers, `consumeApprovalGrant` never checks `expires_at`, and `overrideableByGrant` is read by nothing. The *more complete* of the two implementations was the one deleted. Recorded as S5-T7 rather than fixed here: wiring grants in is a design decision, not a review fix.
+- Kept the worktree on an unattended rejection but discard it on an explicit one. Fail-closed governs whether changes are *applied*; it does not authorise destroying work no human ever saw.
+- Left the now-dead `WorktreeManager` / `TaskWorktree` imports in `runs.ts` alone — not orphaned by this review.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 726 passed / 63 files (was 721 / 62).
+- `corepack pnpm release:check` — PASS (726 tests, build, `PASS clean packed install: bremio 1.2.0`).
+- Red-check A: replaced the digest comparison with a tautology → "refuses to merge a worktree that changed after it was approved" failed with `expected 'completed' to be 'failed'` — the substituted content merged. Restored.
+- Red-check B: disabled the `autoDenied` early return → "settles an unattended run" failed with `never settled (last status: pending_approval)`, reproducing the hang exactly. Restored.
+- Red-check C: dropped `OpenCodeAdapter` from `defaultAdapters()` → both existing `/adapters` tests failed (`length 4 but got 3`), proving the route and the run path now share one source. Restored.
+- Pre-existing suite before the review: 721 passed / 62 files, typecheck clean, `release:check` PASS.

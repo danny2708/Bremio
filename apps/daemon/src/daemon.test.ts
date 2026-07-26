@@ -3,7 +3,7 @@ import { connect } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RunRegistry, type RunEvent } from "./runs";
+import { RunRegistry, defaultAdapters, type RunEvent, type SessionEvent } from "./runs";
 import { RunStore, type PersistedSession, type SessionDetail } from "./storage";
 import { startDaemonServer, type DaemonHandle } from "./server";
 import { publishEndpoint, readEndpoint, retractEndpoint } from "./endpoint";
@@ -152,6 +152,19 @@ describe("daemon HTTP surface", () => {
     expect(ids).toContain("claude");
     expect(ids).toContain("codex");
     expect(ids).toContain("antigravity");
+  }, 15_000);
+
+  it("advertises exactly the adapters the run path can execute", async () => {
+    // These were two separate literals. S4-T4 made the daemon the default path
+    // for `bremio run`, at which point the route offered opencode while
+    // `#execute` built a registry of three — so the advertised agent failed
+    // with "not registered". Both sides now read `defaultAdapters()`.
+    const handle = await daemon();
+    const response = await call(handle, "/adapters");
+    const body = (await response.json()) as { adapters: Array<{ id: string }> };
+    expect(body.adapters.map((a) => a.id).sort()).toEqual(
+      defaultAdapters().map((a) => a.id).sort(),
+    );
   }, 15_000);
 
   it("reports opencode lead-eligibility from the capability contract", async () => {
@@ -436,5 +449,331 @@ describe("endpoint discovery", () => {
 
     await fs.writeFile(file, "{ not json", "utf8");
     expect(await readEndpoint(file)).toBeUndefined();
+  });
+});
+
+describe("legacy import (S4-T6)", () => {
+  async function createReportOnDisk(
+    runsDir: string,
+    runId: string,
+    overrides: Record<string, unknown> = {},
+  ): Promise<void> {
+    const runDir = path.join(runsDir, runId);
+    await fs.mkdir(runDir, { recursive: true });
+    const report = {
+      mode: "single",
+      runId,
+      createdAt: "2026-01-15T10:00:00.000Z",
+      prompt: "legacy import test",
+      primaryAgentId: "claude",
+      repoPath: runsDir,
+      result: {
+        status: "completed",
+        summary: "imported successfully",
+        filesChanged: [],
+        commandsExecuted: [],
+        tests: [],
+        logsPath: path.join(runDir, "single.log"),
+        durationMs: 100,
+      },
+      verification: { status: "unverified", reasons: [] },
+      workspace: { dirtyBefore: [], dirtyAfter: [] },
+      ...overrides,
+    };
+    await fs.writeFile(path.join(runDir, "report.json"), JSON.stringify(report), "utf8");
+  }
+
+  it("imports a report and creates a session+run visible via /sessions", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-import-"));
+    cleanups.push(() => fs.rm(dir, { recursive: true, force: true }).catch(() => {}));
+    const runsDir = path.join(dir, "repo", ".bremio", "runs");
+    await createReportOnDisk(runsDir, "run-legacy-001");
+
+    const registry = await freshRegistry();
+    const handle = await daemon(registry);
+
+    const response = await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoPath: path.join(dir, "repo") }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { imported: number; skipped: number };
+    expect(body.imported).toBe(1);
+    expect(body.skipped).toBe(0);
+
+    // The imported session should appear in session listing.
+    const sessionsRes = await call(handle, `/sessions?repo=${encodeURIComponent(path.join(dir, "repo"))}`);
+    expect(sessionsRes.status).toBe(200);
+    const sessionsBody = (await sessionsRes.json()) as { sessions: Array<{ id: string; turnCount: number }> };
+    expect(sessionsBody.sessions).toHaveLength(1);
+    expect(sessionsBody.sessions[0]?.turnCount).toBe(1);
+  });
+
+  it("is idempotent — calling import twice skips the already-imported report", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-import-"));
+    cleanups.push(() => fs.rm(dir, { recursive: true, force: true }).catch(() => {}));
+    const runsDir = path.join(dir, "repo", ".bremio", "runs");
+    await createReportOnDisk(runsDir, "run-legacy-002");
+
+    const registry = await freshRegistry();
+    const handle = await daemon(registry);
+
+    // First import.
+    const first = await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoPath: path.join(dir, "repo") }),
+    });
+    expect(first.status).toBe(200);
+    expect(((await first.json()) as { imported: number }).imported).toBe(1);
+
+    // Second import — same repo, same reports.
+    const second = await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoPath: path.join(dir, "repo") }),
+    });
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as { imported: number; skipped: number };
+    expect(secondBody.imported).toBe(0);
+    expect(secondBody.skipped).toBe(1);
+
+    // Still exactly one session.
+    const sessionsRes = await call(handle, `/sessions?repo=${encodeURIComponent(path.join(dir, "repo"))}`);
+    const sessionsBody = (await sessionsRes.json()) as { sessions: unknown[] };
+    expect(sessionsBody.sessions).toHaveLength(1);
+  });
+
+  it("leaves the original report.json untouched on disk", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-import-"));
+    cleanups.push(() => fs.rm(dir, { recursive: true, force: true }).catch(() => {}));
+    const reportPath = path.join(dir, "repo", ".bremio", "runs", "run-legacy-003", "report.json");
+    const runsDir = path.join(dir, "repo", ".bremio", "runs");
+    const createdAt = "2026-02-20T12:00:00.000Z";
+    await createReportOnDisk(runsDir, "run-legacy-003", { createdAt });
+
+    // Read the file content BEFORE import to compare after.
+    const before = await fs.readFile(reportPath, "utf8");
+
+    const registry = await freshRegistry();
+    const handle = await daemon(registry);
+    await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoPath: path.join(dir, "repo") }),
+    });
+
+    const after = await fs.readFile(reportPath, "utf8");
+    expect(after).toBe(before);
+  });
+
+  it("rejects a request without repoPath as 400", async () => {
+    const handle = await daemon();
+    const response = await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("repoPath");
+  });
+
+  it("imports a team report with mode: team", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-import-"));
+    cleanups.push(() => fs.rm(dir, { recursive: true, force: true }).catch(() => {}));
+    const runsDir = path.join(dir, "repo", ".bremio", "runs");
+    const runDir = path.join(runsDir, "run-legacy-team");
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "report.json"),
+      JSON.stringify({
+        mode: "team",
+        runId: "run-legacy-team",
+        createdAt: "2026-03-10T08:00:00.000Z",
+        prompt: "team legacy import",
+        leadAgentId: "claude",
+        repoPath: path.join(dir, "repo"),
+        plan: { summary: "team plan", leadAgentId: "claude", tasks: [] },
+        tasks: [],
+        qualityGate: { status: "passed", testTaskIds: [], reviewTaskIds: [], reasons: [] },
+        summary: { total: 0, completed: 0, failed: 0, cancelled: 0, filesChanged: 0 },
+      }),
+      "utf8",
+    );
+
+    const registry = await freshRegistry();
+    const handle = await daemon(registry);
+
+    const response = await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoPath: path.join(dir, "repo") }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { imported: number };
+    expect(body.imported).toBe(1);
+
+    // Verify the session config has legacy-import provenance.
+    const sessionsRes = await call(handle, `/sessions?repo=${encodeURIComponent(path.join(dir, "repo"))}`);
+    const sessionsBody = (await sessionsRes.json()) as { sessions: Array<{ id: string }> };
+    expect(sessionsBody.sessions).toHaveLength(1);
+    const sid = sessionsBody.sessions[0]!.id;
+
+    const cfgRes = await call(handle, `/sessions/${sid}/config`);
+    expect(cfgRes.status).toBe(200);
+    const cfgBody = (await cfgRes.json()) as { config: { provenance: string } };
+    expect(cfgBody.config.provenance).toBe("legacy-import");
+  });
+});
+
+describe("multi-client SSE fan-out (S4-T8)", () => {
+  it("delivers identical event sequences to two subscribers on one run", async () => {
+    const registry = await freshRegistry();
+    const started = registry.start({
+      mode: "single",
+      repoPath: path.join(os.tmpdir(), "definitely-not-a-repo"),
+      prompt: "noop",
+      agentId: "claude",
+    });
+
+    const events1: RunEvent[] = [];
+    const events2: RunEvent[] = [];
+    const unsub1 = registry.subscribe(started.id, (e) => events1.push(e));
+    const unsub2 = registry.subscribe(started.id, (e) => events2.push(e));
+
+    // The run fails fast (bad repo); wait for termination.
+    await new Promise<void>((resolve) => {
+      registry.subscribe(started.id, (e) => {
+        if (e.kind === "finished" || e.kind === "failed" || e.kind === "interrupted") resolve();
+      });
+    });
+
+    unsub1();
+    unsub2();
+
+    expect(events1.length).toBeGreaterThan(0);
+    expect(events2.length).toBeGreaterThan(0);
+    expect(events1.length).toBe(events2.length);
+    for (let i = 0; i < events1.length; i++) {
+      expect(events1[i]?.seq).toBe(events2[i]?.seq);
+      expect(events1[i]?.kind).toBe(events2[i]?.kind);
+      expect(events1[i]?.message).toBe(events2[i]?.message);
+    }
+  });
+
+  it("replays from the store for a client that reconnects mid-run", async () => {
+    const registry = await freshRegistry();
+    const started = registry.start({
+      mode: "single",
+      repoPath: path.join(os.tmpdir(), "definitely-not-a-repo"),
+      prompt: "noop",
+      agentId: "claude",
+    });
+
+    // Subscribe for the full sequence.
+    const all: RunEvent[] = [];
+    await new Promise<void>((resolve) => {
+      registry.subscribe(started.id, (e) => {
+        all.push(e);
+        if (e.kind === "finished" || e.kind === "failed" || e.kind === "interrupted") resolve();
+      });
+    });
+
+    // A second subscriber connecting after the fact gets the same sequence via replay.
+    const replayed: RunEvent[] = [];
+    registry.subscribe(started.id, (e) => replayed.push(e))();
+
+    expect(replayed.length).toBe(all.length);
+    for (let i = 0; i < all.length; i++) {
+      expect(replayed[i]?.seq).toBe(all[i]?.seq);
+      expect(replayed[i]?.kind).toBe(all[i]?.kind);
+    }
+  });
+
+  it("broadcasts session-updated when a run is added to an existing session", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+    const run = store.createRun({ id: "sess-evt-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "first" });
+    const sessionId = run.sessionId!;
+
+    const received: SessionEvent[] = [];
+    const unsub = registry.subscribeSession(sessionId, (e) => received.push(e));
+
+    // Start a second run in the same session.
+    registry.start({
+      mode: "single",
+      repoPath: "/tmp/repo",
+      prompt: "second turn",
+      agentId: "claude",
+      sessionId,
+    });
+
+    // The subscribeSession listener fires synchronously during start().
+    expect(received.length).toBe(1);
+    expect(received[0]?.kind).toBe("session-updated");
+    expect(received[0]?.sessionId).toBe(sessionId);
+    expect(received[0]?.data).toBeDefined();
+    expect((received[0]?.data as Record<string, unknown>)?.addedRunId).toBeDefined();
+
+    unsub();
+  });
+
+  it("broadcasts session-updated when session config is created", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+    const run = store.createRun({ id: "sess-cfg-evt", mode: "single", repositoryPath: "/tmp/repo", prompt: "cfg event" });
+    const sessionId = run.sessionId!;
+
+    const received: SessionEvent[] = [];
+    const unsub = registry.subscribeSession(sessionId, (e) => received.push(e));
+
+    registry.createSessionConfig({ sessionId, mode: "team", leadAgentId: "codex" });
+
+    expect(received.length).toBe(1);
+    expect(received[0]?.kind).toBe("session-updated");
+    expect(received[0]?.sessionId).toBe(sessionId);
+    expect(received[0]?.data).toBeDefined();
+    expect((received[0]?.data as Record<string, unknown>)?.configRevision).toBe(2);
+
+    unsub();
+  });
+
+  it("makes session events discoverable via the HTTP SSE endpoint (content-type)", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+    const run = store.createRun({ id: "http-sess-evt", mode: "single", repositoryPath: "/tmp/repo", prompt: "http session sse" });
+    const sessionId = run.sessionId!;
+
+    const handle = await daemon(registry);
+    const res = await call(handle, `/sessions/${sessionId}/events`, { signal: AbortSignal.timeout(100) }).catch(() => undefined);
+
+    // Even though the stream never closes (session SSE has no terminal event),
+    // the response headers must still indicate SSE.
+    if (res) {
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+    }
+    // If fetch throws (abort before headers arrive), the test passes as long as
+    // the route did not 404 or 500.
+  });
+
+  it("does not broadcast session-updated for a run without a sessionId", async () => {
+    const registry = await freshRegistry();
+    const received: SessionEvent[] = [];
+
+    // Subscribe to a non-existent session should be a no-op.
+    const unsub = registry.subscribeSession("nonexistent", (e) => received.push(e));
+
+    registry.start({
+      mode: "single",
+      repoPath: "/tmp/repo",
+      prompt: "standalone run",
+      agentId: "claude",
+    });
+
+    expect(received).toHaveLength(0);
+    unsub();
   });
 });

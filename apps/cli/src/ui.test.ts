@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assessCapacity } from "@bremio/quota";
 import { redactDeep } from "./diagnostics";
-import { printReport } from "./ui";
+import { printReport, renderRunEvent, tagStandalone } from "./ui";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -151,5 +151,98 @@ describe("S4-T3: reasons for every automatic choice", () => {
     // It says the actual cause, in capacity vocabulary — "policy" would fail.
     expect(assessment.reason).toMatch(/healthy|limited|critical|exhausted|last-known|unknown/);
     expect(assessment.reason).toContain("75");
+  });
+});
+
+describe("renderRunEvent (S4-T3)", () => {
+  it("renders a known event type inside data through the agent pipeline", () => {
+    // task-event with data:type="started" hits renderEvent's "started" case
+    const line = renderRunEvent({
+      kind: "task-event",
+      data: { type: "started" },
+    });
+    expect(line).toBe("started");
+  });
+
+  it("maps an unknown kind to its default fallback [kind] text", () => {
+    // "status" is not a known renderEvent type, so the default handler
+    // outputs "[status]" as the summary
+    const line = renderRunEvent({ kind: "status", message: "starting" });
+    expect(line).toBe("[status]");
+  });
+
+  it("renders a failed event-type as error text with ✗ prefix", () => {
+    const line = renderRunEvent({ kind: "failed", message: "connection refused" });
+    // "failed" maps to "error" type → "✗ connection refused"
+    expect(line).toContain("✗");
+    expect(line).toContain("connection refused");
+  });
+
+  it("renders a task-event with tool_use data through the agent event pipeline", () => {
+    const line = renderRunEvent({
+      kind: "task-event",
+      message: "Wrote src/index.ts",
+      data: { type: "tool_use", name: "write", input: { file_path: "src/index.ts" } },
+    });
+    expect(line).toContain("→ write");
+    expect(line).toContain("src/index.ts");
+  });
+
+  it("handles a tool_result event embedded in data", () => {
+    const line = renderRunEvent({
+      kind: "task-event",
+      data: { type: "tool_result", name: "bash", ok: false, exitCode: 1 },
+    });
+    expect(line).toContain("✗");
+    expect(line).toContain("bash");
+    expect(line).toContain("1");
+  });
+
+  it("shows a directly known event kind without data", () => {
+    // "started" is a known renderEvent type, even without data
+    const line = renderRunEvent({ kind: "started" });
+    expect(line).toBe("started");
+  });
+
+  it("maps an unknown kind to its fallback even with a message", () => {
+    // "lead" is not a known type → "[lead]", message in detail
+    const line = renderRunEvent({ kind: "lead", message: "Claude is analyzing" });
+    expect(line).toBe("[lead]");
+  });
+});
+
+describe("tagStandalone (S4-T4)", () => {
+  it("tags a report object when standalone is true", () => {
+    const report: Record<string, unknown> = { runId: "test", mode: "single" };
+    tagStandalone(report, true);
+    expect(report.standalone).toBe(true);
+    expect(report.persistence).toBe("standalone");
+    expect(report.syncStatus).toBe("not-shared");
+  });
+
+  it("leaves the report untouched when standalone is false", () => {
+    const report: Record<string, unknown> = { runId: "test" };
+    tagStandalone(report, false);
+    expect(report.standalone).toBeUndefined();
+    expect(report.persistence).toBeUndefined();
+    expect(report.syncStatus).toBeUndefined();
+  });
+
+  it("leaves the report untouched when standalone is undefined", () => {
+    const report: Record<string, unknown> = { runId: "test" };
+    tagStandalone(report, undefined);
+    expect(report.standalone).toBeUndefined();
+  });
+
+  it("handles null report without crashing", () => {
+    expect(() => tagStandalone(null, true)).not.toThrow();
+  });
+
+  it("handles non-object report without crashing", () => {
+    expect(() => tagStandalone("not an object", true)).not.toThrow();
+  });
+
+  it("does not mutate the object when standalone is false even on null", () => {
+    expect(() => tagStandalone(null, false)).not.toThrow();
   });
 });

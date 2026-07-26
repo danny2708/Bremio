@@ -8,15 +8,18 @@ import {
   type BremioRunReport,
 } from "@bremio/orchestrator";
 import type { ReasoningLevel } from "@bremio/protocol";
+import { createHash } from "node:crypto";
 import {
   classifyAgentError,
   processSupervisor,
+  type AgentAdapter,
   type ProcessSupervisor,
   type TerminationOutcome,
 } from "@bremio/adapter-sdk";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
+import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import { MergeManager, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
 import {
   isTerminal,
@@ -92,7 +95,32 @@ export interface StartRunInput {
   controlMode?: import("@bremio/policy").ControlMode;
 }
 
+/**
+ * Every adapter the daemon can execute.
+ *
+ * `/adapters` advertises this same list. They were two literals until S4-T4 made
+ * the daemon the default path for `bremio run`: the route offered opencode while
+ * the run path was built from three adapters, so choosing the advertised agent
+ * failed with "not registered". One source removes the class of bug, not just
+ * the instance.
+ */
+export function defaultAdapters(): AgentAdapter[] {
+  return [
+    new ClaudeAdapter(),
+    new CodexAdapter(),
+    new AntigravityAdapter(),
+    new OpenCodeAdapter(),
+  ];
+}
+
 type Listener = (event: RunEvent) => void;
+type SessionListener = (event: SessionEvent) => void;
+
+export interface SessionEvent {
+  kind: "session-updated";
+  sessionId: string;
+  data?: Record<string, unknown>;
+}
 
 interface PendingReview {
   runId: string;
@@ -116,6 +144,7 @@ interface PendingReview {
 export class RunRegistry {
   readonly #controllers = new Map<string, AbortController>();
   readonly #listeners = new Map<string, Set<Listener>>();
+  readonly #sessionListeners = new Map<string, Set<SessionListener>>();
   /** In-flight terminations, awaited before a run is called cancelled. */
   readonly #terminations = new Map<string, Promise<TerminationOutcome>>();
   /**
@@ -135,30 +164,50 @@ export class RunRegistry {
   constructor(
     private readonly store: RunStore,
     private readonly supervisor: ProcessSupervisor = processSupervisor,
+    /** Overridden only by tests, so the review path can run without a provider. */
+    private readonly adapters: () => AgentAdapter[] = defaultAdapters,
   ) {}
 
   /**
    * Mark runs that were mid-flight when the previous process died.
    *
-   * Without this, persistence would be a regression: a crashed run used to
-   * vanish with the RAM that held it, and would now sit at `running` forever.
-   * `interrupted` is deliberately not `failed` — the daemon dying says nothing
-   * about whether the task itself was going to succeed.
+   * A run that was actively executing (`running`) had a child process we were
+   * supervising — we lost track of that process, so the status is
+   * `supervision_lost`. A run that was `queued` or `cancelling` (no active
+   * execution) is marked `interrupted`.
+   *
+   * Neither is `failed` — the daemon dying says nothing about whether the task
+   * itself was going to succeed, and the child process may still be alive.
+   * `supervision_lost` is the honest answer: we simply do not know.
    */
   reconcileOnStartup(): PersistedRun[] {
     const stranded = this.store.nonTerminalRuns();
     for (const run of stranded) {
-      this.store.appendEventWithStatus(
-        run.id,
-        "interrupted",
-        { message: "daemon restarted while this run was in flight", reason: "daemon_restart" },
-        {
-          status: "interrupted",
-          completedAt: new Date().toISOString(),
-          failureCode: "daemon_restart",
-          failureMessage: "the daemon restarted while this run was in flight",
-        },
-      );
+      if (run.status === "running") {
+        this.store.appendEventWithStatus(
+          run.id,
+          "interrupted",
+          { message: "daemon restarted while a supervised run was executing; the child process may still be alive", reason: "daemon_restart" },
+          {
+            status: "supervision_lost",
+            completedAt: new Date().toISOString(),
+            failureCode: "supervision_lost",
+            failureMessage: "the daemon restarted while a supervised run was executing; the child process may still be alive",
+          },
+        );
+      } else {
+        this.store.appendEventWithStatus(
+          run.id,
+          "interrupted",
+          { message: "daemon restarted while this run was in flight", reason: "daemon_restart" },
+          {
+            status: "interrupted",
+            completedAt: new Date().toISOString(),
+            failureCode: "daemon_restart",
+            failureMessage: "the daemon restarted while this run was in flight",
+          },
+        );
+      }
     }
     return stranded;
   }
@@ -209,6 +258,23 @@ export class RunRegistry {
     };
   }
 
+  /**
+   * Import legacy report.json files from .bremio/runs/ into the store.
+   * Idempotent: reports already imported are skipped.
+   */
+  async importReports(repoPath: string): Promise<{ imported: number; skipped: number }> {
+    const { listReports } = await import("@bremio/orchestrator");
+    const reports = await listReports(repoPath);
+    let imported = 0;
+    let skipped = 0;
+    for (const entry of reports) {
+      const result = this.store.importReport(entry.runId, entry.report as unknown as Record<string, unknown>, repoPath);
+      if (result.skipped) skipped++;
+      else imported++;
+    }
+    return { imported, skipped };
+  }
+
   sessions(repositoryPath: string): PersistedSession[] {
     return this.store.listSessions(repositoryPath);
   }
@@ -226,7 +292,13 @@ export class RunRegistry {
   }
 
   createSessionConfig(input: CreateSessionConfigInput): SessionConfig {
-    return this.store.createSessionConfig(input);
+    const config = this.store.createSessionConfig(input);
+    this.#publishSession(input.sessionId, {
+      kind: "session-updated",
+      sessionId: input.sessionId,
+      data: { configRevision: config.revision },
+    });
+    return config;
   }
 
   // ── Approval requests ─────────────────────────────────────────────
@@ -362,6 +434,17 @@ export class RunRegistry {
     };
   }
 
+  /** Subscribe to session-level events (no replay — notification-only). */
+  subscribeSession(sessionId: string, listener: SessionListener): () => void {
+    const set = this.#sessionListeners.get(sessionId) ?? new Set<SessionListener>();
+    set.add(listener);
+    this.#sessionListeners.set(sessionId, set);
+    return () => {
+      set.delete(listener);
+      if (set.size === 0) this.#sessionListeners.delete(sessionId);
+    };
+  }
+
   /**
    * Request cancellation.
    *
@@ -432,6 +515,14 @@ export class RunRegistry {
     // at an old run has to be able to see why it ran the way it did.
     if (resolved.reason) {
       this.#emit(id, { kind: "status", message: `auto: ${resolved.reason}` });
+    }
+    // Broadcast to session subscribers so a second client refreshes its view.
+    if (input.sessionId) {
+      this.#publishSession(input.sessionId, {
+        kind: "session-updated",
+        sessionId: input.sessionId,
+        data: { addedRunId: id, turnCount: this.store.sessionDetail(input.sessionId)?.turns.length },
+      });
     }
     // Never rejects: #execute records failure as a run outcome.
     this.#executions.set(id, this.#execute(id, { ...input, mode: resolved.mode }, controller));
@@ -506,6 +597,16 @@ export class RunRegistry {
     }
   }
 
+  #publishSession(sessionId: string, event: SessionEvent): void {
+    for (const listener of this.#sessionListeners.get(sessionId) ?? []) {
+      try {
+        listener(event);
+      } catch {
+        // one broken subscriber must not stop the others
+      }
+    }
+  }
+
   // ── Review-before-apply helpers ──────────────────────────────────
 
   /**
@@ -517,20 +618,39 @@ export class RunRegistry {
     runId: string,
     report: import("@bremio/orchestrator").SingleRunReport,
     repoPath: string,
-  ): Promise<"approved" | "rejected"> {
+  ): Promise<{
+    decision: "approved" | "rejected";
+    actionDigest: string;
+    /** Rejected by the fail-closed rule rather than by a person. */
+    unattended?: boolean;
+  }> {
     const wt = report.worktree!;
     const baseBranch = await new MergeManager(repoPath).currentBranch();
     const diff = await new MergeManager(repoPath).getDiff(wt.branch, baseBranch);
+    const actionDigest = computeDigest(diff.patch);
 
-    const { request } = this.createApprovalRequest({
+    const { request, autoDenied } = this.createApprovalRequest({
       sessionId: runId,
       runId,
       actionClass: "write",
       actionTarget: wt.branch,
       actionDescription: `review-before-apply: ${report.result.filesChanged.length} files changed in ${wt.branch}`,
-      actionDigest: `sha256:worktree-${report.runId}`,
+      actionDigest,
       risk: "medium",
     });
+
+    // The fail-closed rule already decided this one: no client is subscribed,
+    // so nothing will ever call `resolvePendingApproval`. Awaiting the promise
+    // below would strand the run at `pending_approval` for the life of the
+    // daemon, holding its worktree and never settling its execution.
+    if (autoDenied) {
+      this.#emit(runId, {
+        kind: "review-requested",
+        message: `approval required but no client was connected: ${wt.branch} left for manual review`,
+        data: { requestId: request.id, branch: wt.branch, worktreePath: wt.path, autoDenied: true },
+      });
+      return { decision: "rejected", actionDigest, unattended: true };
+    }
 
     this.store.updateRun(runId, { status: "pending_approval" });
     this.#emit(runId, {
@@ -546,7 +666,7 @@ export class RunRegistry {
       },
     });
 
-    return await new Promise<"approved" | "rejected">((resolve) => {
+    const decision = await new Promise<"approved" | "rejected">((resolve) => {
       this.#pendingReviews.set(request.id, {
         runId,
         requestId: request.id,
@@ -558,6 +678,8 @@ export class RunRegistry {
         resolve,
       });
     });
+
+    return { decision, actionDigest };
   }
 
   /**
@@ -578,11 +700,7 @@ export class RunRegistry {
     input: StartRunInput,
     controller: AbortController,
   ): Promise<void> {
-    const registry = createRegistry([
-      new ClaudeAdapter(),
-      new CodexAdapter(),
-      new AntigravityAdapter(),
-    ]);
+    const registry = createRegistry(this.adapters());
 
     try {
       const report: BremioRunReport = input.mode === "single"
@@ -676,22 +794,45 @@ export class RunRegistry {
         report.worktree &&
         report.result.status === "completed"
       ) {
-        const decision = await this.#startReview(runId, report, input.repoPath);
+        const { decision, actionDigest, unattended } = await this.#startReview(runId, report, input.repoPath);
         if (decision === "approved") {
-          try {
-            const mm = new MergeManager(input.repoPath);
-            const baseBranch = await mm.currentBranch();
-            await mm.merge(report.worktree.branch, baseBranch);
-            await mm.cleanup(report.worktree.path, report.worktree.branch);
-          } catch {
-            // Merge or cleanup failed — the worktree is left in place for
-            // manual resolution; the run is still marked completed.
+          // Verify the worktree hasn't drifted since approval: recompute the
+          // diff and compare the digest. A mismatch means the changes the user
+          // approved are not what would be merged.
+          const mm = new MergeManager(input.repoPath);
+          const baseBranch = await mm.currentBranch();
+          const verifyDiff = await mm.getDiff(report.worktree!.branch, baseBranch);
+          if (computeDigest(verifyDiff.patch) !== actionDigest) {
+            await mm.cleanup(report.worktree.path, report.worktree.branch).catch(() => {});
+            this.#emitTerminal(
+              runId,
+              { kind: "failed", message: "worktree content changed after approval", data: report },
+              "failed",
+              { failureCode: "review_drifted", failureMessage: "The worktree content changed after approval." },
+            );
+          } else {
+            try {
+              await mm.merge(report.worktree.branch, baseBranch);
+              await mm.cleanup(report.worktree.path, report.worktree.branch);
+            } catch {
+              // Merge or cleanup failed — worktree left for manual resolution.
+            }
+            this.#emitTerminal(
+              runId,
+              { kind: "finished", message: "completed (reviewed)", data: report },
+              "completed",
+              { finalSummary: summarize(report) },
+            );
           }
+        } else if (unattended) {
+          // Nobody saw these changes, so nobody decided to discard them. The
+          // worktree stays put and the message says where to find it.
+          const detail = `no client was connected to review the changes; they are kept on ${report.worktree.branch} at ${report.worktree.path}`;
           this.#emitTerminal(
             runId,
-            { kind: "finished", message: "completed (reviewed)", data: report },
-            "completed",
-            { finalSummary: summarize(report) },
+            { kind: "failed", message: detail, data: report },
+            "failed",
+            { failureCode: "review_unattended", failureMessage: detail },
           );
         } else {
           // Rejected: clean up the worktree without merging.
@@ -822,6 +963,11 @@ export class RunRegistry {
 function summarize(report: BremioRunReport): string {
   if (report.mode === "single") return report.result.summary.slice(0, 500);
   return report.plan.summary.slice(0, 500);
+}
+
+/** Hash a diff patch into a verifiable action digest. */
+export function computeDigest(patch: string): string {
+  return `sha256:${createHash("sha256").update(patch, "utf-8").digest("hex")}`;
 }
 
 function toWireEvent(event: PersistedRunEvent): RunEvent {

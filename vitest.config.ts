@@ -15,6 +15,7 @@ export default defineConfig({
       "@bremio/adapter-opencode": path.resolve(__dirname, "packages/adapter-opencode/src/index.ts"),
       "@bremio/adapter-antigravity": path.resolve(__dirname, "packages/adapter-antigravity/src/index.ts"),
       "@bremio/adapter-local": path.resolve(__dirname, "packages/adapter-local/src/index.ts"),
+      "@bremio/daemon-client": path.resolve(__dirname, "packages/daemon-client/src/index.ts"),
     },
   },
   test: {

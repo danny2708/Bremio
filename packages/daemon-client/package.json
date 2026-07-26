@@ -1,5 +1,5 @@
 {
-  "name": "@bremio/approval",
+  "name": "@bremio/daemon-client",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,9 +9,6 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "dependencies": {
-    "@bremio/policy": "workspace:*"
-  },
-  "devDependencies": {
-    "typescript": "^5.7.0"
+    "@bremio/protocol": "workspace:*"
   }
 }

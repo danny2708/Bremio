@@ -1,9 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { z } from "zod";
-import { AntigravityAdapter } from "@bremio/adapter-antigravity";
-import { ClaudeAdapter } from "@bremio/adapter-claude";
-import { CodexAdapter } from "@bremio/adapter-codex";
-import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import {
   CreateApprovalGrantSchema,
   CreateApprovalRequestSchema,
@@ -19,10 +15,10 @@ import {
   toAqtCapacitySnapshots,
 } from "@bremio/quota";
 import { MergeManager } from "@bremio/workspace";
-import { RunRegistry } from "./runs";
+import { RunRegistry, defaultAdapters, type SessionEvent } from "./runs";
 import { isTerminal } from "./storage";
 import { mergeRun } from "./merge";
-import { listReports, loadReportByRunId } from "@bremio/orchestrator";
+import { loadReportByRunId } from "@bremio/orchestrator";
 
 /** Requests carry a prompt at most; anything larger is malformed or hostile. */
 const MAX_BODY_BYTES = 256 * 1024;
@@ -174,7 +170,8 @@ async function handle(
   }
 
   if (method === "GET" && route === "/adapters") {
-    const adapters = [new ClaudeAdapter(), new CodexAdapter(), new AntigravityAdapter(), new OpenCodeAdapter()];
+    // Same list the run path executes with — see `defaultAdapters`.
+    const adapters = defaultAdapters();
     const diagnostics = await Promise.all(
       adapters.map(async (adapter) => {
         const [health, capabilities, runtimeCaps] = await Promise.all([
@@ -201,12 +198,8 @@ async function handle(
 
   if (method === "GET" && route === "/runs") {
     const repoPath = url.searchParams.get("repo");
-    // Runs now come from the durable store, so history survives a restart.
-    // Legacy on-disk reports are still surfaced for runs that predate it.
-    const stored = repoPath ? await listReports(repoPath) : [];
     return sendJson(res, 200, {
       runs: registry.list(repoPath ?? undefined),
-      legacyReports: stored.map((entry) => ({ runId: entry.runId, report: entry.report })),
     });
   }
 
@@ -237,6 +230,11 @@ async function handle(
     const repoPath = url.searchParams.get("repo");
     if (!repoPath) return sendJson(res, 400, { error: "repo query parameter is required" });
     return sendJson(res, 200, { sessions: registry.sessions(repoPath) });
+  }
+
+  const sessionEvents = /^\/sessions\/([^/]+)\/events$/.exec(route);
+  if (method === "GET" && sessionEvents) {
+    return streamSessionEvents(req, res, registry, decodeURIComponent(sessionEvents[1] ?? ""));
   }
 
   const sessionDetail = /^\/sessions\/([^/]+)$/.exec(route);
@@ -447,6 +445,14 @@ async function handle(
     return sendJson(res, 200, { events });
   }
 
+  if (method === "POST" && route === "/legacy/import") {
+    const body = (await readJsonBody(req)) as Record<string, unknown> | undefined;
+    const repoPath = typeof body?.repoPath === "string" ? body.repoPath : undefined;
+    if (!repoPath) return sendJson(res, 400, { error: "repoPath is required" });
+    const result = await registry.importReports(repoPath);
+    return sendJson(res, 200, result);
+  }
+
   return sendJson(res, 404, { error: `unknown endpoint: ${method} ${route}` });
 }
 
@@ -549,6 +555,32 @@ function streamEvents(
     res.end();
     return;
   }
+
+  const keepAlive = setInterval(() => res.write(": ping\n\n"), 15_000);
+  const stop = () => {
+    clearInterval(keepAlive);
+    unsubscribe();
+  };
+  req.on("close", stop);
+  res.on("close", stop);
+}
+
+function streamSessionEvents(
+  req: IncomingMessage,
+  res: ServerResponse,
+  registry: RunRegistry,
+  sessionId: string,
+): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-store",
+    Connection: "keep-alive",
+  });
+
+  const unsubscribe = registry.subscribeSession(sessionId, (event: SessionEvent) => {
+    res.write(`event: ${event.kind}\n`);
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  });
 
   const keepAlive = setInterval(() => res.write(": ping\n\n"), 15_000);
   const stop = () => {

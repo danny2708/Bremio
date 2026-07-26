@@ -32,7 +32,7 @@ import {
   type LockResult,
 } from "./lock";
 
-export { RunRegistry, type RunEvent, type RunStatus, type StartRunInput } from "./runs";
+export { RunRegistry, type RunEvent, type RunStatus, type SessionEvent, type StartRunInput } from "./runs";
 export {
   RunStore,
   defaultDatabasePath,
@@ -80,7 +80,7 @@ export interface RunningDaemon extends DaemonHandle {
   token: string;
   endpointFile: string;
   store: RunStore;
-  /** Runs marked interrupted because a previous process died mid-flight. */
+  /** Runs marked interrupted or supervision_lost because a previous process died mid-flight. */
   reconciled: string[];
   /** How many old terminal runs were trimmed at startup. */
   pruned: number;

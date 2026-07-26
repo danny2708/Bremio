@@ -1,9 +1,12 @@
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { startDaemon, type RunningDaemon } from "./index";
 import { MINIMUM_CLIENT_PROTOCOL, PROTOCOL_VERSION } from "./endpoint";
+import { computeDigest } from "./runs";
 
 const dirs: string[] = [];
 const closers: Array<() => Promise<void>> = [];
@@ -670,5 +673,86 @@ describe("review-before-apply (S3-T4)", () => {
     // Resolving a pending approval that does NOT have an active review
     // (no pending review entry) returns false
     expect(d.registry.resolvePendingApproval(request.id, "approved")).toBe(false);
+  });
+});
+
+describe("action digest (S4-T10)", () => {
+  it("computeDigest produces a valid SHA-256 hex string", () => {
+    const input = "hello\nworld\n";
+    const expected =
+      "sha256:" + createHash("sha256").update(input, "utf-8").digest("hex");
+    expect(computeDigest(input)).toBe(expected);
+  });
+
+  it("different input produces a different digest", () => {
+    const a = computeDigest("file1 content\n");
+    const b = computeDigest("file2 content\n");
+    expect(a).not.toBe(b);
+  });
+
+  it("matches against a real git diff — integration", async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-digest-"));
+    dirs.push(repo);
+    const git = (args: string[], cwd = repo) =>
+      execFileSync("git", args, { cwd, stdio: "pipe" });
+
+    git(["init", "-q", "-b", "main"]);
+    git(["config", "user.email", "t@bremio.local"]);
+    git(["config", "user.name", "Bremio Test"]);
+    git(["config", "core.autocrlf", "false"]);
+    await fs.writeFile(path.join(repo, "README.md"), "base\n");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "init"]);
+    git(["checkout", "-q", "-b", "bremio/T1"]);
+    await fs.writeFile(path.join(repo, "FEATURE.txt"), "hello\n");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "add feature"]);
+    git(["checkout", "-q", "main"]);
+
+    const { MergeManager } = await import("@bremio/workspace");
+    const diff = await new MergeManager(repo).getDiff("bremio/T1", "main");
+    const digest = computeDigest(diff.patch);
+
+    // The digest is a real SHA-256: re-hash from scratch to verify.
+    const expected =
+      "sha256:" + createHash("sha256").update(diff.patch, "utf-8").digest("hex");
+    expect(digest).toBe(expected);
+  });
+
+  it("detects worktree drift — mismatched digest after content change", async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-drift-"));
+    dirs.push(repo);
+    const git = (args: string[], cwd = repo) =>
+      execFileSync("git", args, { cwd, stdio: "pipe" });
+
+    git(["init", "-q", "-b", "main"]);
+    git(["config", "user.email", "t@bremio.local"]);
+    git(["config", "user.name", "Bremio Test"]);
+    git(["config", "core.autocrlf", "false"]);
+    await fs.writeFile(path.join(repo, "README.md"), "base\n");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "init"]);
+
+    // Simulate an approved diff
+    git(["checkout", "-q", "-b", "bremio/T1"]);
+    await fs.writeFile(path.join(repo, "FEATURE.txt"), "original\n");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "original content"]);
+
+    const { MergeManager } = await import("@bremio/workspace");
+    const mm = new MergeManager(repo);
+    const originalDiff = await mm.getDiff("bremio/T1", "main");
+    const approvedDigest = computeDigest(originalDiff.patch);
+
+    // Now change the worktree branch content (drift)
+    await fs.writeFile(path.join(repo, "FEATURE.txt"), "tampered\n");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "tampered content"]);
+
+    git(["checkout", "-q", "main"]);
+    const verifyDiff = await mm.getDiff("bremio/T1", "main");
+    const actualDigest = computeDigest(verifyDiff.patch);
+
+    expect(actualDigest).not.toBe(approvedDigest);
   });
 });

@@ -31,7 +31,7 @@
       "@bremio/adapter-antigravity": ["./packages/adapter-antigravity/src/index.ts"],
       "@bremio/policy": ["./packages/policy/src/index.ts"],
       "@bremio/adapter-local": ["./packages/adapter-local/src/index.ts"],
-      "@bremio/approval": ["./packages/approval/src/index.ts"]
+      "@bremio/daemon-client": ["./packages/daemon-client/src/index.ts"]
     }
   }
 }

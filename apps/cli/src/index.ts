@@ -24,7 +24,7 @@ import {
   type SingleRunHooks,
 } from "@bremio/orchestrator";
 import { validateCombination, type WorkspaceStrategy } from "@bremio/policy";
-import { ExecutionModeSchema, type ReasoningLevel } from "@bremio/protocol";
+import { ExecutionModeSchema, type ReasoningLevel, type TaskStatus } from "@bremio/protocol";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
   defaultAqtDatabasePath,
@@ -34,10 +34,15 @@ import {
 } from "@bremio/quota";
 import {
   DaemonAlreadyRunningError,
-  daemonStatus,
   startDaemon,
   stopDaemon,
 } from "@bremio/daemon";
+import {
+  DaemonClient,
+  DaemonUnavailableError,
+  ProtocolMismatchError,
+  type RunEvent,
+} from "@bremio/daemon-client";
 import { mergeCommand } from "./merge";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
 import { collectComparison, printComparison, type ComparisonSide } from "./compare";
@@ -47,7 +52,8 @@ import { sessionCommandFromCli } from "./session";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
 import { renderEvent } from "@bremio/event-view";
-import { c, formatEventView, printPlan, printReport, statusGlyph } from "./ui";
+import { c, formatEventView, printPlan, printReport, renderRunEvent, statusGlyph, tagStandalone } from "./ui";
+import { runViaEphemeralDaemon } from "./ephemeral";
 
 declare const __BREMIO_VERSION__: string | undefined;
 const VERSION = typeof __BREMIO_VERSION__ === "string"
@@ -90,6 +96,8 @@ ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --comparison <id>       Link this run to a controlled Single/Team experiment.
   --escalate              Auto-approve escalation to Team when Single fails verification.
   --json                  Print the report as JSON (suppresses progress).
+  --standalone            Run in-process, not through the daemon; run is
+                          not visible in the shared panel.
   --verbose               Emit structured operational logs to stderr.
 
 ${c.bold("compare")}  collect a controlled Single-vs-Team calibration pair
@@ -163,6 +171,7 @@ function parseCli() {
       isolated: { type: "boolean", default: false },
       escalate: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
+      standalone: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
       help: { type: "boolean", short: "h", default: false },
@@ -384,6 +393,91 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
   }
 }
 
+async function runViaDaemon(values: Values, prompt: string, mode: "single" | "team", json: boolean): Promise<boolean> {
+  const client = new DaemonClient();
+  try {
+    await client.connect();
+  } catch {
+    return false;
+  }
+
+  const repoPath = path.resolve(values.repo as string);
+  const request = {
+    mode,
+    repoPath,
+    prompt,
+    agentId: (mode === "single" ? values.agent : values.lead) as string,
+    ...(values.worker ? { workerId: values.worker } : {}),
+    ...(values.model ? { model: values.model } : {}),
+    ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
+    ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
+    ...(values.concurrency !== undefined ? { maxConcurrency: Number(values.concurrency) } : {}),
+    ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
+    ...(values["workspace-strategy"]
+      ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
+      : values.isolated ? { workspaceStrategy: "isolated-worktree" as const } : {}),
+  };
+
+  const ac = new AbortController();
+  let cancelling = false;
+  let runId: string | undefined;
+  const collectedEvents: RunEvent[] = [];
+
+  const onInt = () => {
+    if (cancelling) {
+      console.error(c.red("\nforce exit"));
+      process.exit(130);
+    }
+    cancelling = true;
+    console.error(c.yellow("\n⚠ cancelling run (Ctrl+C again to force)…"));
+    ac.abort();
+    if (runId) client.cancelRun(runId).catch(() => {});
+  };
+
+  process.on("SIGINT", onInt);
+
+  try {
+    const { run } = await client.startRun(request);
+    runId = run.id;
+    if (!json) console.log(c.dim(`run started via daemon (id: ${runId})`));
+
+    await client.streamEvents(runId, (event) => {
+      if (json) {
+        collectedEvents.push(event);
+        return;
+      }
+      console.log(renderRunEvent(event));
+    }, ac.signal);
+  } catch (err) {
+    if (!ac.signal.aborted) {
+      console.error(c.red(`\ndaemon run failed: ${(err as Error).message}`));
+      return true;
+    }
+    // Aborted due to cancellation — stream stop is expected
+  } finally {
+    process.off("SIGINT", onInt);
+  }
+
+  // Post-stream: show run summary
+  if (runId) {
+    try {
+      const detail = await client.runDetail(runId, repoPath);
+      if (json) {
+        console.log(JSON.stringify({ run: detail.run, events: collectedEvents }, null, 2));
+      } else if (detail.run?.status) {
+        const glyph = statusGlyph(detail.run.status as TaskStatus);
+        const events = detail.events;
+        const fileCount = events?.filter((e) => e.kind === "task-complete").length ?? 0;
+        console.log(`  ${glyph} ${c.dim(`${fileCount > 0 ? `${fileCount} file(s), ` : ""}run: ${detail.run.id}`)}`);
+      }
+    } catch {
+      // best-effort; the daemon might have shut down already
+    }
+  }
+
+  return true;
+}
+
 async function runCommand(values: Values, positionals: string[]): Promise<void> {
   const prompt = (values.prompt ?? positionals.slice(1).join(" ")).trim();
   const errors: string[] = [];
@@ -540,7 +634,34 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     }
   }
 
+  // S4-T5: try the persistent daemon first; if unavailable, start an ephemeral
+  // daemon in-process (same protocol, no 2nd implementation — docs/15 §5).
+  // Only --standalone skips both and runs in-process directly.
   const json = values.json === true;
+  if (!values.standalone) {
+    if (mode && await runViaDaemon(values, prompt, mode, json)) return;
+    if (mode && await runViaEphemeralDaemon({
+      mode,
+      repoPath: path.resolve(values.repo as string),
+      prompt,
+      agentId: (mode === "single" ? values.agent : values.lead) as string,
+      ...(values.worker ? { workerId: values.worker } : {}),
+      ...(values.model ? { model: values.model } : {}),
+      ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
+      ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
+      ...(values.concurrency !== undefined ? { maxConcurrency: Number(values.concurrency) } : {}),
+      ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
+      ...(values["workspace-strategy"]
+        ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
+        : values.isolated ? { workspaceStrategy: "isolated-worktree" as const } : {}),
+    }, json, VERSION)) return;
+    console.error(c.red("error: the Bremio daemon is not running."
+      + "\n  Start it with:  bremio daemon start"
+      + "\n  Or bypass it:   bremio run --standalone ..."));
+    process.exitCode = 1;
+    return;
+  }
+
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
   const registry = createRegistry([
     new ClaudeAdapter(),
@@ -658,6 +779,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         ...(escComparisonId ? { comparisonId: escComparisonId } : {}),
       });
 
+      tagStandalone(report, values.standalone);
       if (json) console.log(JSON.stringify(report, null, 2));
       else printReport(report);
 
@@ -677,6 +799,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
             ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
           });
 
+          tagStandalone(teamReport, values.standalone);
           if (json) console.log(JSON.stringify(teamReport, null, 2));
           else {
             console.log(c.dim("\n── escalated Team run ──"));
@@ -714,6 +837,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
               ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
             });
 
+            tagStandalone(teamReport, values.standalone);
             if (json) console.log(JSON.stringify(teamReport, null, 2));
             else {
               console.log(c.dim("\n── escalated Team run ──"));
@@ -759,6 +883,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(isAuto && autoReason ? { autoModeReason: autoReason } : {}),
     });
 
+    tagStandalone(report, values.standalone);
     if (json) console.log(JSON.stringify(report, null, 2));
     else printReport(report);
 
@@ -977,15 +1102,23 @@ async function runDaemonForeground(): Promise<number> {
 }
 
 async function reportDaemonStatus(): Promise<number> {
-  const status = await daemonStatus();
-  if (status.running) {
-    console.log(`${c.green("running")} — 127.0.0.1:${status.endpoint.port} (pid ${status.endpoint.pid})`);
-    console.log(c.dim(`  version ${status.endpoint.daemonVersion} · protocol ${status.endpoint.protocolVersion}`));
-    console.log(c.dim(`  started ${status.endpoint.startedAt}`));
+  const client = new DaemonClient();
+  try {
+    const endpoint = await client.connect();
+    const meta = await client.handshake();
+    console.log(`${c.green("running")} — 127.0.0.1:${endpoint.port} (pid ${endpoint.pid})`);
+    console.log(c.dim(`  version ${meta.daemonVersion} · protocol ${meta.protocolVersion}`));
+    if (endpoint.startedAt) console.log(c.dim(`  started ${endpoint.startedAt}`));
+    return 0;
+  } catch (err) {
+    if (err instanceof ProtocolMismatchError) {
+      console.error(err.message);
+      return 1;
+    }
+    const detail = err instanceof DaemonUnavailableError ? err.message : String(err);
+    console.log(`${c.yellow("not running")} — ${detail}`);
     return 0;
   }
-  console.log(`${c.yellow("not running")} — ${status.detail}`);
-  return status.staleEndpoint ? 1 : 0;
 }
 
 async function stopDaemonCommand(): Promise<number> {
