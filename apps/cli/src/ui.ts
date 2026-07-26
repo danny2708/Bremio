@@ -60,6 +60,15 @@ export function renderRunEvent(event: {
   return formatEventView(renderEvent(agentEv));
 }
 
+export function tagStandalone(report: unknown, standalone: boolean | undefined): void {
+  if (standalone && typeof report === "object" && report !== null) {
+    const r = report as Record<string, unknown>;
+    r.standalone = true;
+    r.persistence = "standalone";
+    r.syncStatus = "not-shared";
+  }
+}
+
 export function printPlan(
   plan: Plan,
   assign: Map<string, string>,

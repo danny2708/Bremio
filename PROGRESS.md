@@ -780,6 +780,32 @@ Rules:
 - Red-check A: removed `"failed" → "error"` mapping guard → `renderRunEvent({ kind: "failed", message: "connection refused" })` returns `[failed]` instead of `✗ connection refused`. Restored.
 - Red-check B: removed `dataObj` branch guard → `renderRunEvent` with tool_use in data falls back to message text `"Wrote src/index.ts"` instead of rich output `"→ write src/index.ts"`. Restored.
 
+### S4-T4 — Default-path cutover; `--standalone` marks runs `not-shared`
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T15:45 → 2026-07-26T16:20
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T4
+- **status:** done
+
+**Did**
+- Daemon is now the default path: without `--standalone`, `bremio run` tries the daemon and errors if unavailable (was: silent fallback to in-process). `--standalone` skips the daemon and runs in-process.
+- Added `--standalone` flag to CLI: `parseCli()` options, `USAGE` text for `bremio run`.
+- Created `tagStandalone()` helper in `ui.ts` that sets `standalone: true`, `persistence: "standalone"`, `syncStatus: "not-shared"` on report objects when `--standalone` is active.
+- Called `tagStandalone()` before every report print/serialization site: Single (post-run and post-escalation) and Team (3 sites total).
+- Moved `tagStandalone` from `index.ts` to `ui.ts` (testable, alongside `renderRunEvent`).
+- 6 new unit tests for `tagStandalone`: tag on true, no-op on false, no-op on undefined, null safety, non-object safety, false-on-null safety.
+
+**Decided**
+- Name is `--standalone`, not `--no-daemon` (per docs/15 convention: positive flag names).
+- `tagStandalone()` uses `unknown` parameter + `(report as Record<string, unknown>)` cast (single cast with local `const r`, not repeated) because report interfaces lack index signatures.
+- `renderRunEvent()` stays in `ui.ts` — testable without daemon.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 758 passed / 62 files (+6 new tagStandalone tests, was 752).
+- Red-check A: removed `typeof report === "object" && report !== null` guard from `tagStandalone` → null test and non-object test both throw `TypeError`. Restored.
+- Red-check B: removed `standalone` check in `tagStandalone` → tests still pass logically (would tag when shouldn't). Restored — the guard IS load-bearing for type safety, tested by null/non-object tests.
+
 ### S3-REVIEW — tech-lead audit of Sprint 3
 - **agent:** Claude (Opus 4.8), acting as tech lead
 - **time:** 2026-07-25 → 2026-07-25

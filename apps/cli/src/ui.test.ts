@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assessCapacity } from "@bremio/quota";
 import { redactDeep } from "./diagnostics";
-import { printReport, renderRunEvent } from "./ui";
+import { printReport, renderRunEvent, tagStandalone } from "./ui";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -208,5 +208,41 @@ describe("renderRunEvent (S4-T3)", () => {
     // "lead" is not a known type → "[lead]", message in detail
     const line = renderRunEvent({ kind: "lead", message: "Claude is analyzing" });
     expect(line).toBe("[lead]");
+  });
+});
+
+describe("tagStandalone (S4-T4)", () => {
+  it("tags a report object when standalone is true", () => {
+    const report: Record<string, unknown> = { runId: "test", mode: "single" };
+    tagStandalone(report, true);
+    expect(report.standalone).toBe(true);
+    expect(report.persistence).toBe("standalone");
+    expect(report.syncStatus).toBe("not-shared");
+  });
+
+  it("leaves the report untouched when standalone is false", () => {
+    const report: Record<string, unknown> = { runId: "test" };
+    tagStandalone(report, false);
+    expect(report.standalone).toBeUndefined();
+    expect(report.persistence).toBeUndefined();
+    expect(report.syncStatus).toBeUndefined();
+  });
+
+  it("leaves the report untouched when standalone is undefined", () => {
+    const report: Record<string, unknown> = { runId: "test" };
+    tagStandalone(report, undefined);
+    expect(report.standalone).toBeUndefined();
+  });
+
+  it("handles null report without crashing", () => {
+    expect(() => tagStandalone(null, true)).not.toThrow();
+  });
+
+  it("handles non-object report without crashing", () => {
+    expect(() => tagStandalone("not an object", true)).not.toThrow();
+  });
+
+  it("does not mutate the object when standalone is false even on null", () => {
+    expect(() => tagStandalone(null, false)).not.toThrow();
   });
 });

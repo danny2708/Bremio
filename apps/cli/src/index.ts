@@ -52,7 +52,7 @@ import { sessionCommandFromCli } from "./session";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
 import { renderEvent } from "@bremio/event-view";
-import { c, formatEventView, printPlan, printReport, renderRunEvent, statusGlyph } from "./ui";
+import { c, formatEventView, printPlan, printReport, renderRunEvent, statusGlyph, tagStandalone } from "./ui";
 
 declare const __BREMIO_VERSION__: string | undefined;
 const VERSION = typeof __BREMIO_VERSION__ === "string"
@@ -95,6 +95,8 @@ ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --comparison <id>       Link this run to a controlled Single/Team experiment.
   --escalate              Auto-approve escalation to Team when Single fails verification.
   --json                  Print the report as JSON (suppresses progress).
+  --standalone            Run in-process, not through the daemon; run is
+                          not visible in the shared panel.
   --verbose               Emit structured operational logs to stderr.
 
 ${c.bold("compare")}  collect a controlled Single-vs-Team calibration pair
@@ -168,6 +170,7 @@ function parseCli() {
       isolated: { type: "boolean", default: false },
       escalate: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
+      standalone: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
       help: { type: "boolean", short: "h", default: false },
@@ -630,9 +633,17 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     }
   }
 
-  // S4-T2: attempt run via daemon when available; fall back to in-process.
+  // S4-T4: daemon is the default path.  Without --standalone, the daemon must
+  // be available; with --standalone, skip the daemon and run in-process.
   const json = values.json === true;
-  if (mode && await runViaDaemon(values, prompt, mode, json)) return;
+  if (!values.standalone) {
+    if (mode && await runViaDaemon(values, prompt, mode, json)) return;
+    console.error(c.red("error: the Bremio daemon is not running."
+      + "\n  Start it with:  bremio daemon start"
+      + "\n  Or bypass it:   bremio run --standalone ..."));
+    process.exitCode = 1;
+    return;
+  }
 
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
   const registry = createRegistry([
@@ -751,6 +762,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         ...(escComparisonId ? { comparisonId: escComparisonId } : {}),
       });
 
+      tagStandalone(report, values.standalone);
       if (json) console.log(JSON.stringify(report, null, 2));
       else printReport(report);
 
@@ -770,6 +782,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
             ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
           });
 
+          tagStandalone(teamReport, values.standalone);
           if (json) console.log(JSON.stringify(teamReport, null, 2));
           else {
             console.log(c.dim("\n── escalated Team run ──"));
@@ -807,6 +820,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
               ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
             });
 
+            tagStandalone(teamReport, values.standalone);
             if (json) console.log(JSON.stringify(teamReport, null, 2));
             else {
               console.log(c.dim("\n── escalated Team run ──"));
@@ -852,6 +866,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(isAuto && autoReason ? { autoModeReason: autoReason } : {}),
     });
 
+    tagStandalone(report, values.standalone);
     if (json) console.log(JSON.stringify(report, null, 2));
     else printReport(report);
 
