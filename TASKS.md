@@ -107,7 +107,7 @@ by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 | [x] | S4-T7 | Daemon startup reconciliation → `interrupted` / `supervision_lost` | M | S4-T1 | ‖ S4-T5 |
 | [x] | S4-T8 | Multi-client SSE fan-out + replay | M | S4-T1 | ‖ S4-T7 |
 | [x] | S4-T9 | **Resolve the two approval implementations.** Deleted `packages/approval` (dead, in-memory, imported by nothing). The daemon's SQLite implementation is the single source of truth. | L | — | ‖ everything |
-| [ ] | S4-T10 | Make the action digest real at its one production call site. `runs.ts` `#startReview` passes the literal `sha256:worktree-<runId>`, so nothing is bound and nothing is verified on apply — the anti-substitution property S3-T1 exists for is not delivered where approvals actually happen. Bind the diff, and verify before merging the worktree. | M | S4-T9 | — |
+| [x] | S4-T10 | Make the action digest real at its one production call site. `runs.ts` `#startReview` passes the literal `sha256:worktree-<runId>`, so nothing is bound and nothing is verified on apply — the anti-substitution property S3-T1 exists for is not delivered where approvals actually happen. Bind the diff, and verify before merging the worktree. | M | S4-T9 | — |
 
 **Sprint gate:** a run started in the CLI appears live in the panel with the same
 run id, and vice versa. No `legacy-` pseudo-sessions remain.

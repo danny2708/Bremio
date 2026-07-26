@@ -8,6 +8,7 @@ import {
   type BremioRunReport,
 } from "@bremio/orchestrator";
 import type { ReasoningLevel } from "@bremio/protocol";
+import { createHash } from "node:crypto";
 import {
   classifyAgentError,
   processSupervisor,
@@ -595,10 +596,11 @@ export class RunRegistry {
     runId: string,
     report: import("@bremio/orchestrator").SingleRunReport,
     repoPath: string,
-  ): Promise<"approved" | "rejected"> {
+  ): Promise<{ decision: "approved" | "rejected"; actionDigest: string }> {
     const wt = report.worktree!;
     const baseBranch = await new MergeManager(repoPath).currentBranch();
     const diff = await new MergeManager(repoPath).getDiff(wt.branch, baseBranch);
+    const actionDigest = computeDigest(diff.patch);
 
     const { request } = this.createApprovalRequest({
       sessionId: runId,
@@ -606,7 +608,7 @@ export class RunRegistry {
       actionClass: "write",
       actionTarget: wt.branch,
       actionDescription: `review-before-apply: ${report.result.filesChanged.length} files changed in ${wt.branch}`,
-      actionDigest: `sha256:worktree-${report.runId}`,
+      actionDigest,
       risk: "medium",
     });
 
@@ -624,7 +626,7 @@ export class RunRegistry {
       },
     });
 
-    return await new Promise<"approved" | "rejected">((resolve) => {
+    const decision = await new Promise<"approved" | "rejected">((resolve) => {
       this.#pendingReviews.set(request.id, {
         runId,
         requestId: request.id,
@@ -636,6 +638,8 @@ export class RunRegistry {
         resolve,
       });
     });
+
+    return { decision, actionDigest };
   }
 
   /**
@@ -754,23 +758,36 @@ export class RunRegistry {
         report.worktree &&
         report.result.status === "completed"
       ) {
-        const decision = await this.#startReview(runId, report, input.repoPath);
+        const { decision, actionDigest } = await this.#startReview(runId, report, input.repoPath);
         if (decision === "approved") {
-          try {
-            const mm = new MergeManager(input.repoPath);
-            const baseBranch = await mm.currentBranch();
-            await mm.merge(report.worktree.branch, baseBranch);
-            await mm.cleanup(report.worktree.path, report.worktree.branch);
-          } catch {
-            // Merge or cleanup failed — the worktree is left in place for
-            // manual resolution; the run is still marked completed.
+          // Verify the worktree hasn't drifted since approval: recompute the
+          // diff and compare the digest. A mismatch means the changes the user
+          // approved are not what would be merged.
+          const mm = new MergeManager(input.repoPath);
+          const baseBranch = await mm.currentBranch();
+          const verifyDiff = await mm.getDiff(report.worktree!.branch, baseBranch);
+          if (computeDigest(verifyDiff.patch) !== actionDigest) {
+            await mm.cleanup(report.worktree.path, report.worktree.branch).catch(() => {});
+            this.#emitTerminal(
+              runId,
+              { kind: "failed", message: "worktree content changed after approval", data: report },
+              "failed",
+              { failureCode: "review_drifted", failureMessage: "The worktree content changed after approval." },
+            );
+          } else {
+            try {
+              await mm.merge(report.worktree.branch, baseBranch);
+              await mm.cleanup(report.worktree.path, report.worktree.branch);
+            } catch {
+              // Merge or cleanup failed — worktree left for manual resolution.
+            }
+            this.#emitTerminal(
+              runId,
+              { kind: "finished", message: "completed (reviewed)", data: report },
+              "completed",
+              { finalSummary: summarize(report) },
+            );
           }
-          this.#emitTerminal(
-            runId,
-            { kind: "finished", message: "completed (reviewed)", data: report },
-            "completed",
-            { finalSummary: summarize(report) },
-          );
         } else {
           // Rejected: clean up the worktree without merging.
           try {
@@ -900,6 +917,11 @@ export class RunRegistry {
 function summarize(report: BremioRunReport): string {
   if (report.mode === "single") return report.result.summary.slice(0, 500);
   return report.plan.summary.slice(0, 500);
+}
+
+/** Hash a diff patch into a verifiable action digest. */
+export function computeDigest(patch: string): string {
+  return `sha256:${createHash("sha256").update(patch, "utf-8").digest("hex")}`;
 }
 
 function toWireEvent(event: PersistedRunEvent): RunEvent {

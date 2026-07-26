@@ -954,6 +954,30 @@ Rules:
 - Red-check A: removed `#publishSession` in `start()` → "broadcasts session-updated when a run is added" fails with `expected +0 to be 1`. Restored.
 - Red-check B: removed `#publishSession` in `createSessionConfig()` → "broadcasts session-updated when session config is created" fails with `expected +0 to be 1`. Restored.
 
+### S4-T10 — Make the action digest real at its one production call site
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T18:30 → closed
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T10
+- **status:** done
+
+**Did**
+- Added `computeDigest()` helper that SHA-256 hashes `diff.patch`
+- Modified `#startReview` to hash `diff.patch` and return `actionDigest` alongside decision
+- Added verification in `#execute`: recompute diff on approval, compare digest, fail with `review_drifted` on mismatch, proceed with merge on match
+- 4 new tests (pure function, different-input, git-integration, drift-detection)
+- 721 tests pass
+
+**Decided**
+- Digest format: `sha256:<64-char-hex>` — a single token, parsable by prefix
+- Wrap digest computation in `computeDigest()` (exported, unit-testable) rather than inlining
+- Return digest from `#startReview` rather than storing in `PendingReview` (cleaner ownership)
+
+**Verification**
+- `computeDigest` produces `createHash`-verified output
+- Git integration test verifies real `MergeManager.getDiff` + `computeDigest` round-trip
+- Drift test confirms changed worktree produces different digest
+
 ### S4-T9 — Resolve the two approval implementations (delete `packages/approval`)
 - **agent:** Claude (opencode)
 - **time:** 2026-07-26T18:15 → 2026-07-26T18:25
