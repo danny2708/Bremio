@@ -1088,6 +1088,37 @@ Rules:
 **Blocked / handed off**
 - None
 
+### S5-T3 — Diff API
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T22:30 → 2026-07-26T23:05
+- **branch:** s5/change-transparency
+- **task(s):** S5-T3
+- **status:** done
+
+**Did**
+- Added `DiffResultSchema` (`{ stat: string, patch: string }`) to `packages/protocol/src/result.ts` — Zod schema exported from `index.ts`
+- Added `diff: DiffResultSchema.optional()` to `TaskResultSchema` — each task result can carry its git diff
+- Added `diff?: { stat: string; patch: string }` to `SingleAgentResult` interface
+- Computed and attached diff in `single-run.ts`: for direct-workspace uses `git add -A` + `git diff --cached` (captures tracked + untracked changes) + committed diff if HEAD moved; for isolated-worktree uses `git show` on the capture commit hash
+- Computed and attached diff in `scheduler.ts`: uses `git show` on the worktree's capture commit hash (best-effort, wrapped in try/catch)
+- Added diff assertions to 3 existing tests: verify `report.result.diff` is defined and contains expected file paths
+- 732 tests pass, typecheck clean
+
+**Decided**
+- Diff is computed as part of report assembly rather than a separate query — consumers read it from the stored report without needing repo access
+- For direct-workspace, the diff combines committed changes (`git diff before..after`) and all uncommitted changes including new files (`git add -A` + `git diff --cached`, then `git reset` to restore index)
+- The scheduler diff is best-effort (try/catch) because fake workspace implementations in tests may not have real git commit objects
+- `DiffResult` has no `error` field — if the diff can't be computed, the field is simply absent
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/orchestrator/src/single-run.test.ts --no-cache` — 14/14 passed
+- `corepack pnpm test` — 732 passed / 63 files
+- Red-check: removed the `git add -A` + `git diff --cached` block in `single-run.ts` → `includes filesRead and changeLedger: expected undefined to be defined` + `changeLedger contains both: expected undefined to be defined`. Restored.
+
+**Blocked / handed off**
+- None
+
 ### S5-T2 — Attribution: distinguish user edits from agent edits
 - **agent:** Claude (opencode)
 - **time:** 2026-07-26T22:00 → 2026-07-26T22:20

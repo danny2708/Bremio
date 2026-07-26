@@ -35,6 +35,7 @@ export {
   ChangeSourceSchema,
   TurnFileChangeSchema,
   AttributionSchema,
+  DiffResultSchema,
   type TaskResult,
   type TaskStatus,
   type ReasoningLevel,
@@ -45,6 +46,7 @@ export {
   type ChangeSource,
   type TurnFileChange,
   type Attribution,
+  type DiffResult,
 } from "./result";
 
 export {

@@ -497,6 +497,11 @@ describe("runSingleAgent", () => {
     );
     expect(writeEntry).toBeDefined();
     expect(writeEntry!.attributedTo).toBe("agent");
+
+    // Diff API — report contains git stat/patch for changed files
+    expect(report.result.diff).toBeDefined();
+    expect(report.result.diff!.stat).toContain("DIRECT.txt");
+    expect(report.result.diff!.patch).toContain("DIRECT.txt");
   });
 
   it("attributes changed files: git-committed → agent, pre-existing dirty → user", async () => {
@@ -539,6 +544,10 @@ describe("runSingleAgent", () => {
     for (const entry of report.result.changeLedger) {
       expect(entry.attributedTo).toBe("agent");
     }
+
+    // Diff API — isolated worktree report contains the worktree diff
+    expect(report.result.diff).toBeDefined();
+    expect(report.result.diff!.stat).toContain("DIRECT.txt");
   });
 
   it("changeLedger contains both git-sourced writes and event-sourced reads", async () => {
@@ -590,6 +599,10 @@ describe("runSingleAgent", () => {
     );
     expect(writeEntry).toBeDefined();
     expect(writeEntry!.attributedTo).toBe("agent");
+
+    // Diff API — report contains diff for both written and read files
+    expect(report.result.diff).toBeDefined();
+    expect(report.result.diff!.stat).toContain("FEATURE.txt");
   });
 
   it("runs a Single agent in an isolated worktree when workspaceStrategy is isolated-worktree", async () => {

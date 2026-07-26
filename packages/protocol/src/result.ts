@@ -48,6 +48,13 @@ export type ChangeSource = z.infer<typeof ChangeSourceSchema>;
 export const AttributionSchema = z.enum(["agent", "user"]);
 export type Attribution = z.infer<typeof AttributionSchema>;
 
+/** Git diff output — stat (summary) and patch (full diff). */
+export const DiffResultSchema = z.object({
+  stat: z.string(),
+  patch: z.string(),
+});
+export type DiffResult = z.infer<typeof DiffResultSchema>;
+
 /** A single file operation recorded during a turn, with provenance. */
 export const TurnFileChangeSchema = z.object({
   filePath: z.string(),
@@ -75,6 +82,8 @@ export const TaskResultSchema = z.object({
   filesRead: z.array(z.string()).default([]),
   /** Aggregated change ledger with provenance labels. */
   changeLedger: z.array(TurnFileChangeSchema).default([]),
+  /** Git diff (stat + patch) for the changes this task made. */
+  diff: DiffResultSchema.optional(),
   commandsExecuted: z.array(z.string()).default([]),
   tests: z.array(TestRunSchema).default([]),
   findings: z.array(FindingSchema).default([]),

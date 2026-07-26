@@ -1,6 +1,10 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { AgentAdapter } from "@bremio/adapter-sdk";
 import type { AgentEvent, Attribution, ChangeType, Plan, Task, TaskResult, TurnFileChange } from "@bremio/protocol";
 import { TaskLog, type WorktreeManager } from "@bremio/workspace";
+
+const execFileAsync = promisify(execFile);
 import { appendLedgerEntry } from "./ledger";
 import { permissionForKind, roleForKind, topologicalOrder } from "./router";
 import { buildTaskPrompt } from "./plan-schema";
@@ -326,6 +330,17 @@ async function runOneTask(
     })),
   ];
 
+  let diff: { stat: string; patch: string } | undefined;
+  if (collected.commitHash) {
+    try {
+      const [stat, patch] = await Promise.all([
+        execFileAsync("git", ["show", "--stat", "--format=", collected.commitHash], { cwd: worktree.path, encoding: "utf8" }).then(r => r.stdout.trim()),
+        execFileAsync("git", ["show", "--format=", "--no-ext-diff", collected.commitHash], { cwd: worktree.path, encoding: "utf8" }).then(r => r.stdout.trim()),
+      ]);
+      if (stat || patch) diff = { stat, patch };
+    } catch { /* best-effort — diff is metadata, not a gate */ }
+  }
+
   return {
     taskId: task.id,
     agentId,
@@ -334,6 +349,7 @@ async function runOneTask(
     filesChanged: collected.filesChanged,
     filesRead,
     changeLedger,
+    ...(diff ? { diff } : {}),
     commandsExecuted: run.commands,
     tests,
     findings,

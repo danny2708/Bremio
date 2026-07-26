@@ -55,6 +55,8 @@ export interface SingleAgentResult {
   filesRead: string[];
   /** Structured change ledger with provenance labels, per turn. */
   changeLedger: TurnFileChange[];
+  /** Git diff (stat + patch) for the changes this run made. */
+  diff?: { stat: string; patch: string };
   commandsExecuted: string[];
   tests: TestRun[];
   sessionId?: string;
@@ -263,13 +265,41 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
   let filesChanged: string[];
   let committedFiles: string[] = [];
   let after = before;
+  let diff: { stat: string; patch: string } | undefined;
   if (workspaceStrategy === "isolated-worktree" && worktreeManager && taskWorktree) {
     const collectRes = await worktreeManager.collect(taskWorktree);
     filesChanged = collectRes.filesChanged;
+    if (collectRes.commitHash) {
+      const [stat, patch] = await Promise.all([
+        execFileAsync("git", ["show", "--stat", "--format=", collectRes.commitHash], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout.trim()),
+        execFileAsync("git", ["show", "--format=", "--no-ext-diff", collectRes.commitHash], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout.trim()),
+      ]);
+      if (stat || patch) diff = { stat, patch };
+    }
   } else {
     after = await captureWorkspaceState(repoPath);
     committedFiles = await filesChangedBetween(repoPath, before.head, after.head);
     filesChanged = [...new Set([...committedFiles, ...after.dirtyFiles])].sort();
+    // Compute diff: committed changes (if HEAD moved) + working tree changes
+    // (tracked + untracked). Use git add + diff --cached to capture new files.
+    const hasCommitted = before.head && after.head && before.head !== after.head;
+    await execFileAsync("git", ["add", "-A"], { cwd: repoPath });
+    const [[committedPatch, committedStat], [dirtyPatch, dirtyStat]] = await Promise.all([
+      hasCommitted
+        ? Promise.all([
+            execFileAsync("git", ["diff", before.head!, after.head!], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+            execFileAsync("git", ["diff", "--stat", before.head!, after.head!], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+          ])
+        : Promise.resolve(["", ""]),
+      Promise.all([
+        execFileAsync("git", ["diff", "--cached"], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+        execFileAsync("git", ["diff", "--cached", "--stat"], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+      ]),
+    ]);
+    await execFileAsync("git", ["reset"], { cwd: repoPath });
+    const patch = [committedPatch, dirtyPatch].filter(Boolean).join("\n").trim();
+    const stat = [committedStat, dirtyStat].filter(Boolean).join("\n").trim();
+    if (patch || stat) diff = { stat, patch };
   }
   let status = collected.outcome.status;
   let error = collected.outcome.error;
@@ -311,6 +341,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     filesChanged,
     filesRead,
     changeLedger,
+    ...(diff ? { diff } : {}),
     commandsExecuted: collected.commands,
     tests: collected.tests,
     ...(collected.outcome.sessionId ? { sessionId: collected.outcome.sessionId } : {}),
