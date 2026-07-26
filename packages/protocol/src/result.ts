@@ -44,11 +44,17 @@ export type ChangeType = z.infer<typeof ChangeTypeSchema>;
 export const ChangeSourceSchema = z.enum(["git", "event"]);
 export type ChangeSource = z.infer<typeof ChangeSourceSchema>;
 
+/** Who we attribute the change to. */
+export const AttributionSchema = z.enum(["agent", "user"]);
+export type Attribution = z.infer<typeof AttributionSchema>;
+
 /** A single file operation recorded during a turn, with provenance. */
 export const TurnFileChangeSchema = z.object({
   filePath: z.string(),
   changeType: ChangeTypeSchema,
   source: ChangeSourceSchema,
+  /** Whether the agent or the user caused this change. */
+  attributedTo: AttributionSchema,
 });
 export type TurnFileChange = z.infer<typeof TurnFileChangeSchema>;
 

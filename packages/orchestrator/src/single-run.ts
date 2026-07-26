@@ -4,7 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { canBackControlMode, type ControlMode, type WorkspaceStrategy } from "@bremio/policy";
 import type { AdapterRuntimeCapabilities } from "@bremio/adapter-sdk";
-import type { AgentEvent, ChangeType, ReasoningLevel, TaskStatus, TestRun, TurnFileChange, UsageSummary } from "@bremio/protocol";
+import type { AgentEvent, Attribution, ChangeType, ReasoningLevel, TaskStatus, TestRun, TurnFileChange, UsageSummary } from "@bremio/protocol";
 import { prepareTurnExecution, type TurnMechanismDecision } from "@bremio/harness";
 import { TaskLog, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
 import { appendLedgerEntry, ledgerPathFor } from "./ledger";
@@ -252,6 +252,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
       commands: [],
       tests: [],
       filesRead: [],
+      filesWritten: [],
     };
   } finally {
     if (timer) clearTimeout(timer);
@@ -260,13 +261,14 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
   }
 
   let filesChanged: string[];
+  let committedFiles: string[] = [];
   let after = before;
   if (workspaceStrategy === "isolated-worktree" && worktreeManager && taskWorktree) {
     const collectRes = await worktreeManager.collect(taskWorktree);
     filesChanged = collectRes.filesChanged;
   } else {
     after = await captureWorkspaceState(repoPath);
-    const committedFiles = await filesChangedBetween(repoPath, before.head, after.head);
+    committedFiles = await filesChangedBetween(repoPath, before.head, after.head);
     filesChanged = [...new Set([...committedFiles, ...after.dirtyFiles])].sort();
   }
   let status = collected.outcome.status;
@@ -276,9 +278,30 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     error = `single-agent run timed out after ${opts.timeoutMs}ms`;
   }
   const filesRead = [...new Set(collected.filesRead)].sort();
+  const filesWritten = [...new Set(collected.filesWritten)].sort();
+  // Attribution combines three evidence sources. A change is the agent's when:
+  //  1. the agent committed it via git, or
+  //  2. a Write/Edit tool_use event named the file, or
+  //  3. the file lives in an isolated worktree the agent alone touches.
+  // Everything else is the user's (conservative — never present unattributable
+  // changes as the agent's).
+  const committedSet = new Set(committedFiles);
+  const writtenSet = new Set(filesWritten);
+  const isAgentWrite = (f: string) =>
+    workspaceStrategy === "isolated-worktree" || committedSet.has(f) || writtenSet.has(f);
   const changeLedger: TurnFileChange[] = [
-    ...filesChanged.map((f) => ({ filePath: f, changeType: "write" as ChangeType, source: "git" as const })),
-    ...filesRead.map((f) => ({ filePath: f, changeType: "read" as ChangeType, source: "event" as const })),
+    ...filesChanged.map((f) => ({
+      filePath: f,
+      changeType: "write" as ChangeType,
+      source: "git" as const,
+      attributedTo: (isAgentWrite(f) ? "agent" : "user") as Attribution,
+    })),
+    ...filesRead.map((f) => ({
+      filePath: f,
+      changeType: "read" as ChangeType,
+      source: "event" as const,
+      attributedTo: "agent" as Attribution,
+    })),
   ];
   const result: SingleAgentResult = {
     status,

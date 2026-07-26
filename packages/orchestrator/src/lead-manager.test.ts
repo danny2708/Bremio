@@ -18,6 +18,7 @@ function run(finalText?: string, structured?: unknown): CollectedRun {
     commands: [],
     tests: [],
     filesRead: [],
+    filesWritten: [],
   };
 }
 

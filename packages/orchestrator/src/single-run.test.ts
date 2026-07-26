@@ -53,6 +53,13 @@ class SingleMockAdapter implements AgentAdapter {
     this.requests.push(request);
     const ts = Date.now();
     yield { type: "started", runId: request.runId, ts };
+    yield {
+      type: "tool_use",
+      runId: request.runId,
+      ts,
+      name: "Write",
+      input: { file_path: "DIRECT.txt" },
+    };
     await fs.writeFile(path.join(request.cwd, "DIRECT.txt"), "single mode\n", "utf8");
     if (this.emitShellEvidence) {
       yield {
@@ -482,11 +489,56 @@ describe("runSingleAgent", () => {
     expect(report.result.changeLedger).toBeDefined();
     expect(Array.isArray(report.result.changeLedger)).toBe(true);
 
-    // The mock adapter wrote DIRECT.txt — that should be in the ledger.
+    // The mock adapter wrote DIRECT.txt — that should be attributed to agent
+    // since it was committed via git.
     expect(report.result.filesChanged).toContain("DIRECT.txt");
-    expect(report.result.changeLedger.some(
-      (c) => c.filePath === "DIRECT.txt" && c.changeType === "write" && c.source === "git",
-    )).toBe(true);
+    const writeEntry = report.result.changeLedger.find(
+      (c) => c.filePath === "DIRECT.txt" && c.changeType === "write",
+    );
+    expect(writeEntry).toBeDefined();
+    expect(writeEntry!.attributedTo).toBe("agent");
+  });
+
+  it("attributes changed files: git-committed → agent, pre-existing dirty → user", async () => {
+    // Create a pre-existing dirty file before the run
+    await fs.writeFile(path.join(repoPath, "user-edit.txt"), "user content\n", "utf8");
+    const adapter = new SingleMockAdapter();
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "write a file",
+      registry: createRegistry([adapter]),
+    });
+
+    // DIRECT.txt was committed by the adapter via git → agent
+    const agentEntry = report.result.changeLedger.find(
+      (c) => c.filePath === "DIRECT.txt",
+    );
+    expect(agentEntry).toBeDefined();
+    expect(agentEntry!.attributedTo).toBe("agent");
+
+    // user-edit.txt was dirty before and not committed by the agent → user
+    const userEntry = report.result.changeLedger.find(
+      (c) => c.filePath === "user-edit.txt",
+    );
+    expect(userEntry).toBeDefined();
+    expect(userEntry!.attributedTo).toBe("user");
+  });
+
+  it("isolated worktree: all changes attributed to agent", async () => {
+    const adapter = new SingleMockAdapter();
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "isolated edit",
+      registry: createRegistry([adapter]),
+      workspaceStrategy: "isolated-worktree",
+    });
+
+    expect(report.result.filesChanged).toContain("DIRECT.txt");
+    for (const entry of report.result.changeLedger) {
+      expect(entry.attributedTo).toBe("agent");
+    }
   });
 
   it("changeLedger contains both git-sourced writes and event-sourced reads", async () => {
@@ -503,6 +555,13 @@ describe("runSingleAgent", () => {
         name: "read",
         input: { file_path: "README.md" },
       };
+      yield {
+        type: "tool_use",
+        runId: request.runId,
+        ts: Date.now(),
+        name: "edit",
+        input: { filepath: "FEATURE.txt" },
+      };
       await fs.writeFile(path.join(request.cwd, "FEATURE.txt"), "hello\n", "utf8");
       yield { type: "tool_use", runId: request.runId, ts: Date.now(), name: "shell", input: { command: "pnpm test" } };
       yield { type: "tool_result", runId: request.runId, ts: Date.now(), name: "shell", ok: true, exitCode: 0 };
@@ -516,17 +575,21 @@ describe("runSingleAgent", () => {
       registry: createRegistry([adapter]),
     });
 
-    // Event-sourced read from README.md
+    // Event-sourced read from README.md — attributed to agent (reads are always agent)
     expect(report.result.filesRead).toContain("README.md");
-    expect(report.result.changeLedger.some(
-      (c) => c.filePath === "README.md" && c.changeType === "read" && c.source === "event",
-    )).toBe(true);
+    const readEntry = report.result.changeLedger.find(
+      (c) => c.filePath === "README.md" && c.changeType === "read",
+    );
+    expect(readEntry).toBeDefined();
+    expect(readEntry!.attributedTo).toBe("agent");
 
-    // Git-sourced write from FEATURE.txt (written by the adapter override)
+    // Git-sourced write from FEATURE.txt (written by the adapter override) — committed → agent
     expect(report.result.filesChanged).toContain("FEATURE.txt");
-    expect(report.result.changeLedger.some(
-      (c) => c.filePath === "FEATURE.txt" && c.changeType === "write" && c.source === "git",
-    )).toBe(true);
+    const writeEntry = report.result.changeLedger.find(
+      (c) => c.filePath === "FEATURE.txt" && c.changeType === "write",
+    );
+    expect(writeEntry).toBeDefined();
+    expect(writeEntry!.attributedTo).toBe("agent");
   });
 
   it("runs a Single agent in an isolated worktree when workspaceStrategy is isolated-worktree", async () => {

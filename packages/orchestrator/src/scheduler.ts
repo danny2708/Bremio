@@ -1,5 +1,5 @@
 import type { AgentAdapter } from "@bremio/adapter-sdk";
-import type { AgentEvent, ChangeType, Plan, Task, TaskResult, TurnFileChange } from "@bremio/protocol";
+import type { AgentEvent, Attribution, ChangeType, Plan, Task, TaskResult, TurnFileChange } from "@bremio/protocol";
 import { TaskLog, type WorktreeManager } from "@bremio/workspace";
 import { appendLedgerEntry } from "./ledger";
 import { permissionForKind, roleForKind, topologicalOrder } from "./router";
@@ -310,9 +310,20 @@ async function runOneTask(
   }
 
   const filesRead = [...new Set(run.filesRead)].sort();
+  // Team tasks always use isolated worktrees — all changes belong to the agent.
   const changeLedger: TurnFileChange[] = [
-    ...collected.filesChanged.map((f) => ({ filePath: f, changeType: "write" as ChangeType, source: "git" as const })),
-    ...filesRead.map((f) => ({ filePath: f, changeType: "read" as ChangeType, source: "event" as const })),
+    ...collected.filesChanged.map((f) => ({
+      filePath: f,
+      changeType: "write" as ChangeType,
+      source: "git" as const,
+      attributedTo: "agent" as Attribution,
+    })),
+    ...filesRead.map((f) => ({
+      filePath: f,
+      changeType: "read" as ChangeType,
+      source: "event" as const,
+      attributedTo: "agent" as Attribution,
+    })),
   ];
 
   return {

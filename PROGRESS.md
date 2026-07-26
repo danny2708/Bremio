@@ -1081,9 +1081,41 @@ Rules:
 - Adding `filesRead: []` and `changeLedger: []` defaults to failing test code that constructs `SingleAgentResult`/`TaskResult` manually — fixed 9 sites across the repo
 
 **Verification**
+- `corepack pnpm typecheck` - clean
+- `corepack pnpm test` - 730 passed / 63 files
+- Red-check for file read extraction: removed `"read"` from `READ_TOOLS` in `stream.ts` → `extracts file reads from read-like tool_use events` fails with `expected ['src/utils.ts', 'config.ts', 'src/**/*.ts'] to deeply equal ['src/main.ts', 'src/utils.ts', 'README.md', 'config.ts', 'src/**/*.ts']` - two `name:"read"` events are no longer extracted. Restored.
+
+**Blocked / handed off**
+- None
+
+### S5-T2 — Attribution: distinguish user edits from agent edits
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T22:00 → 2026-07-26T22:20
+- **branch:** s5/change-transparency
+- **task(s):** S5-T2
+- **status:** done
+
+**Did**
+- Added `WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "edit"])` in `stream.ts` — covers common write-like tool names across adapters (Claude SDK, opencode)
+- Added `filesWritten: string[]` to `CollectedRun` (extracted from `tool_use` events via `WRITE_TOOLS`)
+- Implemented attribution logic in `single-run.ts`: combines git commits (`committedSet`), Write/Edit events (`writtenSet`), and isolated-worktree detection — conservative: unattributable → `"user"`
+- Added `attributedTo: "agent" | "user"` to `TurnFileChange` schema and `Attribution` type in protocol
+- Updated `scheduler.ts` for isolated worktrees (always `"agent"`)
+- Updated `SingleMockAdapter` and test overrides to emit Write/Edit tool events so the attribution system has event evidence
+- 3 new attribution tests + 11 existing pass (14 total in single-run.test.ts)
+- Updated `lead-manager.test.ts` and `quality-gate.test.ts` to include `filesWritten: []`
+- 732 tests pass, typecheck clean
+
+**Decided**
+- `WRITE_TOOLS` follows the same shape as `READ_TOOLS` for consistency; covers both capitalisation variants (`"Write"` / `"edit"`) across adapter SDKs
+- Single-workspace (direct) attribution uses three evidence sources: git commits, Write/Edit tool events, and isolated-worktree — a file is "agent" if any source confirms it, else "user". Reads are always "agent"
+- `attributedTo` lives on each `TurnFileChange` entry rather than splitting into separate ledgers — the consumer (UI/CLI) reads one array and checks the field
+
+**Verification**
 - `corepack pnpm typecheck` — clean
-- `corepack pnpm test` — 730 passed / 63 files
-- Red-check for file read extraction: removed `"read"` from `READ_TOOLS` in `stream.ts` → `extracts file reads from read-like tool_use events` fails with `expected ['src/utils.ts', 'config.ts', 'src/**/*.ts'] to deeply equal ['src/main.ts', 'src/utils.ts', 'README.md', 'config.ts', 'src/**/*.ts']` — two `name:"read"` events are no longer extracted. Restored.
+- `corepack pnpm vitest run packages/orchestrator/src/single-run.test.ts --no-cache` — 14/14 passed
+- `corepack pnpm test` — 732 passed / 63 files
+- Red-check: removed `"Write"` and `"edit"` from `WRITE_TOOLS` → 3 attribution tests fail with `expected 'user' to be 'agent'`. Restored.
 
 **Blocked / handed off**
 - None
