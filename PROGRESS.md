@@ -954,6 +954,27 @@ Rules:
 - Red-check A: removed `#publishSession` in `start()` → "broadcasts session-updated when a run is added" fails with `expected +0 to be 1`. Restored.
 - Red-check B: removed `#publishSession` in `createSessionConfig()` → "broadcasts session-updated when session config is created" fails with `expected +0 to be 1`. Restored.
 
+### S4-T9 — Resolve the two approval implementations (delete `packages/approval`)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T18:15 → 2026-07-26T18:25
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T9
+- **status:** done
+
+**Did**
+- Deleted `packages/approval/` (567 LOC implementation + 934 LOC tests, in-memory, imported by nothing).
+- Removed `@bremio/approval` path alias from `tsconfig.base.json`.
+- Ran `pnpm install` to update lockfile — clean.
+- Confirmed `findActiveGrant()` grant-matching logic (scope × action class × target × precedence ranking) existed only in the dead package. Not ported — it's unused code and can be added as a SQL query when/if auto-approve workflows arrive.
+
+**Decided**
+- Delete, don't delegate. Making the daemon's SQLite implementation delegate to an in-memory engine would add an indirection layer with no benefit — the SQLite code is already the production path. Any missing feature (like `findActiveGrant()`) can be added later as a store-level SQL query.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 717 passed / 62 files (minus the 57 approval tests, as expected).
+- No red-checks needed — this is a deletion, not a guard addition.
+
 ### S4-T5 — Ephemeral daemon for CI/one-shot (same protocol, no 2nd impl)
 - **agent:** Claude (opencode)
 - **time:** 2026-07-26T16:25 → 2026-07-26T17:10

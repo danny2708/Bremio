@@ -211,15 +211,11 @@ importers:
         specifier: ^4.0.0
         version: 4.4.3
 
-  packages/approval:
+  packages/daemon-client:
     dependencies:
-      '@bremio/policy':
+      '@bremio/protocol':
         specifier: workspace:*
-        version: link:../policy
-    devDependencies:
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
+        version: link:../protocol
 
   packages/event-view: {}
 
