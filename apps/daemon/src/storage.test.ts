@@ -263,8 +263,9 @@ describe("payload hygiene", () => {
 });
 
 describe("terminal status", () => {
-  it("treats interrupted as terminal for scheduling but keeps it prunable-exempt", () => {
+  it("treats interrupted and supervision_lost as terminal but keeps them prunable-exempt", () => {
     expect(isTerminal("interrupted")).toBe(true);
+    expect(isTerminal("supervision_lost")).toBe(true);
     expect(isTerminal("running")).toBe(false);
     expect(isTerminal("queued")).toBe(false);
   });

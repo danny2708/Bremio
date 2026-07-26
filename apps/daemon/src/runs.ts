@@ -140,25 +140,43 @@ export class RunRegistry {
   /**
    * Mark runs that were mid-flight when the previous process died.
    *
-   * Without this, persistence would be a regression: a crashed run used to
-   * vanish with the RAM that held it, and would now sit at `running` forever.
-   * `interrupted` is deliberately not `failed` — the daemon dying says nothing
-   * about whether the task itself was going to succeed.
+   * A run that was actively executing (`running`) had a child process we were
+   * supervising — we lost track of that process, so the status is
+   * `supervision_lost`. A run that was `queued` or `cancelling` (no active
+   * execution) is marked `interrupted`.
+   *
+   * Neither is `failed` — the daemon dying says nothing about whether the task
+   * itself was going to succeed, and the child process may still be alive.
+   * `supervision_lost` is the honest answer: we simply do not know.
    */
   reconcileOnStartup(): PersistedRun[] {
     const stranded = this.store.nonTerminalRuns();
     for (const run of stranded) {
-      this.store.appendEventWithStatus(
-        run.id,
-        "interrupted",
-        { message: "daemon restarted while this run was in flight", reason: "daemon_restart" },
-        {
-          status: "interrupted",
-          completedAt: new Date().toISOString(),
-          failureCode: "daemon_restart",
-          failureMessage: "the daemon restarted while this run was in flight",
-        },
-      );
+      if (run.status === "running") {
+        this.store.appendEventWithStatus(
+          run.id,
+          "interrupted",
+          { message: "daemon restarted while a supervised run was executing; the child process may still be alive", reason: "daemon_restart" },
+          {
+            status: "supervision_lost",
+            completedAt: new Date().toISOString(),
+            failureCode: "supervision_lost",
+            failureMessage: "the daemon restarted while a supervised run was executing; the child process may still be alive",
+          },
+        );
+      } else {
+        this.store.appendEventWithStatus(
+          run.id,
+          "interrupted",
+          { message: "daemon restarted while this run was in flight", reason: "daemon_restart" },
+          {
+            status: "interrupted",
+            completedAt: new Date().toISOString(),
+            failureCode: "daemon_restart",
+            failureMessage: "the daemon restarted while this run was in flight",
+          },
+        );
+      }
     }
     return stranded;
   }

@@ -699,6 +699,31 @@ Rules:
 
 ## Sprint 4 — One source of truth
 
+### S4-T7 — Daemon startup reconciliation → `interrupted` / `supervision_lost`
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T17:40 → 2026-07-26T17:45
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T7
+- **status:** done
+
+**Did**
+- Added `supervision_lost` to `RunStatus` union and `TERMINAL_STATUSES` in `storage.ts` — a terminal status distinct from `interrupted`, signalling the daemon lost track of a child process that may still be alive.
+- Changed `reconcileOnStartup()` in `runs.ts` to differentiate by prior run status: `running` → `supervision_lost` with `failureCode: "supervision_lost"` and message about child process; `queued`/`cancelling` → `interrupted` with `failureCode: "daemon_restart"`.
+- Updated `RunningDaemon.reconciled` doc in `index.ts` to reflect the split.
+- Modified existing lifecycle test: "marks a running run as supervision_lost, not interrupted". Two new tests: "marks a queued run as interrupted", "marks a cancelling run as interrupted, not supervision_lost".
+- Confirmed existing cancellation test ("reconciles a run stranded mid-cancellation") still expects `interrupted` — unchanged.
+- Added terminal-status test in `storage.test.ts` verifying both `supervision_lost` and `interrupted` are `isTerminal()`.
+- VSCode extension webview does not include `supervision_lost` in its rendering — not fixed in this task (falls back to "bad" badge; acceptable).
+
+**Decided**
+- `supervision_lost` is a separate terminal status (not a subclass of `interrupted`) so that clients can distinguish "daemon died during active execution" from "daemon restarted while the run was queued". The child process of a `supervision_lost` run may still be alive — the daemon just lost the pipe.
+- The VSCode webview type and badge rendering is out of scope: `supervision_lost` falls through to the "bad" badge and shows the failure message, which is not ideal but not broken. Fixing it belongs in a future panel UX task.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 768 passed / 63 files (+2 tests, was 766).
+- Red-check: removed `if (run.status === "running")` branch → "marks a running run as supervision_lost" test fails with `expected 'interrupted' to be 'supervision_lost'`. Restored.
+
 ### S4-T1 — Shared daemon client + version/capability handshake
 - **agent:** Claude (opencode)
 - **time:** 2026-07-25T15:00 → 2026-07-25T15:10

@@ -123,6 +123,8 @@ export type RunStatus =
   /** Cancellation was requested but processes survived it. Needs attention. */
   | "cancellation_failed"
   | "interrupted"
+  /** Daemon restarted while a run was executing; the child may still be alive. */
+  | "supervision_lost"
   /** Agent finished in an isolated worktree; waiting for user approval before applying changes. */
   | "pending_approval";
 
@@ -135,6 +137,7 @@ export const TERMINAL_STATUSES: readonly RunStatus[] = [
   // and only the user can decide what to do about it.
   "cancellation_failed",
   "interrupted",
+  "supervision_lost",
 ];
 
 export function isTerminal(status: RunStatus): boolean {

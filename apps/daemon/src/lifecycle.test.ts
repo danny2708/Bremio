@@ -286,12 +286,12 @@ describe("daemon lifecycle", () => {
 });
 
 describe("startup reconciliation", () => {
-  it("marks runs left mid-flight as interrupted, not failed", async () => {
+  it("marks a running run as supervision_lost, not interrupted", async () => {
     const files = await sandbox();
 
     const first = await startDaemon({ version: "test", ...files });
     const run = first.store.createRun({
-      id: "stranded",
+      id: "run-supervised",
       mode: "team",
       repositoryPath: "/tmp/repo",
       prompt: "long task",
@@ -303,13 +303,48 @@ describe("startup reconciliation", () => {
     const second = await startDaemon({ version: "test", ...files });
     closers.push(() => second.close());
 
-    expect(second.reconciled).toContain("stranded");
-    const recovered = second.store.getRun("stranded");
+    expect(second.reconciled).toContain("run-supervised");
+    const recovered = second.store.getRun("run-supervised");
     // A daemon dying says nothing about whether the task would have succeeded,
     // so this must not be recorded as a failure.
+    expect(recovered?.status).toBe("supervision_lost");
+    expect(recovered?.failureCode).toBe("supervision_lost");
+    expect(recovered?.failureMessage).toContain("child process may still be alive");
+    expect(second.store.readEvents("run-supervised").at(-1)?.type).toBe("interrupted");
+  });
+
+  it("marks a queued run as interrupted", async () => {
+    const files = await sandbox();
+
+    const first = await startDaemon({ version: "test", ...files });
+    first.store.createRun({ id: "queued-run", mode: "single", repositoryPath: "/tmp/r", prompt: "p" });
+    await first.close();
+
+    const second = await startDaemon({ version: "test", ...files });
+    closers.push(() => second.close());
+
+    expect(second.reconciled).toContain("queued-run");
+    const recovered = second.store.getRun("queued-run");
     expect(recovered?.status).toBe("interrupted");
     expect(recovered?.failureCode).toBe("daemon_restart");
-    expect(second.store.readEvents("stranded").at(-1)?.type).toBe("interrupted");
+  });
+
+  it("marks a cancelling run as interrupted, not supervision_lost", async () => {
+    const files = await sandbox();
+
+    const first = await startDaemon({ version: "test", ...files });
+    const run = first.store.createRun({ id: "cancelling-run", mode: "single", repositoryPath: "/tmp/r", prompt: "p" });
+    first.store.updateRun(run.id, { status: "cancelling" });
+    await first.close();
+
+    const second = await startDaemon({ version: "test", ...files });
+    closers.push(() => second.close());
+
+    expect(second.reconciled).toContain("cancelling-run");
+    const recovered = second.store.getRun("cancelling-run");
+    // Cancellation was in flight — no active execution to lose supervision of.
+    expect(recovered?.status).toBe("interrupted");
+    expect(recovered?.failureCode).toBe("daemon_restart");
   });
 
   it("leaves already-terminal runs untouched", async () => {
