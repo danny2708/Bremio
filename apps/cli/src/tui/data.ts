@@ -126,21 +126,39 @@ export async function loadSessions(repoPath: string): Promise<any[]> {
     // ignore
   }
 
-  // Fallback: list stored reports if no database sessions
-  const { listReports } = await import("@bremio/orchestrator");
+  // No sessions in store — try importing legacy reports from disk, then re-read.
+  if (status.running) {
+    try {
+      await fetch(`http://127.0.0.1:${status.endpoint.port}/legacy/import`, {
+        method: "POST",
+        headers: { "x-bremio-token": status.endpoint.token, "Content-Type": "application/json" },
+        body: JSON.stringify({ repoPath }),
+      });
+      const res = await fetch(
+        `http://127.0.0.1:${status.endpoint.port}/sessions?repo=${encodeURIComponent(repoPath)}`,
+        { headers: { "x-bremio-token": status.endpoint.token } },
+      );
+      if (res.ok) {
+        const data = (await res.json()) as { sessions: any[] };
+        return data.sessions ?? [];
+      }
+    } catch {
+      // Fallback to direct store import
+    }
+  }
+
   try {
-    const reports = await listReports(repoPath);
-    return reports.map((r) => ({
-      id: `legacy-${r.runId}`,
-      repositoryPath: repoPath,
-      title: r.report.mode === "single" ? r.report.prompt : r.report.plan.summary,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      turnCount: 1,
-      status: r.report.mode === "single" ? r.report.result.status : "completed",
-      isLegacy: true,
-      legacyRunId: r.runId,
-    }));
+    const store = await RunStore.open(defaultDatabasePath());
+    try {
+      const { listReports } = await import("@bremio/orchestrator");
+      const reports = await listReports(repoPath);
+      for (const entry of reports) {
+        store.importReport(entry.runId, entry.report as unknown as Record<string, unknown>, repoPath);
+      }
+      return store.listSessions(repoPath);
+    } finally {
+      store.close();
+    }
   } catch {
     return [];
   }
@@ -153,7 +171,7 @@ export async function loadSessionDetail(
   const { daemonStatus, defaultDatabasePath, RunStore } = await import("@bremio/daemon");
   const status = await daemonStatus();
 
-  if (status.running && !sessionId.startsWith("legacy-")) {
+  if (status.running) {
     try {
       const res = await fetch(
         `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(sessionId)}`,
@@ -204,52 +222,6 @@ export async function loadSessionDetail(
     }
   } catch {
     // ignore
-  }
-
-  // Handle legacy report if applicable
-  if (sessionId.startsWith("legacy-") && repoPath) {
-    const runId = sessionId.replace(/^legacy-/, "");
-    const { loadReportByRunId } = await import("@bremio/orchestrator");
-    try {
-      const stored = await loadReportByRunId(repoPath, runId);
-      if (stored) {
-        const report = stored.report;
-        const title = report.mode === "single" ? report.prompt : report.plan.summary;
-        const session = {
-          id: sessionId,
-          repositoryPath: repoPath,
-          title,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          turns: [
-            {
-              turnIndex: 0,
-              runId,
-              prompt: report.prompt,
-              status: report.mode === "single" ? report.result.status : "completed",
-            },
-          ],
-        };
-        const eventsMap = new Map<string, any[]>([
-          [
-            runId,
-            [
-              {
-                seq: 1,
-                kind: "message",
-                data: {
-                  type: "message",
-                  text: report.mode === "single" ? report.result.summary : report.plan.summary,
-                },
-              },
-            ],
-          ],
-        ]);
-        return { session, eventsMap };
-      }
-    } catch {
-      // ignore
-    }
   }
 
   return undefined;

@@ -103,7 +103,7 @@ by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 | [x] | S4-T3 | SSE rendering + cancellation parity with the in-process path | M | S4-T2 | — |
 | [x] | S4-T4 | Default-path cutover; `--standalone` marks runs `not-shared` | M | S4-T3 | — |
 | [x] | S4-T5 | Ephemeral daemon for CI/one-shot (same protocol, no 2nd impl) | M | S4-T2 | — |
-| [ ] | S4-T6 | Import `.bremio/runs/*/report.json` as `legacy-import`, idempotent | M | S4-T2 | ‖ S4-T5 |
+| [x] | S4-T6 | Import `.bremio/runs/*/report.json` as `legacy-import`, idempotent | M | S4-T2 | ‖ S4-T5 |
 | [ ] | S4-T7 | Daemon startup reconciliation → `interrupted` / `supervision_lost` | M | S4-T1 | ‖ S4-T5 |
 | [ ] | S4-T8 | Multi-client SSE fan-out + replay | M | S4-T1 | ‖ S4-T7 |
 | [ ] | S4-T9 | **Resolve the two approval implementations.** `packages/approval` (567 LOC + 934 test LOC, in-memory) is imported by nothing; the daemon re-implements the same state machine — scope, expiry, revoke, consume, precedence — over SQLite. Two sources of truth for one domain, free to drift. Either delete the package or make the daemon delegate to it. **Needs a decision before starting.** | L | — | ‖ everything |

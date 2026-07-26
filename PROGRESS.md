@@ -872,6 +872,35 @@ Rules:
 - Red-check C: plan-mode gate removed → home-dir fixture fails, outside-workspace
   fixture still passes, which is what identified it as vacuous. Restored.
 
+### S4-T6 — Import `.bremio/runs/*/report.json` as `legacy-import`, idempotent
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T17:20 → 2026-07-26T17:35
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T6
+- **status:** done
+
+**Did**
+- Added `importReport(reportRunId, report, repoPath)` to `RunStore` in `storage.ts`: creates a session + run with `provenance: "legacy-import"`, preserves original timestamps, idempotent via `orchestrator_run_id` lookup, creates a terminal event so the TUI has content to display.
+- Added `deriveReportStatus()` helper to `storage.ts`: maps report result status to `RunStatus`.
+- Added `importReports(repoPath)` to `RunRegistry` in `runs.ts`: scans `.bremio/runs/*/report.json` via `listReports()` from `@bremio/orchestrator`, calls `store.importReport()` for each, returns `{ imported, skipped }`.
+- Added `POST /legacy/import` route to `server.ts`: accepts `{ repoPath }`, calls `registry.importReports(repoPath)`, returns import counts.
+- Removed `legacyReports` field from `GET /runs` response — after import, all runs come from the store.
+- Removed the `legacy-` pseudo-session fallback from `data.ts` `loadSessions()`: replaced with import-then-read (via daemon HTTP or direct store).
+- Removed all `legacy-` handling from `data.ts` `loadSessionDetail()`: after import, sessions have real IDs; `startsWith("legacy-")` dead code deleted.
+- 5 new integration tests: happy path (import → session appears in `/sessions`), idempotency (second call skips), artifacts untouched on disk (file content unchanged), missing repoPath → 400, team report import with `legacy-import` provenance in session config.
+
+**Decided**
+- Import lives in the store layer (`storage.ts`) as a pure SQL operation; filesystem scanning happens in `RunRegistry` (and in the TUI's direct-store fallback) via `listReports()` from the orchestrator. This avoids coupling the SQL store to filesystem I/O.
+- Idempotency key is `orchestrator_run_id` — the original report's `runId` — which is not populated by native `createRun()`. This gives a clean collision domain that doesn't interfere with native runs.
+- Removed `legacyReports` from `GET /runs` response: after import, all runs are real store entries. The client no longer has two paths to reconcile.
+- `legacy-` pseudo-sessions are fully removed: no code path creates or reads them. The sprint gate "No `legacy-` pseudo-sessions remain" is satisfied.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 766 passed / 63 files (+5 tests, was 761).
+- Red-check A: removed `orchestrator_run_id` lookup in `importReport()` → idempotency test fails: `expected 1 to be +0` (second import creates a duplicate). Restored.
+- Red-check B: "leaves report.json untouched" test covers the acceptance criterion directly — compares file content SHA before and after import.
+
 ### S4-T5 — Ephemeral daemon for CI/one-shot (same protocol, no 2nd impl)
 - **agent:** Claude (opencode)
 - **time:** 2026-07-26T16:25 → 2026-07-26T17:10

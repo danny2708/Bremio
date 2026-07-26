@@ -465,6 +465,82 @@ export class RunStore {
     return this.getRun(input.id) as PersistedRun;
   }
 
+  /**
+   * Import a single report from disk into the store.
+   *
+   * Creates a session + run with `provenance: "legacy-import"` and preserves
+   * the original timestamp. Idempotent: if a run with the same
+   * `orchestrator_run_id` already exists, skips it and returns the existing one.
+   */
+  importReport(reportRunId: string, report: Record<string, unknown>, repoPath: string): { sessionId: string; runId: string; skipped: boolean } {
+    // Idempotency: check if this orchestrator run id was already imported.
+    const existing = this.db
+      .prepare("SELECT id, session_id FROM runs WHERE orchestrator_run_id = ?")
+      .get(reportRunId) as { id: string; session_id: string } | undefined;
+    if (existing) return { sessionId: existing.session_id, runId: existing.id, skipped: true };
+
+    const now = new Date().toISOString();
+    const createdAt = typeof report.createdAt === "string" ? report.createdAt : now;
+    const mode = report.mode === "single" ? "single" : "team";
+    const prompt = typeof report.prompt === "string" ? report.prompt : "";
+
+    const sessionId = crypto.randomUUID();
+    const identity = resolveRepositoryIdentity(repoPath);
+    this.db
+      .prepare(
+        "INSERT INTO sessions (id, repository_path, repository_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(sessionId, repoPath, identity.repositoryId, truncateTitle(prompt), createdAt, createdAt);
+
+    this.createSessionConfig({
+      sessionId,
+      mode,
+      leadAgentId: mode === "single"
+        ? (report.primaryAgentId as string | undefined)
+        : (report.leadAgentId as string | undefined),
+      provenance: "legacy-import",
+    });
+
+    const runId = `run-${Date.now().toString(36)}-${String(performance.now()).replace(".", "")}`;
+    const status = deriveReportStatus(report);
+    const leadProvider = mode === "single"
+      ? (report.primaryAgentId as string | undefined)
+      : (report.leadAgentId as string | undefined);
+
+    this.db
+      .prepare(
+        `INSERT INTO runs (id, mode, status, repository_path, prompt, created_at, updated_at,
+                           lead_provider, session_id, turn_index, orchestrator_run_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      )
+      .run(
+        runId,
+        mode,
+        status,
+        repoPath,
+        prompt,
+        createdAt,
+        now,
+        leadProvider ?? null,
+        sessionId,
+        reportRunId,
+      );
+
+    // Create a terminal event so the TUI has something to display.
+    const summary = mode === "single"
+      ? (report.result as Record<string, unknown> | undefined)?.summary
+      : (report.plan as Record<string, unknown> | undefined)?.summary;
+    const eventKind = status === "completed" ? "finished" : status === "failed" ? "failed" : "interrupted";
+    this.appendEventWithStatus(
+      runId,
+      eventKind,
+      { message: typeof summary === "string" ? summary : `imported legacy run (${reportRunId})` },
+      { status, completedAt: createdAt, orchestratorRunId: reportRunId },
+    );
+
+    return { sessionId, runId, skipped: false };
+  }
+
   getRun(id: string): PersistedRun | undefined {
     const row = this.db.prepare("SELECT * FROM runs WHERE id = ?").get(id) as
       | Record<string, unknown>
@@ -1253,6 +1329,21 @@ export function truncateTitle(prompt: string, maxLen = 80): string {
   const firstLine = prompt.split("\n")[0] ?? prompt;
   if (firstLine.length <= maxLen) return firstLine;
   return firstLine.slice(0, maxLen - 3) + "...";
+}
+
+/** Derive a `RunStatus` from a legacy report's contents. */
+export function deriveReportStatus(report: Record<string, unknown>): RunStatus {
+  if (report.mode === "single") {
+    const result = report.result as Record<string, unknown> | undefined;
+    const st = typeof result?.status === "string" ? result.status : "";
+    if (st === "completed") return "completed";
+    if (st === "cancelled") return "cancelled";
+    if (st === "failed" || st) return "failed";
+  } else {
+    // Team runs always reach a terminal quality-gate status.
+    return "completed";
+  }
+  return "completed";
 }
 
 function migrate(db: Database): void {

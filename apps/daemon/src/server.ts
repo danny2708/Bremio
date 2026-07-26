@@ -22,7 +22,7 @@ import { MergeManager } from "@bremio/workspace";
 import { RunRegistry } from "./runs";
 import { isTerminal } from "./storage";
 import { mergeRun } from "./merge";
-import { listReports, loadReportByRunId } from "@bremio/orchestrator";
+import { loadReportByRunId } from "@bremio/orchestrator";
 
 /** Requests carry a prompt at most; anything larger is malformed or hostile. */
 const MAX_BODY_BYTES = 256 * 1024;
@@ -201,12 +201,8 @@ async function handle(
 
   if (method === "GET" && route === "/runs") {
     const repoPath = url.searchParams.get("repo");
-    // Runs now come from the durable store, so history survives a restart.
-    // Legacy on-disk reports are still surfaced for runs that predate it.
-    const stored = repoPath ? await listReports(repoPath) : [];
     return sendJson(res, 200, {
       runs: registry.list(repoPath ?? undefined),
-      legacyReports: stored.map((entry) => ({ runId: entry.runId, report: entry.report })),
     });
   }
 
@@ -445,6 +441,14 @@ async function handle(
       ...(limit ? { limit: Number(limit) } : {}),
     });
     return sendJson(res, 200, { events });
+  }
+
+  if (method === "POST" && route === "/legacy/import") {
+    const body = (await readJsonBody(req)) as Record<string, unknown> | undefined;
+    const repoPath = typeof body?.repoPath === "string" ? body.repoPath : undefined;
+    if (!repoPath) return sendJson(res, 400, { error: "repoPath is required" });
+    const result = await registry.importReports(repoPath);
+    return sendJson(res, 200, result);
   }
 
   return sendJson(res, 404, { error: `unknown endpoint: ${method} ${route}` });

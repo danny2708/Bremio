@@ -438,3 +438,179 @@ describe("endpoint discovery", () => {
     expect(await readEndpoint(file)).toBeUndefined();
   });
 });
+
+describe("legacy import (S4-T6)", () => {
+  async function createReportOnDisk(
+    runsDir: string,
+    runId: string,
+    overrides: Record<string, unknown> = {},
+  ): Promise<void> {
+    const runDir = path.join(runsDir, runId);
+    await fs.mkdir(runDir, { recursive: true });
+    const report = {
+      mode: "single",
+      runId,
+      createdAt: "2026-01-15T10:00:00.000Z",
+      prompt: "legacy import test",
+      primaryAgentId: "claude",
+      repoPath: runsDir,
+      result: {
+        status: "completed",
+        summary: "imported successfully",
+        filesChanged: [],
+        commandsExecuted: [],
+        tests: [],
+        logsPath: path.join(runDir, "single.log"),
+        durationMs: 100,
+      },
+      verification: { status: "unverified", reasons: [] },
+      workspace: { dirtyBefore: [], dirtyAfter: [] },
+      ...overrides,
+    };
+    await fs.writeFile(path.join(runDir, "report.json"), JSON.stringify(report), "utf8");
+  }
+
+  it("imports a report and creates a session+run visible via /sessions", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-import-"));
+    cleanups.push(() => fs.rm(dir, { recursive: true, force: true }).catch(() => {}));
+    const runsDir = path.join(dir, "repo", ".bremio", "runs");
+    await createReportOnDisk(runsDir, "run-legacy-001");
+
+    const registry = await freshRegistry();
+    const handle = await daemon(registry);
+
+    const response = await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoPath: path.join(dir, "repo") }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { imported: number; skipped: number };
+    expect(body.imported).toBe(1);
+    expect(body.skipped).toBe(0);
+
+    // The imported session should appear in session listing.
+    const sessionsRes = await call(handle, `/sessions?repo=${encodeURIComponent(path.join(dir, "repo"))}`);
+    expect(sessionsRes.status).toBe(200);
+    const sessionsBody = (await sessionsRes.json()) as { sessions: Array<{ id: string; turnCount: number }> };
+    expect(sessionsBody.sessions).toHaveLength(1);
+    expect(sessionsBody.sessions[0]?.turnCount).toBe(1);
+  });
+
+  it("is idempotent — calling import twice skips the already-imported report", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-import-"));
+    cleanups.push(() => fs.rm(dir, { recursive: true, force: true }).catch(() => {}));
+    const runsDir = path.join(dir, "repo", ".bremio", "runs");
+    await createReportOnDisk(runsDir, "run-legacy-002");
+
+    const registry = await freshRegistry();
+    const handle = await daemon(registry);
+
+    // First import.
+    const first = await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoPath: path.join(dir, "repo") }),
+    });
+    expect(first.status).toBe(200);
+    expect(((await first.json()) as { imported: number }).imported).toBe(1);
+
+    // Second import — same repo, same reports.
+    const second = await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoPath: path.join(dir, "repo") }),
+    });
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as { imported: number; skipped: number };
+    expect(secondBody.imported).toBe(0);
+    expect(secondBody.skipped).toBe(1);
+
+    // Still exactly one session.
+    const sessionsRes = await call(handle, `/sessions?repo=${encodeURIComponent(path.join(dir, "repo"))}`);
+    const sessionsBody = (await sessionsRes.json()) as { sessions: unknown[] };
+    expect(sessionsBody.sessions).toHaveLength(1);
+  });
+
+  it("leaves the original report.json untouched on disk", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-import-"));
+    cleanups.push(() => fs.rm(dir, { recursive: true, force: true }).catch(() => {}));
+    const reportPath = path.join(dir, "repo", ".bremio", "runs", "run-legacy-003", "report.json");
+    const runsDir = path.join(dir, "repo", ".bremio", "runs");
+    const createdAt = "2026-02-20T12:00:00.000Z";
+    await createReportOnDisk(runsDir, "run-legacy-003", { createdAt });
+
+    // Read the file content BEFORE import to compare after.
+    const before = await fs.readFile(reportPath, "utf8");
+
+    const registry = await freshRegistry();
+    const handle = await daemon(registry);
+    await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoPath: path.join(dir, "repo") }),
+    });
+
+    const after = await fs.readFile(reportPath, "utf8");
+    expect(after).toBe(before);
+  });
+
+  it("rejects a request without repoPath as 400", async () => {
+    const handle = await daemon();
+    const response = await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("repoPath");
+  });
+
+  it("imports a team report with mode: team", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-import-"));
+    cleanups.push(() => fs.rm(dir, { recursive: true, force: true }).catch(() => {}));
+    const runsDir = path.join(dir, "repo", ".bremio", "runs");
+    const runDir = path.join(runsDir, "run-legacy-team");
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "report.json"),
+      JSON.stringify({
+        mode: "team",
+        runId: "run-legacy-team",
+        createdAt: "2026-03-10T08:00:00.000Z",
+        prompt: "team legacy import",
+        leadAgentId: "claude",
+        repoPath: path.join(dir, "repo"),
+        plan: { summary: "team plan", leadAgentId: "claude", tasks: [] },
+        tasks: [],
+        qualityGate: { status: "passed", testTaskIds: [], reviewTaskIds: [], reasons: [] },
+        summary: { total: 0, completed: 0, failed: 0, cancelled: 0, filesChanged: 0 },
+      }),
+      "utf8",
+    );
+
+    const registry = await freshRegistry();
+    const handle = await daemon(registry);
+
+    const response = await call(handle, "/legacy/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoPath: path.join(dir, "repo") }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { imported: number };
+    expect(body.imported).toBe(1);
+
+    // Verify the session config has legacy-import provenance.
+    const sessionsRes = await call(handle, `/sessions?repo=${encodeURIComponent(path.join(dir, "repo"))}`);
+    const sessionsBody = (await sessionsRes.json()) as { sessions: Array<{ id: string }> };
+    expect(sessionsBody.sessions).toHaveLength(1);
+    const sid = sessionsBody.sessions[0]!.id;
+
+    const cfgRes = await call(handle, `/sessions/${sid}/config`);
+    expect(cfgRes.status).toBe(200);
+    const cfgBody = (await cfgRes.json()) as { config: { provenance: string } };
+    expect(cfgBody.config.provenance).toBe("legacy-import");
+  });
+});

@@ -209,6 +209,23 @@ export class RunRegistry {
     };
   }
 
+  /**
+   * Import legacy report.json files from .bremio/runs/ into the store.
+   * Idempotent: reports already imported are skipped.
+   */
+  async importReports(repoPath: string): Promise<{ imported: number; skipped: number }> {
+    const { listReports } = await import("@bremio/orchestrator");
+    const reports = await listReports(repoPath);
+    let imported = 0;
+    let skipped = 0;
+    for (const entry of reports) {
+      const result = this.store.importReport(entry.runId, entry.report as unknown as Record<string, unknown>, repoPath);
+      if (result.skipped) skipped++;
+      else imported++;
+    }
+    return { imported, skipped };
+  }
+
   sessions(repositoryPath: string): PersistedSession[] {
     return this.store.listSessions(repositoryPath);
   }
