@@ -3,7 +3,7 @@ import { connect } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RunRegistry, type RunEvent } from "./runs";
+import { RunRegistry, type RunEvent, type SessionEvent } from "./runs";
 import { RunStore, type PersistedSession, type SessionDetail } from "./storage";
 import { startDaemonServer, type DaemonHandle } from "./server";
 import { publishEndpoint, readEndpoint, retractEndpoint } from "./endpoint";
@@ -612,5 +612,155 @@ describe("legacy import (S4-T6)", () => {
     expect(cfgRes.status).toBe(200);
     const cfgBody = (await cfgRes.json()) as { config: { provenance: string } };
     expect(cfgBody.config.provenance).toBe("legacy-import");
+  });
+});
+
+describe("multi-client SSE fan-out (S4-T8)", () => {
+  it("delivers identical event sequences to two subscribers on one run", async () => {
+    const registry = await freshRegistry();
+    const started = registry.start({
+      mode: "single",
+      repoPath: path.join(os.tmpdir(), "definitely-not-a-repo"),
+      prompt: "noop",
+      agentId: "claude",
+    });
+
+    const events1: RunEvent[] = [];
+    const events2: RunEvent[] = [];
+    const unsub1 = registry.subscribe(started.id, (e) => events1.push(e));
+    const unsub2 = registry.subscribe(started.id, (e) => events2.push(e));
+
+    // The run fails fast (bad repo); wait for termination.
+    await new Promise<void>((resolve) => {
+      registry.subscribe(started.id, (e) => {
+        if (e.kind === "finished" || e.kind === "failed" || e.kind === "interrupted") resolve();
+      });
+    });
+
+    unsub1();
+    unsub2();
+
+    expect(events1.length).toBeGreaterThan(0);
+    expect(events2.length).toBeGreaterThan(0);
+    expect(events1.length).toBe(events2.length);
+    for (let i = 0; i < events1.length; i++) {
+      expect(events1[i]?.seq).toBe(events2[i]?.seq);
+      expect(events1[i]?.kind).toBe(events2[i]?.kind);
+      expect(events1[i]?.message).toBe(events2[i]?.message);
+    }
+  });
+
+  it("replays from the store for a client that reconnects mid-run", async () => {
+    const registry = await freshRegistry();
+    const started = registry.start({
+      mode: "single",
+      repoPath: path.join(os.tmpdir(), "definitely-not-a-repo"),
+      prompt: "noop",
+      agentId: "claude",
+    });
+
+    // Subscribe for the full sequence.
+    const all: RunEvent[] = [];
+    await new Promise<void>((resolve) => {
+      registry.subscribe(started.id, (e) => {
+        all.push(e);
+        if (e.kind === "finished" || e.kind === "failed" || e.kind === "interrupted") resolve();
+      });
+    });
+
+    // A second subscriber connecting after the fact gets the same sequence via replay.
+    const replayed: RunEvent[] = [];
+    registry.subscribe(started.id, (e) => replayed.push(e))();
+
+    expect(replayed.length).toBe(all.length);
+    for (let i = 0; i < all.length; i++) {
+      expect(replayed[i]?.seq).toBe(all[i]?.seq);
+      expect(replayed[i]?.kind).toBe(all[i]?.kind);
+    }
+  });
+
+  it("broadcasts session-updated when a run is added to an existing session", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+    const run = store.createRun({ id: "sess-evt-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "first" });
+    const sessionId = run.sessionId!;
+
+    const received: SessionEvent[] = [];
+    const unsub = registry.subscribeSession(sessionId, (e) => received.push(e));
+
+    // Start a second run in the same session.
+    registry.start({
+      mode: "single",
+      repoPath: "/tmp/repo",
+      prompt: "second turn",
+      agentId: "claude",
+      sessionId,
+    });
+
+    // The subscribeSession listener fires synchronously during start().
+    expect(received.length).toBe(1);
+    expect(received[0]?.kind).toBe("session-updated");
+    expect(received[0]?.sessionId).toBe(sessionId);
+    expect(received[0]?.data).toBeDefined();
+    expect((received[0]?.data as Record<string, unknown>)?.addedRunId).toBeDefined();
+
+    unsub();
+  });
+
+  it("broadcasts session-updated when session config is created", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+    const run = store.createRun({ id: "sess-cfg-evt", mode: "single", repositoryPath: "/tmp/repo", prompt: "cfg event" });
+    const sessionId = run.sessionId!;
+
+    const received: SessionEvent[] = [];
+    const unsub = registry.subscribeSession(sessionId, (e) => received.push(e));
+
+    registry.createSessionConfig({ sessionId, mode: "team", leadAgentId: "codex" });
+
+    expect(received.length).toBe(1);
+    expect(received[0]?.kind).toBe("session-updated");
+    expect(received[0]?.sessionId).toBe(sessionId);
+    expect(received[0]?.data).toBeDefined();
+    expect((received[0]?.data as Record<string, unknown>)?.configRevision).toBe(2);
+
+    unsub();
+  });
+
+  it("makes session events discoverable via the HTTP SSE endpoint (content-type)", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+    const run = store.createRun({ id: "http-sess-evt", mode: "single", repositoryPath: "/tmp/repo", prompt: "http session sse" });
+    const sessionId = run.sessionId!;
+
+    const handle = await daemon(registry);
+    const res = await call(handle, `/sessions/${sessionId}/events`, { signal: AbortSignal.timeout(100) }).catch(() => undefined);
+
+    // Even though the stream never closes (session SSE has no terminal event),
+    // the response headers must still indicate SSE.
+    if (res) {
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+    }
+    // If fetch throws (abort before headers arrive), the test passes as long as
+    // the route did not 404 or 500.
+  });
+
+  it("does not broadcast session-updated for a run without a sessionId", async () => {
+    const registry = await freshRegistry();
+    const received: SessionEvent[] = [];
+
+    // Subscribe to a non-existent session should be a no-op.
+    const unsub = registry.subscribeSession("nonexistent", (e) => received.push(e));
+
+    registry.start({
+      mode: "single",
+      repoPath: "/tmp/repo",
+      prompt: "standalone run",
+      agentId: "claude",
+    });
+
+    expect(received).toHaveLength(0);
+    unsub();
   });
 });

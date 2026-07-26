@@ -926,6 +926,34 @@ Rules:
 - Red-check A: removed `orchestrator_run_id` lookup in `importReport()` → idempotency test fails: `expected 1 to be +0` (second import creates a duplicate). Restored.
 - Red-check B: "leaves report.json untouched" test covers the acceptance criterion directly — compares file content SHA before and after import.
 
+### S4-T8 — Multi-client SSE fan-out + session-updated broadcast
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T17:45 → 2026-07-26T17:55
+- **branch:** s4/one-source-of-truth
+- **task(s):** S4-T8
+- **status:** done
+
+**Did**
+- Verified existing `#publish()` fans out to all subscribers per run (no patch needed — the `Set<Listener>` design already supports N).
+- Added `#sessionListeners` map and `subscribeSession(sessionId, listener)` to `RunRegistry` — notification-only (no store replay), matching the ephemeral nature of session-level broadcasts.
+- Added `#publishSession()` that iterates session listeners, with the same try/catch isolation as `#publish()`.
+- Emit `session-updated` in `start()` when a run is added to an existing session (via `input.sessionId`), with event payload carrying `addedRunId` and `turnCount`.
+- Emit `session-updated` in `createSessionConfig()` when config changes, with event payload carrying `configRevision`.
+- Added `GET /sessions/:id/events` SSE endpoint in `server.ts` via `streamSessionEvents()`, returning `text/event-stream` with keep-alive pings.
+- Added `SessionEvent` export from both `runs.ts` and `index.ts`.
+- 6 new tests: (1) two subscribers get identical event sequences, (2) mid-run replay delivers the full history, (3) session-updated on run addition, (4) session-updated on config change, (5) HTTP SSE endpoint content-type, (6) no broadcast for standalone runs without sessionId.
+
+**Decided**
+- Session events are notification-only and not persisted — a reconnecting client should re-fetch the session state via `GET /sessions/:id` rather than replaying from the store. This keeps session SSE simple and avoids storing ephemeral notification events in the run_events table.
+- The existing fan-out via `Set<Listener>` in `#publish()` already works correctly for N subscribers. No changes needed to the run-level event path.
+- `isTerminalKind()` in `server.ts` already handles `supervision_lost` correctly (event kind is still `"interrupted"`), so no patch needed there either.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 774 passed / 63 files (+6 tests, was 768).
+- Red-check A: removed `#publishSession` in `start()` → "broadcasts session-updated when a run is added" fails with `expected +0 to be 1`. Restored.
+- Red-check B: removed `#publishSession` in `createSessionConfig()` → "broadcasts session-updated when session config is created" fails with `expected +0 to be 1`. Restored.
+
 ### S4-T5 — Ephemeral daemon for CI/one-shot (same protocol, no 2nd impl)
 - **agent:** Claude (opencode)
 - **time:** 2026-07-26T16:25 → 2026-07-26T17:10

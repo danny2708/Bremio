@@ -32,7 +32,7 @@ import {
   type LockResult,
 } from "./lock";
 
-export { RunRegistry, type RunEvent, type RunStatus, type StartRunInput } from "./runs";
+export { RunRegistry, type RunEvent, type RunStatus, type SessionEvent, type StartRunInput } from "./runs";
 export {
   RunStore,
   defaultDatabasePath,

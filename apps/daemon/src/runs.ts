@@ -93,6 +93,13 @@ export interface StartRunInput {
 }
 
 type Listener = (event: RunEvent) => void;
+type SessionListener = (event: SessionEvent) => void;
+
+export interface SessionEvent {
+  kind: "session-updated";
+  sessionId: string;
+  data?: Record<string, unknown>;
+}
 
 interface PendingReview {
   runId: string;
@@ -116,6 +123,7 @@ interface PendingReview {
 export class RunRegistry {
   readonly #controllers = new Map<string, AbortController>();
   readonly #listeners = new Map<string, Set<Listener>>();
+  readonly #sessionListeners = new Map<string, Set<SessionListener>>();
   /** In-flight terminations, awaited before a run is called cancelled. */
   readonly #terminations = new Map<string, Promise<TerminationOutcome>>();
   /**
@@ -261,7 +269,13 @@ export class RunRegistry {
   }
 
   createSessionConfig(input: CreateSessionConfigInput): SessionConfig {
-    return this.store.createSessionConfig(input);
+    const config = this.store.createSessionConfig(input);
+    this.#publishSession(input.sessionId, {
+      kind: "session-updated",
+      sessionId: input.sessionId,
+      data: { configRevision: config.revision },
+    });
+    return config;
   }
 
   // ── Approval requests ─────────────────────────────────────────────
@@ -397,6 +411,17 @@ export class RunRegistry {
     };
   }
 
+  /** Subscribe to session-level events (no replay — notification-only). */
+  subscribeSession(sessionId: string, listener: SessionListener): () => void {
+    const set = this.#sessionListeners.get(sessionId) ?? new Set<SessionListener>();
+    set.add(listener);
+    this.#sessionListeners.set(sessionId, set);
+    return () => {
+      set.delete(listener);
+      if (set.size === 0) this.#sessionListeners.delete(sessionId);
+    };
+  }
+
   /**
    * Request cancellation.
    *
@@ -468,6 +493,14 @@ export class RunRegistry {
     if (resolved.reason) {
       this.#emit(id, { kind: "status", message: `auto: ${resolved.reason}` });
     }
+    // Broadcast to session subscribers so a second client refreshes its view.
+    if (input.sessionId) {
+      this.#publishSession(input.sessionId, {
+        kind: "session-updated",
+        sessionId: input.sessionId,
+        data: { addedRunId: id, turnCount: this.store.sessionDetail(input.sessionId)?.turns.length },
+      });
+    }
     // Never rejects: #execute records failure as a run outcome.
     this.#executions.set(id, this.#execute(id, { ...input, mode: resolved.mode }, controller));
     return this.store.getRun(id) ?? run;
@@ -537,6 +570,16 @@ export class RunRegistry {
         listener(event);
       } catch {
         // one broken subscriber must not stop the others or the run
+      }
+    }
+  }
+
+  #publishSession(sessionId: string, event: SessionEvent): void {
+    for (const listener of this.#sessionListeners.get(sessionId) ?? []) {
+      try {
+        listener(event);
+      } catch {
+        // one broken subscriber must not stop the others
       }
     }
   }

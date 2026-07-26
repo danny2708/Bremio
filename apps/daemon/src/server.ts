@@ -19,7 +19,7 @@ import {
   toAqtCapacitySnapshots,
 } from "@bremio/quota";
 import { MergeManager } from "@bremio/workspace";
-import { RunRegistry } from "./runs";
+import { RunRegistry, type SessionEvent } from "./runs";
 import { isTerminal } from "./storage";
 import { mergeRun } from "./merge";
 import { loadReportByRunId } from "@bremio/orchestrator";
@@ -233,6 +233,11 @@ async function handle(
     const repoPath = url.searchParams.get("repo");
     if (!repoPath) return sendJson(res, 400, { error: "repo query parameter is required" });
     return sendJson(res, 200, { sessions: registry.sessions(repoPath) });
+  }
+
+  const sessionEvents = /^\/sessions\/([^/]+)\/events$/.exec(route);
+  if (method === "GET" && sessionEvents) {
+    return streamSessionEvents(req, res, registry, decodeURIComponent(sessionEvents[1] ?? ""));
   }
 
   const sessionDetail = /^\/sessions\/([^/]+)$/.exec(route);
@@ -553,6 +558,32 @@ function streamEvents(
     res.end();
     return;
   }
+
+  const keepAlive = setInterval(() => res.write(": ping\n\n"), 15_000);
+  const stop = () => {
+    clearInterval(keepAlive);
+    unsubscribe();
+  };
+  req.on("close", stop);
+  res.on("close", stop);
+}
+
+function streamSessionEvents(
+  req: IncomingMessage,
+  res: ServerResponse,
+  registry: RunRegistry,
+  sessionId: string,
+): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-store",
+    Connection: "keep-alive",
+  });
+
+  const unsubscribe = registry.subscribeSession(sessionId, (event: SessionEvent) => {
+    res.write(`event: ${event.kind}\n`);
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  });
 
   const keepAlive = setInterval(() => res.write(": ping\n\n"), 15_000);
   const stop = () => {
