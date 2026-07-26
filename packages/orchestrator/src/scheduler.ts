@@ -1,5 +1,5 @@
 import type { AgentAdapter } from "@bremio/adapter-sdk";
-import type { AgentEvent, Plan, Task, TaskResult } from "@bremio/protocol";
+import type { AgentEvent, ChangeType, Plan, Task, TaskResult, TurnFileChange } from "@bremio/protocol";
 import { TaskLog, type WorktreeManager } from "@bremio/workspace";
 import { appendLedgerEntry } from "./ledger";
 import { permissionForKind, roleForKind, topologicalOrder } from "./router";
@@ -309,12 +309,20 @@ async function runOneTask(
     }
   }
 
+  const filesRead = [...new Set(run.filesRead)].sort();
+  const changeLedger: TurnFileChange[] = [
+    ...collected.filesChanged.map((f) => ({ filePath: f, changeType: "write" as ChangeType, source: "git" as const })),
+    ...filesRead.map((f) => ({ filePath: f, changeType: "read" as ChangeType, source: "event" as const })),
+  ];
+
   return {
     taskId: task.id,
     agentId,
     status,
     summary,
     filesChanged: collected.filesChanged,
+    filesRead,
+    changeLedger,
     commandsExecuted: run.commands,
     tests,
     findings,
@@ -340,6 +348,8 @@ function cancelledResult(task: Task, agentId: string, error: string): TaskResult
     status: "cancelled",
     summary: error,
     filesChanged: [],
+    filesRead: [],
+    changeLedger: [],
     commandsExecuted: [],
     tests: [],
     findings: [],
@@ -354,6 +364,8 @@ function failedResult(task: Task, agentId: string, error: string): TaskResult {
     status: "failed",
     summary: error,
     filesChanged: [],
+    filesRead: [],
+    changeLedger: [],
     commandsExecuted: [],
     tests: [],
     findings: [],

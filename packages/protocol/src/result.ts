@@ -36,6 +36,22 @@ export const UsageSummarySchema = z.object({
 });
 export type UsageSummary = z.infer<typeof UsageSummarySchema>;
 
+/** How a file was affected during a turn. */
+export const ChangeTypeSchema = z.enum(["read", "write", "create", "delete"]);
+export type ChangeType = z.infer<typeof ChangeTypeSchema>;
+
+/** Where change evidence came from. */
+export const ChangeSourceSchema = z.enum(["git", "event"]);
+export type ChangeSource = z.infer<typeof ChangeSourceSchema>;
+
+/** A single file operation recorded during a turn, with provenance. */
+export const TurnFileChangeSchema = z.object({
+  filePath: z.string(),
+  changeType: ChangeTypeSchema,
+  source: ChangeSourceSchema,
+});
+export type TurnFileChange = z.infer<typeof TurnFileChangeSchema>;
+
 /**
  * TaskResult — what an agent returns after running one task. Collected by the
  * result-aggregator into the final report. Operational fields (worktree path,
@@ -49,6 +65,10 @@ export const TaskResultSchema = z.object({
   status: TaskStatusSchema,
   summary: z.string(),
   filesChanged: z.array(z.string()).default([]),
+  /** Files the agent read during this task (from tool_use events). */
+  filesRead: z.array(z.string()).default([]),
+  /** Aggregated change ledger with provenance labels. */
+  changeLedger: z.array(TurnFileChangeSchema).default([]),
   commandsExecuted: z.array(z.string()).default([]),
   tests: z.array(TestRunSchema).default([]),
   findings: z.array(FindingSchema).default([]),

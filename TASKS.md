@@ -118,7 +118,7 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S5-T1 | Change model: files read/written per turn, git- and event-sourced, labelled | M | S4-T2 | — |
+| [x] | S5-T1 | Change model: files read/written per turn, git- and event-sourced, labelled | M | S4-T2 | — |
 | [ ] | S5-T2 | Attribution: distinguish user edits from agent edits | M | S5-T1 | — |
 | [ ] | S5-T3 | Diff API | S | S5-T1 | — |
 | [ ] | S5-T4 | Panel diff viewer | M | S5-T3 | — |

@@ -17,6 +17,7 @@ function run(finalText?: string, structured?: unknown): CollectedRun {
     assistantText: finalText ?? "",
     commands: [],
     tests: [],
+    filesRead: [],
   };
 }
 

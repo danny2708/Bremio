@@ -116,6 +116,8 @@ function missingResult(taskId: string, agentId: string): TaskResult {
     status: "failed",
     summary: "task did not run",
     filesChanged: [],
+    filesRead: [],
+    changeLedger: [],
     commandsExecuted: [],
     tests: [],
     findings: [],

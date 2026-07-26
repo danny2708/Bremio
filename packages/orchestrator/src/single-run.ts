@@ -4,7 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { canBackControlMode, type ControlMode, type WorkspaceStrategy } from "@bremio/policy";
 import type { AdapterRuntimeCapabilities } from "@bremio/adapter-sdk";
-import type { AgentEvent, ReasoningLevel, TaskStatus, TestRun, UsageSummary } from "@bremio/protocol";
+import type { AgentEvent, ChangeType, ReasoningLevel, TaskStatus, TestRun, TurnFileChange, UsageSummary } from "@bremio/protocol";
 import { prepareTurnExecution, type TurnMechanismDecision } from "@bremio/harness";
 import { TaskLog, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
 import { appendLedgerEntry, ledgerPathFor } from "./ledger";
@@ -51,6 +51,10 @@ export interface SingleAgentResult {
   status: TaskStatus;
   summary: string;
   filesChanged: string[];
+  /** File paths the agent read (from tool_use events). */
+  filesRead: string[];
+  /** Structured change ledger with provenance labels, per turn. */
+  changeLedger: TurnFileChange[];
   commandsExecuted: string[];
   tests: TestRun[];
   sessionId?: string;
@@ -247,6 +251,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
       assistantText: "",
       commands: [],
       tests: [],
+      filesRead: [],
     };
   } finally {
     if (timer) clearTimeout(timer);
@@ -270,12 +275,19 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     status = "cancelled";
     error = `single-agent run timed out after ${opts.timeoutMs}ms`;
   }
+  const filesRead = [...new Set(collected.filesRead)].sort();
+  const changeLedger: TurnFileChange[] = [
+    ...filesChanged.map((f) => ({ filePath: f, changeType: "write" as ChangeType, source: "git" as const })),
+    ...filesRead.map((f) => ({ filePath: f, changeType: "read" as ChangeType, source: "event" as const })),
+  ];
   const result: SingleAgentResult = {
     status,
     summary: collected.outcome.finalText?.trim() ||
       collected.assistantText ||
       "Agent produced no summary.",
     filesChanged,
+    filesRead,
+    changeLedger,
     commandsExecuted: collected.commands,
     tests: collected.tests,
     ...(collected.outcome.sessionId ? { sessionId: collected.outcome.sessionId } : {}),

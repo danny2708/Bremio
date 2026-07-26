@@ -467,6 +467,68 @@ describe("runSingleAgent", () => {
     }
   });
 
+  // ── S5-T1: change model ──────────────────────────────────────────
+  it("includes filesRead and changeLedger in the report", async () => {
+    const adapter = new SingleMockAdapter();
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "write a file",
+      registry: createRegistry([adapter]),
+    });
+
+    expect(report.result.filesRead).toBeDefined();
+    expect(Array.isArray(report.result.filesRead)).toBe(true);
+    expect(report.result.changeLedger).toBeDefined();
+    expect(Array.isArray(report.result.changeLedger)).toBe(true);
+
+    // The mock adapter wrote DIRECT.txt — that should be in the ledger.
+    expect(report.result.filesChanged).toContain("DIRECT.txt");
+    expect(report.result.changeLedger.some(
+      (c) => c.filePath === "DIRECT.txt" && c.changeType === "write" && c.source === "git",
+    )).toBe(true);
+  });
+
+  it("changeLedger contains both git-sourced writes and event-sourced reads", async () => {
+    const adapter = new SingleMockAdapter();
+    // Override to emit a read tool event and write a file
+    const origStart = adapter.startRun.bind(adapter);
+    adapter.startRun = async function* (request) {
+      this.requests.push(request);
+      yield { type: "started", runId: request.runId, ts: Date.now() };
+      yield {
+        type: "tool_use",
+        runId: request.runId,
+        ts: Date.now(),
+        name: "read",
+        input: { file_path: "README.md" },
+      };
+      await fs.writeFile(path.join(request.cwd, "FEATURE.txt"), "hello\n", "utf8");
+      yield { type: "tool_use", runId: request.runId, ts: Date.now(), name: "shell", input: { command: "pnpm test" } };
+      yield { type: "tool_result", runId: request.runId, ts: Date.now(), name: "shell", ok: true, exitCode: 0 };
+      yield { type: "completed", runId: request.runId, ts: Date.now(), outcome: { status: "completed", finalText: "done" } };
+    };
+
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "read and write",
+      registry: createRegistry([adapter]),
+    });
+
+    // Event-sourced read from README.md
+    expect(report.result.filesRead).toContain("README.md");
+    expect(report.result.changeLedger.some(
+      (c) => c.filePath === "README.md" && c.changeType === "read" && c.source === "event",
+    )).toBe(true);
+
+    // Git-sourced write from FEATURE.txt (written by the adapter override)
+    expect(report.result.filesChanged).toContain("FEATURE.txt");
+    expect(report.result.changeLedger.some(
+      (c) => c.filePath === "FEATURE.txt" && c.changeType === "write" && c.source === "git",
+    )).toBe(true);
+  });
+
   it("runs a Single agent in an isolated worktree when workspaceStrategy is isolated-worktree", async () => {
     const adapter = new SingleMockAdapter();
     const registry = createRegistry([adapter]);

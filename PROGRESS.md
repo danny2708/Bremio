@@ -1054,3 +1054,36 @@ Rules:
 - Red-check B: disabled the `autoDenied` early return → "settles an unattended run" failed with `never settled (last status: pending_approval)`, reproducing the hang exactly. Restored.
 - Red-check C: dropped `OpenCodeAdapter` from `defaultAdapters()` → both existing `/adapters` tests failed (`length 4 but got 3`), proving the route and the run path now share one source. Restored.
 - Pre-existing suite before the review: 721 passed / 62 files, typecheck clean, `release:check` PASS.
+
+## Sprint 5 — Change transparency
+
+### S5-T1 — Change model: files read/written per turn, git- and event-sourced, labelled
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T21:30 → 2026-07-26T21:50
+- **branch:** s5/change-transparency
+- **task(s):** S5-T1
+- **status:** done
+
+**Did**
+- Defined `TurnFileChange`, `ChangeType`, `ChangeSource` schemas in `packages/protocol/src/result.ts`
+- Added `filesRead: string[]` to `CollectedRun` (extracted from `tool_use` events via `READ_TOOLS` set)
+- Added `filesRead` and `changeLedger` to `SingleAgentResult` and `TaskResult`
+- Added `changeLedger` builds from both git-derived writes and event-derived reads, each labelled with source and change type
+- Wired through scheduler task results and aggregator
+- 4 new tests (2 in stream.test.ts, 2 in single-run.test.ts)
+- 730 tests pass, typecheck clean
+
+**Decided**
+- `READ_TOOLS = new Set(["read", "Read", "view", "View", "grep", "Grep", "glob", "Glob"])` — covers the common read-like tool names across adapters (opencode, Claude SDK)
+- File path extraction checks three common `event.input` keys: `file_path` (Claude SDK, event-view), `filepath` (opencode adapter), `path` (generic)
+- `filesRead` is deduplicated + sorted at the report assembly point (matching `filesChanged` pattern)
+- `changeLedger` is assembled at report build time from the two sources (git-derived for writes, event-derived for reads) rather than tracked as a separate event stream — avoids storing redundant data when both sources would agree on the same file
+- Adding `filesRead: []` and `changeLedger: []` defaults to failing test code that constructs `SingleAgentResult`/`TaskResult` manually — fixed 9 sites across the repo
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 730 passed / 63 files
+- Red-check for file read extraction: removed `"read"` from `READ_TOOLS` in `stream.ts` → `extracts file reads from read-like tool_use events` fails with `expected ['src/utils.ts', 'config.ts', 'src/**/*.ts'] to deeply equal ['src/main.ts', 'src/utils.ts', 'README.md', 'config.ts', 'src/**/*.ts']` — two `name:"read"` events are no longer extracted. Restored.
+
+**Blocked / handed off**
+- None
