@@ -4,7 +4,12 @@ import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
 import { OpenCodeAdapter } from "@bremio/adapter-opencode";
-import { ReasoningLevelSchema } from "@bremio/protocol";
+import {
+  CreateApprovalGrantSchema,
+  CreateApprovalRequestSchema,
+  DecideApprovalRequestSchema,
+  ReasoningLevelSchema,
+} from "@bremio/protocol";
 import { MINIMUM_CLIENT_PROTOCOL, PROTOCOL_VERSION } from "./endpoint";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
@@ -37,6 +42,8 @@ const StartRunSchema = z.object({
   comparisonId: z.string().min(1).optional(),
   /** Continue an existing session: this run becomes its next turn. */
   sessionId: z.string().min(1).optional(),
+  workspaceStrategy: z.enum(["direct-workspace", "isolated-worktree"]).optional(),
+  controlMode: z.enum(["plan", "approve", "autopilot"]).optional(),
 });
 
 const MergeSchema = z.object({
@@ -148,6 +155,7 @@ async function handle(
         cancel: true,
         merge: true,
         retry: true,
+        approvals: true,
         // No adapter exposes a safe mid-run resume, so this stays false rather
         // than offering a button that would silently start over.
         resume: false,
@@ -169,14 +177,16 @@ async function handle(
     const adapters = [new ClaudeAdapter(), new CodexAdapter(), new AntigravityAdapter(), new OpenCodeAdapter()];
     const diagnostics = await Promise.all(
       adapters.map(async (adapter) => {
-        const [health, capabilities] = await Promise.all([
+        const [health, capabilities, runtimeCaps] = await Promise.all([
           adapter.healthCheck(),
           adapter.getCapabilities(),
+          adapter.getRuntimeCapabilities().catch(() => undefined),
         ]);
         return {
           id: adapter.id,
           health,
           capabilities,
+          runtimeCapabilities: runtimeCaps,
           // The capability contract decides eligibility, not a hardcoded list.
           leadEligible: capabilities.planning && capabilities.structuredOutput,
         };
@@ -326,6 +336,115 @@ async function handle(
     // A refused merge is a normal answer, not a server fault: the gate and the
     // dirty-tree checks are expected outcomes the UI must render.
     return sendJson(res, outcome.ok ? 200 : 409, outcome);
+  }
+
+  // ── Approval routes ────────────────────────────────────────────────
+
+  if (method === "GET" && route === "/approval/requests") {
+    const sessionId = url.searchParams.get("sessionId") ?? undefined;
+    const runId = url.searchParams.get("runId") ?? undefined;
+    const state = url.searchParams.get("state") ?? undefined;
+    return sendJson(res, 200, { requests: registry.listApprovalRequests({ sessionId, runId, state }) });
+  }
+
+  if (method === "POST" && route === "/approval/requests") {
+    const parsed = CreateApprovalRequestSchema.safeParse(await readJsonBody(req));
+    if (!parsed.success) {
+      return sendJson(res, 400, { error: "invalid request", detail: parsed.error.issues });
+    }
+    const { request, autoDenied } = registry.createApprovalRequest({
+      sessionId: parsed.data.sessionId,
+      runId: parsed.data.runId,
+      actionClass: parsed.data.actionDigest.actionClass,
+      actionTarget: parsed.data.actionDigest.target,
+      actionDescription: parsed.data.actionDigest.description,
+      actionDigest: parsed.data.actionDigest.digest,
+      risk: parsed.data.risk,
+    });
+    return sendJson(res, 201, { request, autoDenied });
+  }
+
+  const approvalRequestDetail = /^\/approval\/requests\/([^/]+)$/.exec(route);
+  if (method === "GET" && approvalRequestDetail) {
+    const id = decodeURIComponent(approvalRequestDetail[1] ?? "");
+    const req = registry.getApprovalRequest(id);
+    if (!req) return sendJson(res, 404, { error: `unknown approval request: ${id}` });
+    return sendJson(res, 200, { request: req });
+  }
+
+  const approvalDecide = /^\/approval\/requests\/([^/]+)\/decide$/.exec(route);
+  if (method === "POST" && approvalDecide) {
+    const id = decodeURIComponent(approvalDecide[1] ?? "");
+    const parsed = DecideApprovalRequestSchema.safeParse(await readJsonBody(req));
+    if (!parsed.success) {
+      return sendJson(res, 400, { error: "invalid decision", detail: parsed.error.issues });
+    }
+    const result = registry.decideApprovalRequest({
+      id,
+      decision: parsed.data.decision,
+      decidedBy: parsed.data.decidedBy,
+      reason: parsed.data.reason,
+    });
+    if (!result) return sendJson(res, 409, { error: `request ${id} is not pending` });
+
+    // If this decision resolves a pending review (S3-T4), unblock the run.
+    registry.resolvePendingApproval(id, parsed.data.decision);
+
+    return sendJson(res, 200, { request: result });
+  }
+
+  const approvalCancel = /^\/approval\/requests\/([^/]+)\/cancel$/.exec(route);
+  if (method === "POST" && approvalCancel) {
+    const id = decodeURIComponent(approvalCancel[1] ?? "");
+    const body = (await readJsonBody(req).catch(() => undefined)) as Record<string, unknown> | undefined;
+    const cancelledBy = body?.cancelledBy as string | undefined;
+    const result = registry.cancelApprovalRequest(id, cancelledBy);
+    if (!result) return sendJson(res, 409, { error: `request ${id} is not pending` });
+    return sendJson(res, 200, { request: result });
+  }
+
+  if (method === "GET" && route === "/approval/grants") {
+    const sessionId = url.searchParams.get("sessionId") ?? undefined;
+    const workspaceId = url.searchParams.get("workspaceId") ?? undefined;
+    const scope = url.searchParams.get("scope") ?? undefined;
+    return sendJson(res, 200, { grants: registry.listApprovalGrants({ sessionId, workspaceId, scope }) });
+  }
+
+  if (method === "POST" && route === "/approval/grants") {
+    const parsed = CreateApprovalGrantSchema.safeParse(await readJsonBody(req));
+    if (!parsed.success) {
+      return sendJson(res, 400, { error: "invalid grant", detail: parsed.error.issues });
+    }
+    const grant = registry.createApprovalGrant(parsed.data);
+    return sendJson(res, 201, { grant });
+  }
+
+  const approvalGrantDetail = /^\/approval\/grants\/([^/]+)$/.exec(route);
+  if (method === "GET" && approvalGrantDetail) {
+    const id = decodeURIComponent(approvalGrantDetail[1] ?? "");
+    const grant = registry.getApprovalGrant(id);
+    if (!grant) return sendJson(res, 404, { error: `unknown grant: ${id}` });
+    return sendJson(res, 200, { grant });
+  }
+
+  const approvalRevoke = /^\/approval\/grants\/([^/]+)\/revoke$/.exec(route);
+  if (method === "POST" && approvalRevoke) {
+    const id = decodeURIComponent(approvalRevoke[1] ?? "");
+    const body = (await readJsonBody(req).catch(() => undefined)) as Record<string, unknown> | undefined;
+    const revokedBy = body?.revokedBy as string | undefined;
+    const result = registry.revokeApprovalGrant(id, revokedBy);
+    if (!result) return sendJson(res, 409, { error: `grant ${id} is not active` });
+    return sendJson(res, 200, { grant: result });
+  }
+
+  if (method === "GET" && route === "/audit") {
+    const sessionId = url.searchParams.get("sessionId") ?? undefined;
+    const limit = url.searchParams.get("limit") ?? undefined;
+    const events = registry.listAuditEvents({
+      sessionId,
+      ...(limit ? { limit: Number(limit) } : {}),
+    });
+    return sendJson(res, 200, { events });
   }
 
   return sendJson(res, 404, { error: `unknown endpoint: ${method} ${route}` });

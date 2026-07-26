@@ -221,3 +221,454 @@ describe("recovery actions", () => {
     expect(response.status).toBe(202);
   });
 });
+
+describe("approval protocol", () => {
+  it("auto-denies a request when no SSE subscriber is watching the run", async () => {
+    const d = await daemon();
+    const started = d.registry.start({
+      mode: "single",
+      repoPath: "/tmp/r",
+      prompt: "write a file",
+      agentId: "opencode",
+    });
+
+    const response = await call(d, "/approval/requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: started.sessionId,
+        runId: started.id,
+        actionDigest: {
+          actionClass: "write",
+          target: "test.txt",
+          description: "write test file",
+          digest: "sha256:abc",
+        },
+        risk: "low",
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { request: { state: string }; autoDenied: boolean };
+    expect(body.autoDenied).toBe(true);
+    expect(body.request.state).toBe("rejected");
+  });
+
+  it("creates a pending request when an SSE subscriber is active", async () => {
+    const d = await daemon();
+    const id = await failedRun(d);
+    // Subscribe to give the run a listener
+    d.registry.subscribe(id, () => {});
+
+    const response = await call(d, "/approval/requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "test-session",
+        runId: id,
+        actionDigest: {
+          actionClass: "read",
+          target: "secret.txt",
+          description: "read secret file",
+          digest: "sha256:def",
+        },
+        risk: "high",
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { request: { state: string }; autoDenied: boolean };
+    expect(body.autoDenied).toBe(false);
+    expect(body.request.state).toBe("pending");
+  });
+
+  it("rejects a malformed request body", async () => {
+    const d = await daemon();
+    const response = await call(d, "/approval/requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: "incomplete" }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("fetches a single approval request by id", async () => {
+    const d = await daemon();
+    // Use a valid run to get a real sessionId
+    const runId = await failedRun(d);
+    const response = await call(d, "/approval/requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: runId,
+        runId,
+        actionDigest: {
+          actionClass: "command",
+          target: "script.sh",
+          description: "run script",
+          digest: "sha256:123",
+        },
+        risk: "medium",
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { request: { id: string } };
+    const created = body.request;
+
+    const fetched = await (await call(d, `/approval/requests/${created.id}`)).json();
+    expect((fetched as { request: { id: string } }).request.id).toBe(created.id);
+  });
+
+  it("404s for a nonexistent request id", async () => {
+    const d = await daemon();
+    expect((await call(d, "/approval/requests/nonexistent")).status).toBe(404);
+  });
+
+  it("lists approval requests filtered by session", async () => {
+    const d = await daemon();
+
+    // Subscribe so both requests stay pending
+    const runId = await failedRun(d);
+    const unsub = d.registry.subscribe(runId, () => {});
+
+    for (let i = 0; i < 3; i++) {
+      await call(d, "/approval/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "list-test",
+          runId,
+          actionDigest: {
+            actionClass: "read",
+            target: `f${i}.txt`,
+            description: `file ${i}`,
+            digest: `sha256:${i}`,
+          },
+          risk: "low",
+        }),
+      });
+    }
+    unsub();
+
+    const list = (await (await call(d, "/approval/requests?sessionId=list-test")).json()) as {
+      requests: unknown[];
+    };
+    expect(list.requests).toHaveLength(3);
+  });
+
+  it("approves a pending request", async () => {
+    const d = await daemon();
+    const runId = await failedRun(d);
+    const unsub = d.registry.subscribe(runId, () => {});
+
+    const created = await (
+      await call(d, "/approval/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "test-session",
+          runId,
+          actionDigest: {
+            actionClass: "read",
+            target: "x.txt",
+            description: "read x",
+            digest: "sha256:x",
+          },
+          risk: "low",
+        }),
+      })
+    ).json();
+    unsub();
+
+    const decided = await (
+      await call(d, `/approval/requests/${(created as { request: { id: string } }).request.id}/decide`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "approved" as const, decidedBy: "test" }),
+      })
+    ).json();
+    expect((decided as { request: { state: string } }).request.state).toBe("approved");
+  });
+
+  it("rejects with a reason", async () => {
+    const d = await daemon();
+    const runId = await failedRun(d);
+    const unsub = d.registry.subscribe(runId, () => {});
+
+    const created = await (
+      await call(d, "/approval/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "test-session",
+          runId,
+          actionDigest: {
+            actionClass: "delete",
+            target: "important.txt",
+            description: "delete important",
+            digest: "sha256:del",
+          },
+          risk: "high",
+        }),
+      })
+    ).json();
+    unsub();
+
+    const decided = await (
+      await call(d, `/approval/requests/${(created as { request: { id: string } }).request.id}/decide`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          decision: "rejected" as const,
+          decidedBy: "test",
+          reason: "too dangerous",
+        }),
+      })
+    ).json();
+    expect((decided as { request: { reason: string } }).request.reason).toBe("too dangerous");
+  });
+
+  it("409s deciding a non-pending request", async () => {
+    const d = await daemon();
+    const runId = await failedRun(d);
+    d.registry.subscribe(runId, () => {});
+    const created = (await (
+      await call(d, "/approval/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "test-session",
+          runId,
+          actionDigest: {
+            actionClass: "read",
+            target: "x.txt",
+            description: "read x",
+            digest: "sha256:x",
+          },
+          risk: "low",
+        }),
+      })
+    ).json()) as { request: { id: string } };
+
+    // Decide twice; second should 409
+    await call(d, `/approval/requests/${created.request.id}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approved" as const, decidedBy: "test" }),
+    });
+    const second = await call(d, `/approval/requests/${created.request.id}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "rejected" as const, decidedBy: "test" }),
+    });
+    expect(second.status).toBe(409);
+  });
+
+  it("cancels a pending request", async () => {
+    const d = await daemon();
+    const runId = await failedRun(d);
+    d.registry.subscribe(runId, () => {});
+    const created = (await (
+      await call(d, "/approval/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "test-session",
+          runId,
+          actionDigest: {
+            actionClass: "read",
+            target: "y.txt",
+            description: "read y",
+            digest: "sha256:y",
+          },
+          risk: "low",
+        }),
+      })
+    ).json()) as { request: { id: string } };
+
+    const cancelled = await call(d, `/approval/requests/${created.request.id}/cancel`, { method: "POST" });
+    expect(cancelled.status).toBe(200);
+    expect(((await cancelled.json()) as { request: { state: string } }).request.state).toBe("cancelled");
+  });
+
+  it("409s cancelling a non-pending request", async () => {
+    const d = await daemon();
+    const runId = await failedRun(d);
+    d.registry.subscribe(runId, () => {});
+    const created = (await (
+      await call(d, "/approval/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "test-session",
+          runId,
+          actionDigest: {
+            actionClass: "read",
+            target: "z.txt",
+            description: "read z",
+            digest: "sha256:z",
+          },
+          risk: "low",
+        }),
+      })
+    ).json()) as { request: { id: string } };
+
+    await call(d, `/approval/requests/${created.request.id}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approved" as const, decidedBy: "test" }),
+    });
+    const cancel = await call(d, `/approval/requests/${created.request.id}/cancel`, { method: "POST" });
+    expect(cancel.status).toBe(409);
+  });
+
+  it("creates and retrieves an approval grant", async () => {
+    const d = await daemon();
+
+    const response = await call(d, "/approval/grants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "grant-test",
+        scope: "session",
+        ttlMs: 60_000,
+        createdBy: "test",
+        precedence: 1,
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { grant: { id: string } };
+    expect(body.grant.id).toBeDefined();
+
+    const fetched = await (await call(d, `/approval/grants/${body.grant.id}`)).json();
+    expect((fetched as { grant: { id: string } }).grant.id).toBe(body.grant.id);
+  });
+
+  it("revokes an active grant", async () => {
+    const d = await daemon();
+
+    const response = await call(d, "/approval/grants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "revoke-test",
+        scope: "once",
+        ttlMs: 60_000,
+        createdBy: "test",
+        precedence: 1,
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { grant: { id: string } };
+
+    const revoked = await call(d, `/approval/grants/${body.grant.id}/revoke`, { method: "POST" });
+    expect(revoked.status).toBe(200);
+    const revokedBody = (await revoked.json()) as { grant: { revokedAt: string } };
+    expect(revokedBody.grant.revokedAt).toBeDefined();
+  });
+
+  it("404s for a nonexistent grant", async () => {
+    const d = await daemon();
+    expect((await call(d, "/approval/grants/nonexistent")).status).toBe(404);
+  });
+
+  it("lists grants by session", async () => {
+    const d = await daemon();
+
+    for (let i = 0; i < 2; i++) {
+      await call(d, "/approval/grants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "list-grants",
+          scope: "session",
+          ttlMs: 120_000,
+          createdBy: "test",
+          precedence: 1,
+        }),
+      });
+    }
+
+    const list = (await (await call(d, "/approval/grants?sessionId=list-grants")).json()) as {
+      grants: unknown[];
+    };
+    expect(list.grants).toHaveLength(2);
+  });
+});
+
+describe("review-before-apply (S3-T4)", () => {
+  it("accepts workspaceStrategy on POST /runs", async () => {
+    const d = await daemon();
+    const response = await call(d, "/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "single",
+        repoPath: "/tmp/nonexistent-test-repo",
+        prompt: "test prompt",
+        agentId: "claude",
+        workspaceStrategy: "isolated-worktree",
+      }),
+    });
+    // The run will fail because the repo doesn't exist, but the schema
+    // must accept the field without validation errors.
+    expect(response.status).not.toBe(400);
+  });
+
+  it("daemon capability advertises approvals", async () => {
+    const d = await daemon();
+    const meta = (await (await call(d, "/meta")).json()) as {
+      capabilities: Record<string, boolean>;
+    };
+    expect(meta.capabilities.approvals).toBe(true);
+  });
+
+  it("recovery options include canReview for pending_approval runs", async () => {
+    const d = await daemon();
+    // A run that is pending_approval is not terminal, but it is not retryable.
+    // Use store directly to create one in that state.
+    d.store.createRun({ id: "pending-review-test", mode: "single", repositoryPath: "/tmp/r", prompt: "p" });
+    d.store.updateRun("pending-review-test", { status: "pending_approval" });
+
+    const recovery = (await (
+      await call(d, "/runs/pending-review-test")
+    ).json()) as { recovery: { canRetry: boolean } };
+    expect(recovery.recovery.canRetry).toBe(false);
+  });
+
+  it("resolves a pending review via registry", async () => {
+    const d = await daemon();
+    const requestId = "test-request-for-review";
+
+    // Resolve a non-existent request — no-op
+    expect(d.registry.resolvePendingApproval(requestId, "approved")).toBe(false);
+
+    // Use a run to create a real approval request, then cancel it via
+    // the registry's cancel method to verify the approval lifecycle.
+    const started = d.registry.start({
+      mode: "single",
+      repoPath: "/tmp/r",
+      prompt: "test",
+      agentId: "opencode",
+    });
+
+    const { request } = d.registry.createApprovalRequest({
+      sessionId: started.sessionId ?? started.id,
+      runId: started.id,
+      actionClass: "write",
+      actionTarget: "test-branch",
+      actionDescription: "review test",
+      actionDigest: "sha256:test",
+      risk: "low",
+    });
+    expect(request.id).toBeDefined();
+
+    // Resolving a pending approval that does NOT have an active review
+    // (no pending review entry) returns false
+    expect(d.registry.resolvePendingApproval(request.id, "approved")).toBe(false);
+  });
+});

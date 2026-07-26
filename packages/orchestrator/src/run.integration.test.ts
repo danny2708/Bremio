@@ -390,4 +390,45 @@ describe("runBremio end-to-end (mock adapters)", () => {
       outcomeVerified: false,
     });
   });
+
+  it("refuses a control mode the worker cannot back, not only the lead", async () => {
+    // In Co-lab the worker is the agent that edits files. Gating only the lead
+    // checked the participant that mostly reads and waved through the one that
+    // writes, so a plan-mode run could be executed by an unenforced worker.
+    class WeakWorker extends MockWorker {
+      override async getCapabilities(): Promise<AgentCapabilities> {
+        return { ...FULL_CAPS, readOnlyEnforcement: "advisory" };
+      }
+    }
+
+    await expect(
+      runBremio({
+        leadId: "claude",
+        workerId: "codex",
+        repoPath: repo,
+        prompt: "anything",
+        registry: createRegistry([new MockLead(), new WeakWorker()]),
+        controlMode: "plan",
+      }),
+    ).rejects.toThrow(/worker "codex" cannot run in plan mode/);
+  });
+
+  it("still refuses a lead that cannot back the control mode", async () => {
+    class WeakLead extends MockLead {
+      override async getCapabilities(): Promise<AgentCapabilities> {
+        return { ...FULL_CAPS, readOnlyEnforcement: "unsupported" };
+      }
+    }
+
+    await expect(
+      runBremio({
+        leadId: "claude",
+        workerId: "codex",
+        repoPath: repo,
+        prompt: "anything",
+        registry: createRegistry([new WeakLead(), new MockWorker()]),
+        controlMode: "plan",
+      }),
+    ).rejects.toThrow(/lead "claude" cannot run in plan mode/);
+  });
 });

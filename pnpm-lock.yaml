@@ -211,6 +211,16 @@ importers:
         specifier: ^4.0.0
         version: 4.4.3
 
+  packages/approval:
+    dependencies:
+      '@bremio/policy':
+        specifier: workspace:*
+        version: link:../policy
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/event-view: {}
 
   packages/harness:

@@ -354,6 +354,119 @@ describe("runSingleAgent", () => {
     expect(turn1.mechanismDecision?.reason).toContain("resumableSessions is true");
   });
 
+  // ── Safety fixtures (docs/15 §6) ─────────────────────────────────────
+  it("ignored-file write: detects changes to gitignored files via --ignored flag", async () => {
+    await fs.writeFile(path.join(repoPath, ".gitignore"), "*.log\n", "utf8");
+    git(["add", ".gitignore"]);
+    git(["commit", "-q", "-m", "add gitignore"]);
+
+    const adapter = new SingleMockAdapter();
+    // Override startRun to write a gitignored file
+    const origStart = adapter.startRun.bind(adapter);
+    adapter.startRun = async function* (request: AgentRunRequest) {
+      this.requests.push(request);
+      yield { type: "started", runId: request.runId, ts: Date.now() };
+      await fs.writeFile(path.join(request.cwd, "agent.log"), "ignored output\n", "utf8");
+      yield { type: "completed", runId: request.runId, ts: Date.now(), outcome: { status: "completed", finalText: "done" } };
+    };
+
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "write a log file",
+      registry: createRegistry([adapter]),
+    });
+
+    expect(report.result.filesChanged).toContain("agent.log");
+    expect(report.workspace.dirtyAfter).toContain("agent.log");
+  });
+
+  it("outside-workspace sentinel: an agent that writes outside the repo is not detected by Bremio's own reporting", async () => {
+    // This fixture documents a *limitation*, deliberately.
+    //
+    // Its previous form created a sentinel outside the repo, never told the
+    // adapter where it was, and asserted the sentinel was unchanged. The
+    // adapter could not have written there even in principle, so the test
+    // passed with the plan-mode gate removed entirely — a green light that
+    // proved nothing, which is worse than no fixture at all.
+    //
+    // What is actually true: Bremio does not sandbox the filesystem. Keeping an
+    // agent inside the workspace is the provider's sandbox (`codex --sandbox`,
+    // `agy --mode plan`), and `captureWorkspaceState` only ever looks inside
+    // repoPath. So a write outside it is invisible to Bremio's reporting. That
+    // residual risk is pinned here rather than papered over, per docs/15 §6
+    // ("known limitations documented").
+    const sentinelDir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-sentinel-"));
+    const sentinelFile = path.join(sentinelDir, "sentinel.txt");
+    await fs.writeFile(sentinelFile, "pristine\n", "utf8");
+
+    try {
+      const adapter = new SingleMockAdapter();
+      const origStart = adapter.startRun.bind(adapter);
+      adapter.startRun = async function* (request: AgentRunRequest) {
+        this.requests.push(request);
+        yield { type: "started", runId: request.runId, ts: Date.now() };
+        // An unsandboxed adapter really can reach outside the workspace.
+        await fs.writeFile(sentinelFile, "tampered\n", "utf8");
+        yield {
+          type: "completed",
+          runId: request.runId,
+          ts: Date.now(),
+          outcome: { status: "completed", finalText: "done" },
+        };
+      };
+      void origStart;
+
+      const report = await runSingleAgent({
+        primaryAgentId: "codex",
+        repoPath,
+        prompt: "plan mode task",
+        registry: createRegistry([adapter]),
+        controlMode: "plan",
+      });
+
+      // The write really happened — so this fixture is not vacuous.
+      expect(await fs.readFile(sentinelFile, "utf8")).toBe("tampered\n");
+
+      // And Bremio saw none of it. If this assertion ever starts failing,
+      // Bremio has gained outside-workspace detection and this fixture should
+      // become a real containment test rather than a limitation record.
+      expect(report.result.filesChanged).not.toContain(sentinelFile);
+      expect(report.workspace.dirtyAfter).not.toContain(sentinelFile);
+    } finally {
+      await fs.rm(sentinelDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("home-dir sentinel: adapter that cannot back plan mode is rejected, home dir unchanged", async () => {
+    const homeSentinel = path.join(os.homedir(), ".bremio-safety-test");
+    await fs.writeFile(homeSentinel, "pristine\n", "utf8");
+
+    try {
+      // Adapter with advisory readOnlyEnforcement — cannot back plan mode
+      const weakAdapter = new SingleMockAdapter();
+      const origCaps = weakAdapter.getCapabilities.bind(weakAdapter);
+      weakAdapter.getCapabilities = async () => ({
+        ...(await origCaps()),
+        readOnlyEnforcement: "advisory",
+      });
+
+      await expect(runSingleAgent({
+        primaryAgentId: "codex",
+        repoPath,
+        prompt: "plan mode task with weak adapter",
+        registry: createRegistry([weakAdapter]),
+        controlMode: "plan",
+      })).rejects.toThrow("cannot run in plan mode");
+
+      // Home sentinel must be unchanged
+      const content = await fs.readFile(homeSentinel, "utf8");
+      expect(content).toBe("pristine\n");
+    } finally {
+      await fs.rm(homeSentinel, { force: true }).catch(() => {});
+    }
+  });
+
   it("runs a Single agent in an isolated worktree when workspaceStrategy is isolated-worktree", async () => {
     const adapter = new SingleMockAdapter();
     const registry = createRegistry([adapter]);

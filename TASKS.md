@@ -78,19 +78,19 @@ by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 
 ---
 
-## Sprint 3 — Approval lifecycle
+## Sprint 3 — Approval lifecycle ✅ COMPLETE
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S3-T1 | `ApprovalRequest` / `ApprovalDecision` / `ApprovalGrant` + action digest | L | S2-T1 | — |
-| [ ] | S3-T2 | Grant scopes (once / session / workspace), expiry, revoke, precedence | M | S3-T1 | — |
-| [ ] | S3-T3 | Protocol routes + fail-closed when non-interactive | M | S3-T1 | — |
-| [ ] | S3-T4 | Review-before-apply in an isolated worktree | L | S2-T2, S3-T1 | — |
-| [ ] | S3-T5 | Approval UX — CLI and panel share one decision surface | M | S3-T3 | — |
-| [ ] | S3-T6 | Audit log: every decision and mode transition, queryable | S | S3-T1 | ‖ S3-T5 |
-| [ ] | S3-T7 | Wire `readOnlyEnforcement` + `getRuntimeCapabilities` into run selection — Sprint 2 declared both, nothing consumes them (`canBackControlMode` is ready) | M | S2-T3, S2-T4 | ‖ S3-T1 |
-| [ ] | S3-T8 | Autopilot deny list in `AUTOPILOT_RULES` per `docs/15` §2.5, with `ApprovalGrant` as the only override | M | S3-T2 | — |
-| [ ] | S3-T9 | Safety fixtures from `docs/15` §6: outside-workspace sentinel, ignored-file write, home-dir write — the sprint-2 gate accepted argv-shape tests instead | M | S3-T7 | ‖ S3-T8 |
+| [x] | S3-T1 | `ApprovalRequest` / `ApprovalDecision` / `ApprovalGrant` + action digest | L | S2-T1 | — |
+| [x] | S3-T2 | Grant scopes (once / session / workspace), expiry, revoke, precedence | M | S3-T1 | — |
+| [x] | S3-T3 | Protocol routes + fail-closed when non-interactive | M | S3-T1 | — |
+| [x] | S3-T4 | Review-before-apply in an isolated worktree | L | S2-T2, S3-T1 | — |
+| [x] | S3-T5 | Approval UX — CLI and panel share one decision surface | M | S3-T3 | — |
+| [x] | S3-T6 | Audit log: every decision and mode transition, queryable | S | S3-T1 | ‖ S3-T5 |
+| [x] | S3-T7 | Wire `readOnlyEnforcement` + `getRuntimeCapabilities` into run selection — Sprint 2 declared both, nothing consumes them (`canBackControlMode` is ready) | M | S2-T3, S2-T4 | ‖ S3-T1 |
+| [x] | S3-T8 | Autopilot deny list in `AUTOPILOT_RULES` per `docs/15` §2.5, with `ApprovalGrant` as the only override | M | S3-T2 | — |
+| [x] | S3-T9 | Safety fixtures from `docs/15` §6: outside-workspace sentinel, ignored-file write, home-dir write — the sprint-2 gate accepted argv-shape tests instead | M | S3-T7 | ‖ S3-T8 |
 
 ---
 
@@ -106,6 +106,8 @@ by the safety fixtures in `docs/15` §6 — **not** by `git status` alone.
 | [ ] | S4-T6 | Import `.bremio/runs/*/report.json` as `legacy-import`, idempotent | M | S4-T2 | ‖ S4-T5 |
 | [ ] | S4-T7 | Daemon startup reconciliation → `interrupted` / `supervision_lost` | M | S4-T1 | ‖ S4-T5 |
 | [ ] | S4-T8 | Multi-client SSE fan-out + replay | M | S4-T1 | ‖ S4-T7 |
+| [ ] | S4-T9 | **Resolve the two approval implementations.** `packages/approval` (567 LOC + 934 test LOC, in-memory) is imported by nothing; the daemon re-implements the same state machine — scope, expiry, revoke, consume, precedence — over SQLite. Two sources of truth for one domain, free to drift. Either delete the package or make the daemon delegate to it. **Needs a decision before starting.** | L | — | ‖ everything |
+| [ ] | S4-T10 | Make the action digest real at its one production call site. `runs.ts` `#startReview` passes the literal `sha256:worktree-<runId>`, so nothing is bound and nothing is verified on apply — the anti-substitution property S3-T1 exists for is not delivered where approvals actually happen. Bind the diff, and verify before merging the worktree. | M | S4-T9 | — |
 
 **Sprint gate:** a run started in the CLI appears live in the panel with the same
 run id, and vice versa. No `legacy-` pseudo-sessions remain.

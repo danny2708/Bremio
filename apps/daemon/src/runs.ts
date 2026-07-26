@@ -17,9 +17,13 @@ import {
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
+import { MergeManager, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
 import {
   isTerminal,
+  type AuditEvent,
   type CreateSessionConfigInput,
+  type PersistedApprovalGrant,
+  type PersistedApprovalRequest,
   type PersistedRun,
   type PersistedRunEvent,
   type PersistedSession,
@@ -46,6 +50,7 @@ export interface RunEvent {
     | "task-start"
     | "task-event"
     | "task-complete"
+    | "review-requested"
     | "finished"
     | "failed"
     | "interrupted";
@@ -76,9 +81,29 @@ export interface StartRunInput {
   retryOfRunId?: string;
   /** Continues an existing session, becoming its next turn. */
   sessionId?: string;
+  /**
+   * How the agent accesses the workspace.
+   * `"direct-workspace"` (default) — agent edits the working tree directly.
+   * `"isolated-worktree"` — agent runs in a detached worktree; changes need
+   * review before being applied to the main working tree.
+   */
+  workspaceStrategy?: "direct-workspace" | "isolated-worktree";
+  /** Control mode for execution: plan | approve | autopilot. */
+  controlMode?: import("@bremio/policy").ControlMode;
 }
 
 type Listener = (event: RunEvent) => void;
+
+interface PendingReview {
+  runId: string;
+  requestId: string;
+  report: BremioRunReport;
+  mergeManager: MergeManager;
+  baseBranch: string;
+  taskBranch: string;
+  worktreePath: string;
+  resolve: (decision: "approved" | "rejected") => void;
+}
 
 /**
  * Owns run execution and its durable record.
@@ -102,6 +127,8 @@ export class RunRegistry {
   readonly #executions = new Map<string, Promise<void>>();
   /** Runs that already emitted a terminal event; nothing may follow one. */
   readonly #terminated = new Set<string>();
+  /** Reviews awaiting user approval after an isolated-worktree run completed. */
+  readonly #pendingReviews = new Map<string, PendingReview>();
   #accepting = true;
   #counter = 0;
 
@@ -200,6 +227,102 @@ export class RunRegistry {
 
   createSessionConfig(input: CreateSessionConfigInput): SessionConfig {
     return this.store.createSessionConfig(input);
+  }
+
+  // ── Approval requests ─────────────────────────────────────────────
+
+  createApprovalRequest(input: {
+    sessionId: string;
+    runId: string;
+    actionClass: string;
+    actionTarget: string;
+    actionDescription: string;
+    actionDigest: string;
+    risk: string;
+  }): { request: PersistedApprovalRequest; autoDenied: boolean } {
+    const id = `apr-${Date.now().toString(36)}-${(this.#counter += 1).toString(36)}`;
+    const request = this.store.createApprovalRequest({ id, ...input });
+
+    // Fail-closed: if no SSE subscriber is watching this run, auto-deny.
+    const hasListener = this.#listeners.get(input.runId) !== undefined &&
+      (this.#listeners.get(input.runId)?.size ?? 0) > 0;
+    if (!hasListener) {
+      const decided = this.store.decideApprovalRequest({
+        id,
+        decision: "rejected",
+        decidedBy: "system",
+        decidedAt: new Date().toISOString(),
+        reason: "Non-interactive run — no client connected to approve",
+      });
+      return { request: decided ?? request, autoDenied: true };
+    }
+
+    return { request, autoDenied: false };
+  }
+
+  listApprovalRequests(filters: {
+    sessionId?: string;
+    runId?: string;
+    state?: string;
+  } = {}): PersistedApprovalRequest[] {
+    return this.store.listApprovalRequests(filters);
+  }
+
+  decideApprovalRequest(input: {
+    id: string;
+    decision: "approved" | "rejected";
+    decidedBy: string;
+    reason?: string;
+  }): PersistedApprovalRequest | undefined {
+    return this.store.decideApprovalRequest({
+      ...input,
+      decidedAt: new Date().toISOString(),
+    });
+  }
+
+  cancelApprovalRequest(id: string, cancelledBy?: string): PersistedApprovalRequest | undefined {
+    return this.store.cancelApprovalRequest(id, cancelledBy);
+  }
+
+  getApprovalRequest(id: string): PersistedApprovalRequest | undefined {
+    return this.store.getApprovalRequest(id);
+  }
+
+  // ── Approval grants ───────────────────────────────────────────────
+
+  createApprovalGrant(input: {
+    sessionId: string;
+    workspaceId?: string;
+    scope: string;
+    actionClass?: string;
+    target?: string;
+    ttlMs: number;
+    createdBy: string;
+    precedence: number;
+    originatingDigest?: string;
+  }): PersistedApprovalGrant {
+    const id = `apg-${Date.now().toString(36)}-${(this.#counter += 1).toString(36)}`;
+    return this.store.createApprovalGrant({ id, ...input });
+  }
+
+  listApprovalGrants(filters: {
+    sessionId?: string;
+    workspaceId?: string;
+    scope?: string;
+  } = {}): PersistedApprovalGrant[] {
+    return this.store.listApprovalGrants(filters);
+  }
+
+  revokeApprovalGrant(id: string, revokedBy?: string): PersistedApprovalGrant | undefined {
+    return this.store.revokeApprovalGrant(id, revokedBy);
+  }
+
+  getApprovalGrant(id: string): PersistedApprovalGrant | undefined {
+    return this.store.getApprovalGrant(id);
+  }
+
+  listAuditEvents(filters: { sessionId?: string; limit?: number } = {}): AuditEvent[] {
+    return this.store.listAuditEvents(filters);
   }
 
   /**
@@ -383,6 +506,73 @@ export class RunRegistry {
     }
   }
 
+  // ── Review-before-apply helpers ──────────────────────────────────
+
+  /**
+   * Start a review cycle for an isolated-worktree run: create an approval
+   * request, emit a "review-requested" event, set status to pending_approval,
+   * and block until the user decides.
+   */
+  async #startReview(
+    runId: string,
+    report: import("@bremio/orchestrator").SingleRunReport,
+    repoPath: string,
+  ): Promise<"approved" | "rejected"> {
+    const wt = report.worktree!;
+    const baseBranch = await new MergeManager(repoPath).currentBranch();
+    const diff = await new MergeManager(repoPath).getDiff(wt.branch, baseBranch);
+
+    const { request } = this.createApprovalRequest({
+      sessionId: runId,
+      runId,
+      actionClass: "write",
+      actionTarget: wt.branch,
+      actionDescription: `review-before-apply: ${report.result.filesChanged.length} files changed in ${wt.branch}`,
+      actionDigest: `sha256:worktree-${report.runId}`,
+      risk: "medium",
+    });
+
+    this.store.updateRun(runId, { status: "pending_approval" });
+    this.#emit(runId, {
+      kind: "review-requested",
+      message: `approval required: ${report.result.filesChanged.length} files changed`,
+      data: {
+        requestId: request.id,
+        branch: wt.branch,
+        worktreePath: wt.path,
+        filesChanged: report.result.filesChanged,
+        diffStat: diff.stat,
+        diffPatch: diff.patch,
+      },
+    });
+
+    return await new Promise<"approved" | "rejected">((resolve) => {
+      this.#pendingReviews.set(request.id, {
+        runId,
+        requestId: request.id,
+        report,
+        mergeManager: new MergeManager(repoPath),
+        baseBranch,
+        taskBranch: wt.branch,
+        worktreePath: wt.path,
+        resolve,
+      });
+    });
+  }
+
+  /**
+   * Resolve a pending review from a user decision.
+   * Called by the approval route handler when a pending request is decided.
+   * Returns true if a pending review was resolved.
+   */
+  resolvePendingApproval(requestId: string, decision: "approved" | "rejected"): boolean {
+    const pending = this.#pendingReviews.get(requestId);
+    if (!pending) return false;
+    pending.resolve(decision);
+    this.#pendingReviews.delete(requestId);
+    return true;
+  }
+
   async #execute(
     runId: string,
     input: StartRunInput,
@@ -406,6 +596,8 @@ export class RunRegistry {
             ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
             ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
             ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
+            ...(input.workspaceStrategy ? { workspaceStrategy: input.workspaceStrategy } : {}),
+            ...(input.controlMode ? { controlMode: input.controlMode } : {}),
             hooks: {
               onStart: (id) =>
                 this.#emit(runId, { kind: "status", message: `${id} started`, agentId: id }),
@@ -425,6 +617,7 @@ export class RunRegistry {
             ...(input.timeoutMs ? { taskTimeoutMs: input.timeoutMs } : {}),
             ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
             ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
+            ...(input.controlMode ? { controlMode: input.controlMode } : {}),
             hooks: {
               onLeadStart: (id) =>
                 this.#emit(runId, { kind: "lead", message: `lead ${id} planning`, agentId: id }),
@@ -470,6 +663,53 @@ export class RunRegistry {
 
       this.#recordArtifacts(runId, report);
       this.store.updateRun(runId, { orchestratorRunId: report.runId });
+
+      // ── Review-before-apply gate (S3-T4) ───────────────────────────
+      // When the agent ran in an isolated worktree and completed, the
+      // changes must be reviewed and approved before they reach the main
+      // working tree.  The run stays at `pending_approval` until the user
+      // decides via the approval protocol.
+      if (
+        !controller.signal.aborted &&
+        input.workspaceStrategy === "isolated-worktree" &&
+        report.mode === "single" &&
+        report.worktree &&
+        report.result.status === "completed"
+      ) {
+        const decision = await this.#startReview(runId, report, input.repoPath);
+        if (decision === "approved") {
+          try {
+            const mm = new MergeManager(input.repoPath);
+            const baseBranch = await mm.currentBranch();
+            await mm.merge(report.worktree.branch, baseBranch);
+            await mm.cleanup(report.worktree.path, report.worktree.branch);
+          } catch {
+            // Merge or cleanup failed — the worktree is left in place for
+            // manual resolution; the run is still marked completed.
+          }
+          this.#emitTerminal(
+            runId,
+            { kind: "finished", message: "completed (reviewed)", data: report },
+            "completed",
+            { finalSummary: summarize(report) },
+          );
+        } else {
+          // Rejected: clean up the worktree without merging.
+          try {
+            const mm = new MergeManager(input.repoPath);
+            await mm.cleanup(report.worktree.path, report.worktree.branch);
+          } catch {
+            // best-effort cleanup
+          }
+          this.#emitTerminal(
+            runId,
+            { kind: "failed", message: "changes rejected by reviewer", data: report },
+            "failed",
+            { failureCode: "review_rejected", failureMessage: "The worktree changes were not approved." },
+          );
+        }
+        return;
+      }
 
       if (controller.signal.aborted) {
         await this.#settleCancellation(runId, { kind: "finished", data: report });
