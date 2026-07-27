@@ -62,6 +62,10 @@ export async function applyCommand(opts: ApplyCommandOptions): Promise<number> {
     if (result.ok) {
       console.log(c.green(`✓ ${label}`));
       if (result.output) console.log(c.dim(result.output));
+      if (result.recoveryPatch) {
+        console.log(c.yellow(`  your overwritten changes were saved to ${result.recoveryPatch}`));
+        console.log(c.dim(`  restore them with:  git apply "${result.recoveryPatch}"`));
+      }
       return 0;
     }
 

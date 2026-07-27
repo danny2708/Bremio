@@ -215,7 +215,7 @@ export class DaemonClient {
     taskId?: string;
     filePath?: string;
     force?: boolean;
-  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }> }> {
+  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }>; recoveryPatch?: string }> {
     return this.post("/apply", request);
   }
 
@@ -225,7 +225,7 @@ export class DaemonClient {
     taskId?: string;
     filePath?: string;
     force?: boolean;
-  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }> }> {
+  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }>; recoveryPatch?: string }> {
     return this.post("/revert", request);
   }
 

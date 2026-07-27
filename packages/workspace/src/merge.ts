@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, unlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { simpleGit, type SimpleGit } from "simple-git";
@@ -65,9 +65,11 @@ export interface DiffResult {
  */
 export class MergeManager {
   private readonly git: SimpleGit;
+  private readonly repoPath: string;
 
   constructor(repoPath: string) {
     this.git = simpleGit(repoPath);
+    this.repoPath = repoPath;
   }
 
   /** Current branch of the main working tree, or "HEAD" when detached. */
@@ -230,29 +232,19 @@ export class MergeManager {
     return file;
   }
 
-  /** Run `git apply` with a temp patch file and report conflicts. */
+  /**
+   * Run `git apply` with a temp patch file.
+   *
+   * No conflict handling here: plain `git apply` is all-or-nothing, so it never
+   * leaves conflict markers or a half-applied tree to clean up. (This did
+   * inspect `status().conflicted` and call `git apply --abort` — a subcommand
+   * that does not exist — which read as a safety net that could never fire.)
+   * Conflicts are caught up front by `detectConflicts`.
+   */
   private async runApply(args: string[], patch: string): Promise<{ output: string }> {
     const tmpFile = this.writeTempPatch(patch);
     try {
-      let applyError: unknown;
-      let output = "";
-      try {
-        output = await this.git.raw([...args, tmpFile]);
-      } catch (err) {
-        applyError = err;
-      }
-
-      const conflicted = (await this.git.status()).conflicted;
-      if (conflicted.length > 0) {
-        try {
-          await this.git.raw(["apply", "--abort"]);
-        } catch {
-          // best-effort restore
-        }
-        throw new ApplyConflictError(conflicted);
-      }
-      if (applyError) throw applyError;
-
+      const output = await this.git.raw([...args, tmpFile]);
       return { output: output.trim() };
     } finally {
       try {
@@ -269,14 +261,8 @@ export class MergeManager {
   extractPatchFiles(patch: string): string[] {
     const files: string[] = [];
     for (const line of patch.split("\n")) {
-      if (line.startsWith("diff --git ")) {
-        // diff --git a/src/file.ts b/src/file.ts → extract the "b/" path
-        const parts = line.split(" ");
-        const bPath = parts[parts.length - 1]; // "b/src/file.ts"
-        if (bPath && bPath.startsWith("b/")) {
-          files.push(bPath.slice(2));
-        }
-      }
+      const file = patchHeaderPath(line);
+      if (file) files.push(file);
     }
     return files;
   }
@@ -296,6 +282,13 @@ export class MergeManager {
     for (const f of s.modified) userChanges.set(f, "user_modified");
     for (const f of s.deleted) userChanges.set(f, "user_deleted");
     for (const f of s.created) userChanges.set(f, "user_added");
+    // `created` is *staged* new files. A file the user created and never staged
+    // is in `not_added`, and was invisible here — so a patch that creates the
+    // same path reported no conflict and then died on a bare "already exists".
+    for (const f of s.not_added) userChanges.set(f, "user_added");
+    // `created` is *staged* new files. A file the user created and never staged
+    // is in `not_added`, and was invisible here — so a patch that creates the
+    // same path reported no conflict and then died on a bare "already exists".
 
     const conflicts: Array<{ file: string; status: string }> = [];
     for (const pf of patchFiles) {
@@ -308,51 +301,93 @@ export class MergeManager {
   }
 
   /**
-   * Apply a unified diff patch to the working tree via `git apply`.
-   * When `force` is true, resets any conflicting files to HEAD before
-   * applying, overwriting user modifications with the agent's version.
-   * On conflict, aborts and throws ApplyConflictError.
+   * Save what `--force` is about to overwrite, so it is recoverable.
+   *
+   * `git checkout HEAD -- <file>` is unrecoverable: uncommitted work is simply
+   * gone, and no reflog or stash records it. Returns the patch's path, or
+   * undefined when there was nothing to save.
    */
-  async applyPatch(patch: string, options?: { force?: boolean }): Promise<{ output: string }> {
+  private async saveRecoveryPatch(files: string[]): Promise<string | undefined> {
+    const patch = await this.git.raw(["diff", "HEAD", "--", ...files]).catch(() => "");
+    if (!patch.trim()) return undefined;
+    const dir = join(this.repoPath, ".bremio", "recovery");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `force-${new Date().toISOString().replace(/[:.]/g, "-")}.patch`);
+    writeFileSync(file, patch, "utf8");
+    return file;
+  }
+
+  /**
+   * Make the working tree safe for a patch, or refuse.
+   *
+   * The clean-tree requirement is deliberately scoped. It used to cover the
+   * whole repository, which meant any unrelated dirty file blocked an apply —
+   * including under `--force`, whose own error message promises otherwise, and
+   * which only ever reset the *conflicting* files. Files the patch does not
+   * touch are the user's business. The one exception is a patch with no
+   * `diff --git` headers: there is no way to tell what it touches, so the whole
+   * tree is the only honest scope.
+   */
+  private async prepareWorkingTree(
+    patch: string,
+    force: boolean | undefined,
+  ): Promise<{ recoveryPatch?: string }> {
     const conflicts = await this.detectConflicts(patch);
+    let recoveryPatch: string | undefined;
+
     if (conflicts.length > 0) {
-      if (!options?.force) {
+      if (!force) {
         throw new ApplyConflictError(
           conflicts.map((c) => c.file),
           conflicts,
         );
       }
-      // Force mode: reset conflicting files to HEAD so the patch applies cleanly.
+      const untracked = conflicts.filter((c) => c.status === "user_added");
+      if (untracked.length > 0) {
+        // `git checkout HEAD -- <path>` cannot restore a path that is not in
+        // HEAD. This failed silently and left the file for `git apply` to trip
+        // over with a bare "already exists".
+        throw new MergeStateError(
+          `cannot force over untracked file(s): ${untracked.map((c) => c.file).join(", ")}. ` +
+            "Commit, move or delete them first.",
+        );
+      }
+      recoveryPatch = await this.saveRecoveryPatch(conflicts.map((c) => c.file));
       for (const c of conflicts) {
-        await this.git.raw(["checkout", "HEAD", "--", c.file]).catch(() => {});
+        await this.git.raw(["checkout", "HEAD", "--", c.file]);
       }
     }
-    await this.assertCleanTree();
-    return this.runApply(["apply"], patch);
+
+    if (this.extractPatchFiles(patch).length === 0) await this.assertCleanTree();
+    return recoveryPatch ? { recoveryPatch } : {};
+  }
+
+  /**
+   * Apply a unified diff patch to the working tree via `git apply`.
+   * When `force` is true, resets any conflicting files to HEAD before applying,
+   * overwriting user modifications with the agent's version — a copy of what is
+   * overwritten is saved and returned as `recoveryPatch`.
+   */
+  async applyPatch(
+    patch: string,
+    options?: { force?: boolean },
+  ): Promise<{ output: string; recoveryPatch?: string }> {
+    const { recoveryPatch } = await this.prepareWorkingTree(patch, options?.force);
+    const { output } = await this.runApply(["apply"], patch);
+    return recoveryPatch ? { output, recoveryPatch } : { output };
   }
 
   /**
    * Reverse-apply a unified diff (revert changes) via `git apply --reverse`.
-   * When `force` is true, resets any conflicting files to HEAD before
-   * reverting, overwriting user modifications with the agent's version.
-   * On conflict, aborts and throws ApplyConflictError.
+   * Same force semantics as `applyPatch`.
    */
-  async revertPatch(patch: string, options?: { force?: boolean }): Promise<{ output: string }> {
-    const conflicts = await this.detectConflicts(patch);
-    if (conflicts.length > 0) {
-      if (!options?.force) {
-        throw new ApplyConflictError(
-          conflicts.map((c) => c.file),
-          conflicts,
-        );
-      }
-      // Force mode: reset conflicting files to HEAD so the patch applies cleanly.
-      for (const c of conflicts) {
-        await this.git.raw(["checkout", "HEAD", "--", c.file]).catch(() => {});
-      }
-    }
-    await this.assertCleanTree();
-    return this.runApply(["apply", "--reverse"], patch);
+  async revertPatch(
+    patch: string,
+    options?: { force?: boolean },
+  ): Promise<{ output: string; recoveryPatch?: string }> {
+    const { recoveryPatch } = await this.prepareWorkingTree(patch, options?.force);
+    const { output } = await this.runApply(["apply", "--reverse"], patch);
+    return recoveryPatch ? { output, recoveryPatch } : { output };
   }
 
   /**
@@ -368,7 +403,9 @@ export class MergeManager {
 
     for (const line of lines) {
       if (line.startsWith("diff --git ")) {
-        inTarget = line.includes(normalizedPath);
+        // Compare the parsed path, not `line.includes(path)`: a substring test
+        // makes "app.ts" select "src/app.ts.bak" and "myapp.ts" as well.
+        inTarget = patchHeaderPath(line) === normalizedPath;
       }
       if (inTarget) {
         result.push(line);
@@ -382,6 +419,30 @@ export class MergeManager {
     // git apply requires a trailing newline
     return result.join("\n") + (result.length > 0 ? "\n" : "");
   }
+}
+
+/**
+ * The post-image path of a `diff --git a/<x> b/<y>` line, or undefined.
+ *
+ * Splitting on whitespace loses paths containing spaces, so the `b/` marker is
+ * located instead: git writes both paths, and the second one starts at the
+ * ` b/` that is followed by the rest of the line.
+ */
+function patchHeaderPath(line: string): string | undefined {
+  if (!line.startsWith("diff --git ")) return undefined;
+  const rest = line.slice("diff --git ".length);
+  if (!rest.startsWith("a/")) return undefined;
+  // `a/<path> b/<path>` — the same path appears twice, so the split point is
+  // the midpoint marker " b/" that leaves equal-length halves.
+  const marker = " b/";
+  for (let i = rest.indexOf(marker); i !== -1; i = rest.indexOf(marker, i + 1)) {
+    const before = rest.slice(2, i);
+    const after = rest.slice(i + marker.length);
+    if (before === after) return after;
+  }
+  // Renames and other cases where the two paths differ: take the last " b/".
+  const last = rest.lastIndexOf(marker);
+  return last === -1 ? undefined : rest.slice(last + marker.length);
 }
 
 /** Resolve a repo's current branch name (used to record a run's base branch). */

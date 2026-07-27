@@ -280,25 +280,34 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     after = await captureWorkspaceState(repoPath);
     committedFiles = await filesChangedBetween(repoPath, before.head, after.head);
     filesChanged = [...new Set([...committedFiles, ...after.dirtyFiles])].sort();
-    // Compute diff: committed changes (if HEAD moved) + working tree changes
-    // (tracked + untracked). Use git add + diff --cached to capture new files.
+    // Compute the diff: committed changes (if HEAD moved) plus working-tree
+    // changes, tracked and untracked.
+    //
+    // Read-only on purpose. This ran `git add -A` … `git diff --cached` …
+    // `git reset`, which reports the right patch but destroys the user's index:
+    // anyone who had staged a subset of their work (`git add -p`) came back to
+    // a fully-unstaged tree, with no record of what had been staged. `git diff
+    // HEAD` covers staged and unstaged tracked changes without touching the
+    // index; untracked files are diffed one at a time against an empty tree.
     const hasCommitted = before.head && after.head && before.head !== after.head;
-    await execFileAsync("git", ["add", "-A"], { cwd: repoPath });
-    const [[committedPatch, committedStat], [dirtyPatch, dirtyStat]] = await Promise.all([
-      hasCommitted
-        ? Promise.all([
-            execFileAsync("git", ["diff", before.head!, after.head!], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
-            execFileAsync("git", ["diff", "--stat", before.head!, after.head!], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
-          ])
-        : Promise.resolve(["", ""]),
-      Promise.all([
-        execFileAsync("git", ["diff", "--cached"], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
-        execFileAsync("git", ["diff", "--cached", "--stat"], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
-      ]),
-    ]);
-    await execFileAsync("git", ["reset"], { cwd: repoPath });
-    const patch = [committedPatch, dirtyPatch].filter(Boolean).join("\n").trim();
-    const stat = [committedStat, dirtyStat].filter(Boolean).join("\n").trim();
+    const [[committedPatch, committedStat], [dirtyPatch, dirtyStat], untracked] =
+      await Promise.all([
+        hasCommitted
+          ? Promise.all([
+              execFileAsync("git", ["diff", before.head!, after.head!], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+              execFileAsync("git", ["diff", "--stat", before.head!, after.head!], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+            ])
+          : Promise.resolve(["", ""]),
+        after.head
+          ? Promise.all([
+              execFileAsync("git", ["diff", "HEAD"], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+              execFileAsync("git", ["diff", "HEAD", "--stat"], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+            ])
+          : Promise.resolve(["", ""]),
+        diffUntrackedFiles(repoPath),
+      ]);
+    const patch = [committedPatch, dirtyPatch, untracked.patch].filter(Boolean).join("\n").trim();
+    const stat = [committedStat, dirtyStat, untracked.stat].filter(Boolean).join("\n").trim();
     if (patch || stat) diff = { stat, patch };
   }
   let status = collected.outcome.status;
@@ -509,6 +518,57 @@ async function recordSingleLedger(
   } catch {
     // measurement is best-effort; it must never replace the direct run result
   }
+}
+
+/**
+ * Diff every untracked, non-ignored file against an empty tree.
+ *
+ * `git diff HEAD` cannot see untracked files, and the alternatives that can
+ * (`git add -A`, `git add -N`) both write to the index. Diffing each file
+ * against `/dev/null` is the read-only way to get the same hunks — git accepts
+ * that path on Windows too.
+ */
+async function diffUntrackedFiles(repoPath: string): Promise<{ patch: string; stat: string }> {
+  let listed: string;
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      { cwd: repoPath, encoding: "utf8" },
+    );
+    listed = stdout;
+  } catch {
+    return { patch: "", stat: "" };
+  }
+
+  /** `git diff --no-index` exits 1 whenever the files differ — always, here —
+   *  so the output arrives on the error rather than as a resolved value. */
+  const diffAgainstNothing = async (args: string[], file: string): Promise<string> => {
+    try {
+      const { stdout } = await execFileAsync(
+        "git",
+        ["diff", "--no-index", ...args, "--", "/dev/null", file],
+        { cwd: repoPath, encoding: "utf8" },
+      );
+      return stdout;
+    } catch (err) {
+      return typeof (err as { stdout?: unknown }).stdout === "string"
+        ? (err as { stdout: string }).stdout
+        : "";
+    }
+  };
+
+  const files = listed.split("\0").filter(Boolean);
+  const results = await Promise.all(
+    files.map(async (file) => ({
+      patch: await diffAgainstNothing([], file),
+      stat: await diffAgainstNothing(["--stat"], file),
+    })),
+  );
+  return {
+    patch: results.map((r) => r.patch).filter(Boolean).join("\n"),
+    stat: results.map((r) => r.stat).filter(Boolean).join("\n"),
+  };
 }
 
 async function captureWorkspaceState(repoPath: string): Promise<WorkspaceState> {

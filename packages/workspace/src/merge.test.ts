@@ -401,5 +401,93 @@ describe("MergeManager", () => {
       expect(err.conflictedFiles).toBeDefined();
       expect(err.conflictedFiles[0]?.file).toBe("SHARED.txt");
     });
+
+    const SHARED_PATCH =
+      "diff --git a/SHARED.txt b/SHARED.txt\n--- a/SHARED.txt\n+++ b/SHARED.txt\n@@ -1 +1,2 @@\n original\n+agent addition\n";
+
+    it("forces past a conflict while unrelated work stays dirty and untouched", async () => {
+      // The whole point of --force, and it did not work: the clean-tree check
+      // covered the entire repository, so any unrelated dirty file rejected the
+      // apply — including under --force, which only ever reset the conflicting
+      // files. The error even told the user to use the flag that could not help.
+      await write("SHARED.txt", "original\n");
+      await write("UNRELATED.txt", "committed\n");
+      git(["add", "-A"]);
+      git(["commit", "-q", "-m", "init"]);
+      await write("SHARED.txt", "user edited\n");
+      await write("UNRELATED.txt", "user work in progress\n");
+
+      const mgr = new MergeManager(repo);
+      await mgr.applyPatch(SHARED_PATCH, { force: true });
+
+      expect(await fs.readFile(path.join(repo, "SHARED.txt"), "utf8")).toBe("original\nagent addition\n");
+      // Files the patch never mentions are the user's business.
+      expect(await fs.readFile(path.join(repo, "UNRELATED.txt"), "utf8")).toBe("user work in progress\n");
+    });
+
+    it("saves the user changes that --force overwrites", async () => {
+      await write("SHARED.txt", "original\n");
+      git(["add", "-A"]);
+      git(["commit", "-q", "-m", "init"]);
+      await write("SHARED.txt", "user edited\n");
+
+      const mgr = new MergeManager(repo);
+      const result = await mgr.applyPatch(SHARED_PATCH, { force: true });
+
+      // `git checkout HEAD -- <file>` leaves no reflog and no stash: without
+      // this copy the user's edit is simply gone.
+      expect(result.recoveryPatch).toBeDefined();
+      const saved = await fs.readFile(result.recoveryPatch!, "utf8");
+      expect(saved).toContain("user edited");
+    });
+
+    it("refuses to force over an untracked file instead of failing obscurely", async () => {
+      // `git checkout HEAD -- <path>` cannot restore a path that is not in
+      // HEAD. That failure was swallowed, leaving the file for `git apply` to
+      // trip over with a bare "already exists".
+      const patch =
+        "diff --git a/NEW.txt b/NEW.txt\nnew file mode 100644\n--- /dev/null\n+++ b/NEW.txt\n@@ -0,0 +1 @@\n+agent version\n";
+      await write("NEW.txt", "user version\n");
+
+      const mgr = new MergeManager(repo);
+      const err = await mgr.applyPatch(patch, { force: true }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(MergeStateError);
+      expect(err.message).toContain("NEW.txt");
+      expect(await fs.readFile(path.join(repo, "NEW.txt"), "utf8")).toBe("user version\n");
+    });
+  });
+
+  describe("patch path parsing", () => {
+    it("does not treat a path as a match because another contains it", () => {
+      const patch = [
+        "diff --git a/src/app.ts.bak b/src/app.ts.bak",
+        "--- a/src/app.ts.bak",
+        "+++ b/src/app.ts.bak",
+        "@@ -1 +1 @@",
+        "-old backup",
+        "+new backup",
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+        "",
+      ].join("\n");
+
+      const mgr = new MergeManager(repo);
+      const extracted = mgr.extractFilePatch(patch, "src/app.ts");
+
+      expect(extracted).toContain("+new\n");
+      expect(extracted).not.toContain("app.ts.bak");
+    });
+
+    it("keeps paths that contain spaces", () => {
+      const patch =
+        "diff --git a/my docs/notes.md b/my docs/notes.md\n--- a/my docs/notes.md\n+++ b/my docs/notes.md\n@@ -1 +1 @@\n-a\n+b\n";
+      const mgr = new MergeManager(repo);
+      expect(mgr.extractPatchFiles(patch)).toEqual(["my docs/notes.md"]);
+    });
   });
 });

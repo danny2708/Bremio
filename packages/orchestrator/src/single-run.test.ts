@@ -504,6 +504,54 @@ describe("runSingleAgent", () => {
     expect(report.result.diff!.patch).toContain("DIRECT.txt");
   });
 
+  it("leaves the user's staged index exactly as it found it", async () => {
+    // Computing the diff ran `git add -A` … `git diff --cached` … `git reset`.
+    // It produced the right patch and destroyed the user's index on the way:
+    // anyone who had staged a subset of their work with `git add -p` came back
+    // to a fully unstaged tree with no record of what had been staged.
+    const git = (args: string[]) => execFileSync("git", args, { cwd: repoPath, stdio: "pipe" });
+    await fs.writeFile(path.join(repoPath, "staged.txt"), "staged content\n", "utf8");
+    await fs.writeFile(path.join(repoPath, "unstaged.txt"), "unstaged content\n", "utf8");
+    git(["add", "staged.txt"]);
+
+    const before = execFileSync("git", ["diff", "--cached", "--name-only"], {
+      cwd: repoPath,
+      encoding: "utf8",
+    });
+    expect(before.trim()).toBe("staged.txt");
+
+    await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "write a file",
+      registry: createRegistry([new SingleMockAdapter()]),
+    });
+
+    const after = execFileSync("git", ["diff", "--cached", "--name-only"], {
+      cwd: repoPath,
+      encoding: "utf8",
+    });
+    expect(after.trim()).toBe("staged.txt");
+  });
+
+  it("reports untracked files in the diff without staging them", async () => {
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "write a file",
+      registry: createRegistry([new SingleMockAdapter()]),
+    });
+
+    // DIRECT.txt is written by the mock and never committed, so it only shows
+    // up if untracked files are diffed — which is what `git add -A` used to buy.
+    expect(report.result.diff!.patch).toContain("DIRECT.txt");
+    const staged = execFileSync("git", ["diff", "--cached", "--name-only"], {
+      cwd: repoPath,
+      encoding: "utf8",
+    });
+    expect(staged.trim()).toBe("");
+  });
+
   it("attributes changed files: git-committed → agent, pre-existing dirty → user", async () => {
     // Create a pre-existing dirty file before the run
     await fs.writeFile(path.join(repoPath, "user-edit.txt"), "user content\n", "utf8");

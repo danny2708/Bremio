@@ -1297,3 +1297,33 @@ Rules:
 
 **Blocked / handed off**
 - None
+
+### S5-REVIEW — tech-lead audit of Sprint 5
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-27T14:00 → 2026-07-27T14:45
+- **branch:** s5/change-transparency
+- **task(s):** S5-T1 … S5-T8
+- **status:** done
+
+**Did**
+- Audited all 8 tasks by reading production code and mutating it. Found four defects in the two paths that touch the user's own files, and fixed all four.
+- **Stopped the diff computation from destroying the user's index.** `single-run.ts` ran `git add -A` → `git diff --cached` → `git reset` on every direct-workspace run — the default path. It produces the right patch and unstages everything on the way out: anyone who had staged a subset of their work with `git add -p` got it silently flattened, with no record of what had been staged. Replaced with `git diff HEAD` plus a per-file `git diff --no-index` for untracked files. Read-only, same output including new files.
+- **Made `--force` work in the case its own error message describes.** `applyPatch`/`revertPatch` called `assertCleanTree()` over the *whole repository*, so any unrelated dirty file rejected the apply — and `--force` only ever reset the *conflicting* files, so it could not clear that rejection. The check is now scoped to the patch's files, falling back to repo-wide only for a patch with no `diff --git` headers, where there is genuinely no way to know what it touches.
+- **Made `--force` recoverable.** It ran `git checkout HEAD -- <file>`, which leaves no reflog and no stash: the user's uncommitted work was simply gone. The overwritten changes are now saved to `.bremio/recovery/force-<ts>.patch` and the path is returned and printed with the command to restore it.
+- **Closed the untracked-file blind spot.** `detectConflicts` read `status().created`, which is *staged* new files; a file the user created and never staged sits in `not_added` and was invisible. A patch creating the same path reported no conflict and then died on a bare "already exists". Untracked files are now detected, and `--force` refuses them by name instead of silently failing to reset a path that is not in HEAD.
+- Removed a dead safety net in `runApply`: it inspected `status().conflicted` and called `git apply --abort`, a subcommand that does not exist, for a command that is all-or-nothing and never leaves conflicts. It read as protection that could never fire.
+- Fixed `extractFilePatch` matching paths by substring (`"app.ts"` also selected `src/app.ts.bak`) and `extractPatchFiles` losing paths containing spaces.
+- Scheduled **S6-T4** (grant surface) and **S6-T5** (attribution) in `TASKS.md`.
+
+**Decided**
+- S5-T7 chose deletion over wiring for the grant lifecycle, which was the right call and matches S4-T9 — but it deleted the internals nobody called and kept every part a user can reach. `POST /approval/grants` and `bremio approval grant` still create rows that authorise nothing, and `expires_at` is written with nothing left to read or prune it. Left as S6-T4 rather than widened here: removing user-facing commands is a product decision.
+- `docs/15` §2.5 was updated honestly in S5-T7 — it now states there is no override mechanism instead of describing one that does not exist. Accepted as-is.
+- Kept `assertCleanTree` for headerless patches rather than deleting it. It is a real backstop: `detectConflicts` cannot see the files in a patch that has no `diff --git` line, and the suite's own older fixtures are exactly that shape.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 754 passed / 63 files (was 747 / 63).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.2.0`).
+- Red-check A: restored the `git add -A` / `git reset` diff computation → "leaves the user's staged index exactly as it found it" failed with `expected '' to be 'staged.txt'`, reproducing the data loss exactly. One failure, no others. Restored.
+- Red-check B: restored the repo-wide `assertCleanTree`, the swallowed `checkout`, the missing recovery save and substring path matching → four of the new tests failed (unrelated-dirty force, recovery patch, untracked refusal, substring path). Restored.
+- Observed once during red-check B and not reproducible in five other full runs: `run.integration.test.ts` "times out an in-flight task" and "records lead usage when planning fails" failed with a ledger length of 6 instead of 2. Unrelated to these changes; looks like cross-test ledger pollution under parallel load. Noted, not chased.

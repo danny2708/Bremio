@@ -20,6 +20,8 @@ export interface ApplyRevertResult {
   output?: string;
   error?: string;
   conflictedFiles?: ConflictFile[];
+  /** Where `force` saved the user changes it overwrote, when it overwrote any. */
+  recoveryPatch?: string;
 }
 
 /** A stored report that might be Single or Team mode. */
@@ -102,7 +104,7 @@ export async function applyRunPatch(request: ApplyPatchRequest): Promise<ApplyRe
     }
 
     const result = await manager.applyPatch(patch, { force: request.force });
-    return { ok: true, output: result.output };
+    return { ok: true, output: result.output, ...(result.recoveryPatch ? { recoveryPatch: result.recoveryPatch } : {}) };
   } catch (err) {
     const msg = (err as Error).message;
     if (err instanceof ApplyConflictError) {
@@ -138,7 +140,7 @@ export async function revertRunPatch(request: ApplyPatchRequest): Promise<ApplyR
     }
 
     const result = await manager.revertPatch(patch, { force: request.force });
-    return { ok: true, output: result.output };
+    return { ok: true, output: result.output, ...(result.recoveryPatch ? { recoveryPatch: result.recoveryPatch } : {}) };
   } catch (err) {
     const msg = (err as Error).message;
     if (err instanceof ApplyConflictError) {
