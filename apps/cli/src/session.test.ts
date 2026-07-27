@@ -6,6 +6,7 @@ import { RunStore } from "@bremio/daemon";
 import {
   configSetCommand,
   listSessionsCommand,
+  resolveContinuationMode,
   resolveSessionIdentity,
   sessionCommandFromCli,
   showSessionCommand,
@@ -370,5 +371,42 @@ describe("resuming a session must not change which agent runs it", () => {
       availableAgentIds: AGENTS,
     });
     expect(result).toMatchObject({ ok: true, primaryAgent: "codex" });
+  });
+});
+
+describe("S6-T2 follow-up: an approved transition must change the next continue", () => {
+  // evaluateSessionTransition (packages/policy) persists an approved move as
+  // `collaborationState` on the session config — a different table from the
+  // run history resolveSessionIdentity reads. Before this, nothing consulted
+  // it: `bremio session continue` kept resuming in whatever mode the
+  // *previous run* used, so approving Solo→Co-lab was observably a no-op.
+
+  it("keeps resuming in the last turn's mode when no transition was ever recorded", () => {
+    const identity = { mode: "single" as const };
+    expect(resolveContinuationMode(identity, undefined)).toEqual(identity);
+  });
+
+  it("switches an approved Solo→Co-lab transition to Team on the next continue", () => {
+    const identity = { mode: "single" as const };
+    expect(resolveContinuationMode(identity, "colab")).toEqual({ mode: "team" });
+  });
+
+  it("carries the prior worker forward rather than re-picking one", () => {
+    const identity = { mode: "single" as const, workerAgent: "antigravity" };
+    expect(resolveContinuationMode(identity, "colab")).toEqual({
+      mode: "team",
+      workerAgent: "antigravity",
+    });
+  });
+
+  it("switches an approved Co-lab→Solo transition to Single, dropping the worker", () => {
+    const identity = { mode: "team" as const, workerAgent: "codex" };
+    expect(resolveContinuationMode(identity, "solo")).toEqual({ mode: "single" });
+  });
+
+  it("treats a pending proposal as still on its stable side", () => {
+    // effectiveMode(proposed-colab) is "solo": nothing was approved yet.
+    const identity = { mode: "single" as const };
+    expect(resolveContinuationMode(identity, "proposed-colab")).toEqual({ mode: "single" });
   });
 });

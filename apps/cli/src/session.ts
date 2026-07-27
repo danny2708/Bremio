@@ -7,6 +7,7 @@ import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import { daemonStatus, defaultDatabasePath, RunStore } from "@bremio/daemon";
 import { extractResponse, renderEvent } from "@bremio/event-view";
 import { createRegistry, runBremio, runSingleAgent } from "@bremio/orchestrator";
+import { effectiveMode, type CollaborationState } from "@bremio/policy";
 import { c, formatEventView, statusGlyph } from "./ui";
 
 export interface SessionListOptions {
@@ -344,6 +345,32 @@ export function resolveSessionIdentity(input: {
   return { ok: true, mode, primaryAgent, ...(workerAgent ? { workerAgent } : {}) };
 }
 
+/**
+ * The mode a continuation actually runs in, once S6-T2's transition state
+ * machine is accounted for.
+ *
+ * `identity.mode` reflects the *last turn that ran* — history, not intent. An
+ * approved Solo→Co-lab transition is recorded separately, on the session
+ * config's `collaborationState`, and does not retroactively change any turn.
+ * Without consulting it, an approved transition changed nothing observable:
+ * the next continue kept resuming in whatever mode the previous run used, and
+ * the state machine was decorative past the row it wrote.
+ */
+export function resolveContinuationMode(
+  identity: { mode: "single" | "team"; workerAgent?: string },
+  collaborationState: CollaborationState | undefined,
+): { mode: "single" | "team"; workerAgent?: string } {
+  if (!collaborationState) return identity;
+  // effectiveMode speaks docs/15's Solo/Co-lab vocabulary; the run APIs still
+  // speak the persisted single/team vocabulary (S6-T1's UI codec, not a DB one).
+  const mode = effectiveMode(collaborationState) === "colab" ? "team" : "single";
+  // A transition to Co-lab may not carry a worker (none was needed in Solo);
+  // `runBremio` auto-assigns one from the registry when `workerId` is omitted.
+  return mode === "team"
+    ? { mode, ...(identity.workerAgent ? { workerAgent: identity.workerAgent } : {}) }
+    : { mode };
+}
+
 export async function continueSessionCommand(options: {
   id: string;
   prompt: string;
@@ -401,11 +428,16 @@ export async function continueSessionCommand(options: {
     console.error(c.red(`error: ${resolved.error}`));
     return 1;
   }
-  const { mode, primaryAgent } = resolved;
+  const { primaryAgent } = resolved;
   const turnIndex = (detail.turns ?? []).length;
 
   // S1-T5: check session config provenance and prompt if partial/legacy.
   const cfg = detail.config;
+
+  const { mode, workerAgent } = resolveContinuationMode(
+    resolved,
+    cfg?.collaborationState as CollaborationState | undefined,
+  );
   if (cfg && cfg.provenance === "legacy-derived" && cfg.completeness === "partial") {
     console.log(c.yellow(`\n⚠ Session ${id} was created from legacy data. Its configuration was derived:`));
     console.log(`   Mode:          ${cfg.mode ?? c.dim("unknown")}`);
@@ -466,7 +498,7 @@ export async function continueSessionCommand(options: {
       leadId: primaryAgent,
       // Carried forward for the same reason as the lead: the worker was chosen
       // once and must not be re-picked from whatever happens to be registered.
-      ...(resolved.workerAgent ? { workerId: resolved.workerAgent } : {}),
+      ...(workerAgent ? { workerId: workerAgent } : {}),
       repoPath,
       prompt,
       registry,

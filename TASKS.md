@@ -129,7 +129,7 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 
 ---
 
-## Sprint 6 — Solo / Co-lab
+## Sprint 6 — Solo / Co-lab ✅ COMPLETE
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|

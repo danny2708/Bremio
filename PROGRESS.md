@@ -1471,3 +1471,27 @@ Rules:
 - `corepack pnpm vitest run packages/orchestrator/src/stream.test.ts` — 6/6 passed (+1 vocabulary override test)
 - `corepack pnpm test` — 799 passed / 64 files (+2 new tests: 1 stream test + 1 attribution-related test)
 - Red-check: temporarily removed `opts.toolVocabulary` guard in `collectRun` (always used defaults) → test `uses adapter-declared tool vocabulary when provided` fails because `"Read"` gets tracked by defaults even though the custom vocabulary doesn't include it → restored guard → test passes
+
+### S6-REVIEW — tech-lead audit of Sprint 6
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-27T20:55 → 2026-07-27T21:25
+- **branch:** s6/solo-colab
+- **task(s):** S6-T1 … S6-T5
+- **status:** done
+
+**Did**
+- Audited all 5 tasks. S6-T1, S6-T4, and S6-T5 held up well — S6-T4 fully removed the grant surface this time (zero remaining references, unlike S5-T7's partial deletion), and S6-T5's capability-shaped attribution is correctly wired: every adapter declares its own `getToolVocabulary()`, `collectRun` uses it when present, and antigravity honestly returns empty arrays rather than claiming event-based attribution it cannot back.
+- **Found and fixed the one defect that mattered: S6-T2's transition state machine was decorative.** `evaluateTransition`/`evaluateSessionTransition` are correctly built and correctly gate propose/approve/decline with hysteresis — but the result was only ever written to `session_config.collaborationState`, a column nothing downstream read. `bremio session continue` resolves its mode from `resolveSessionIdentity`, which reads the *last turn's* `mode` — a different table populated by the run that already happened. Approving a Solo→Co-lab transition changed a database row and nothing else: the next continue still ran Solo. The sprint's own test suite never caught this because it only ever asserted on `result.config!.collaborationState` after calling the evaluator directly, never on what a subsequent continue would do with it.
+- Fixed by extracting `resolveContinuationMode()` in `apps/cli/src/session.ts`: when the session config carries a `collaborationState`, its `effectiveMode()` now overrides the turn-history mode for the next continue. A transition to Co-lab with no prior worker is left for `runBremio`'s existing auto-assign to fill in.
+- Added 5 unit tests for `resolveContinuationMode` covering: no transition recorded (falls through to turn history), an approved Solo→Co-lab switch, worker carried forward, an approved Co-lab→Solo switch (worker dropped), and a merely-proposed (not yet approved) state staying on its stable side.
+
+**Decided**
+- `bremio session config-set --collaboration-state` bypasses the state machine's topology/hysteresis/approval guards entirely, writing whatever the caller asks for directly to the config. Left as-is: it's the same explicit-override contract every other `config-set` field already has (model, permission, etc.) — a deliberate manual escape hatch, not automatic escalation, so the state machine's guarantees are about the automatic propose/approve path, not about admin override.
+- Did not add a corresponding fix on the daemon-through path (`bremio run --session <id>` via the daemon's `/runs` route), because that path takes `mode` as an explicit CLI flag today and has no continuation concept yet — there is nothing there to wire against. Scoped to the one path that actually resumes a session.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 804 passed / 64 files (was 799 before this fix).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.2.0`).
+- Red-check: short-circuited `resolveContinuationMode` to always return the turn-history identity → 3 of the 5 new tests failed, including the Co-lab→Solo case showing `+ "mode": "team", + "workerAgent": "codex"` where `"single"` was expected — reproducing the exact silent-no-op the fix exists for. Restored.
+- One full-suite run hit 2 flaky timeouts (`merge.test.ts` cherry-pick, `protocol.test.ts` digest-drift) under parallel load with the default 5s timeout; both passed in isolation and in a second full run. Not a regression — noted for awareness, not chased.
