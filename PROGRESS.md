@@ -1387,3 +1387,28 @@ Rules:
 - `corepack pnpm test` — 799 passed / 64 files (+38 transition tests, +5 daemon integration tests, -0 regressions)
 - `corepack pnpm typecheck` — clean
 - Red-check: removed the `collaboration_state` backfill in migration → legacy sessions load without the column → `effectiveMode` derivation from fallback still works (tested via propose-colab from a freshly created session which derives "solo" from `mode==="single"`). Not a guard we need to keep — the backfill is an optimisation, not a correctness requirement.
+
+### S6-T3 — Change configuration mid-session (appends a revision)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T10:00 → 2026-07-27T10:30
+- **branch:** s6/solo-colab
+- **task(s):** S6-T3
+- **status:** done
+
+**Did**
+- Added `configSetCommand()` to `apps/cli/src/session.ts` — `bremio session config-set <id> [--mode single|team] [--model <str>] [--reason <str>] [--lead-agent <str>] [--worker-agent <str>] [--reasoning-level <str>] [--permission <str>] [--approval-mode <str>] [--cwd <str>] [--base-branch <str>] [--collaboration-state <str>] [--changed-by <str>]`
+- Command reads existing config first, merges CLI overrides on top, then writes a new revision — preventing partial-update data loss (previously POSTing `{ model }` to `/sessions/:id/config` would null out every other field)
+- Daemon-first with direct-store fallback (matching the pattern used by `listSessionsCommand`/`showSessionCommand`)
+- Wired into `sessionCommandFromCli` dispatch and updated USAGE text in index.ts
+- Added 6 new CLI option flags: `--lead-agent`, `--worker-agent`, `--reasoning-level`, `--permission`, `--approval-mode`, `--cwd`, `--base-branch`, `--collaboration-state`, `--changed-by` to `parseArgs()` options
+- 3 new tests: update single field with preservation of others, non-existent session returns 1, CLI dispatch from `sessionCommandFromCli`
+
+**Decided**
+- Merge-before-write is essential: the store's `createSessionConfig` creates a new row from whatever fields are given — unspecified fields become null. Reading the current config first and merging preserves the session's full record
+- Default `changedBy` is `"cli"` so the audit trail shows the agent of change
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/cli/src/session.test.ts` — 20/20 passed (3 new config-set tests)
+- `corepack pnpm test` — 807 passed / 64 files (no regressions)
+- Red-check: removed the merge step in `configSetCommand` (sent only CLI overrides) → `store.createSessionConfig` creates revision 2 with `leadAgentId: null` → test `preserves others` assertion fails. Restored.

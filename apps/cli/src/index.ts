@@ -71,6 +71,7 @@ ${c.bold("Usage")}
   bremio compare [--agent <agent>] [--lead <agent>] --repo <path> "<prompt>"
   bremio session list [--repo <path>] [--json]
   bremio session show <id> [--json] [--max-events <n>]
+  bremio session config-set <id> [--mode single|team] [--model <str>] [--reason <str>]
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
@@ -176,6 +177,15 @@ function parseCli() {
       "workspace": { type: "string" },
       session: { type: "string" },
       reason: { type: "string" },
+      "lead-agent": { type: "string" },
+      "worker-agent": { type: "string" },
+      "reasoning-level": { type: "string" },
+      permission: { type: "string" },
+      "approval-mode": { type: "string" },
+      cwd: { type: "string" },
+      "base-branch": { type: "string" },
+      "collaboration-state": { type: "string" },
+      "changed-by": { type: "string" },
       scope: { type: "string" },
       ttl: { type: "string" },
       "action-class": { type: "string" },

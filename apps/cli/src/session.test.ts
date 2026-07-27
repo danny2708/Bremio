@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunStore } from "@bremio/daemon";
 import {
+  configSetCommand,
   listSessionsCommand,
   resolveSessionIdentity,
   sessionCommandFromCli,
@@ -161,6 +162,103 @@ describe("A3-T1: bremio session list and bremio session show", () => {
     );
     expect(code).toBe(1);
     expect(errorLogs.join("\n")).toContain("session not found: unknown-session-id");
+  });
+
+  describe("S6-T3: bremio session config-set (change config mid-session)", () => {
+    let tmpDir: string;
+    let dbPath: string;
+
+    beforeEach(async () => {
+      tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-config-set-"));
+      dbPath = path.join(tmpDir, "bremio.db");
+    });
+
+    afterEach(async () => {
+      vi.restoreAllMocks();
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it("updates a single config field and preserves others", async () => {
+      const store = await RunStore.open(dbPath);
+      const repoPath = path.join(tmpDir, "repo");
+      await fs.mkdir(repoPath, { recursive: true });
+
+      const run = store.createRun({
+        id: "cfg-seed-1",
+        mode: "single",
+        repositoryPath: repoPath,
+        prompt: "seed",
+        leadProvider: "claude",
+      });
+      const sessionId = run.sessionId!;
+      store.close();
+
+      const logs: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((msg) => logs.push(String(msg)));
+
+      const code = await configSetCommand({
+        id: sessionId,
+        model: "claude-sonnet-5",
+        reason: "switching model mid-session",
+        databasePath: dbPath,
+      });
+
+      expect(code).toBe(0);
+      const output = logs.join("\n");
+      expect(output).toContain("Session config updated");
+      expect(output).toContain("claude-sonnet-5");
+      expect(output).toContain("switching model mid-session");
+
+      // Verify the revision was appended and the mode/lead are preserved.
+      const store2 = await RunStore.open(dbPath);
+      try {
+        const config = store2.getSessionConfig(sessionId);
+        expect(config).toBeDefined();
+        expect(config!.revision).toBe(2);
+        expect(config!.model).toBe("claude-sonnet-5");
+        expect(config!.leadAgentId).toBe("claude");
+        expect(config!.changeReason).toBe("switching model mid-session");
+      } finally {
+        store2.close();
+      }
+    });
+
+    it("returns exit code 1 for a non-existent session", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const code = await configSetCommand({
+        id: "nonexistent",
+        reason: "test",
+        databasePath: dbPath,
+      });
+      expect(code).toBe(1);
+    });
+
+    it("dispatches config-set from sessionCommandFromCli", async () => {
+      const store = await RunStore.open(dbPath);
+      const repoPath = path.join(tmpDir, "repo2");
+      await fs.mkdir(repoPath, { recursive: true });
+
+      const run = store.createRun({
+        id: "cfg-dispatch-1",
+        mode: "single",
+        repositoryPath: repoPath,
+        prompt: "dispatch test",
+        leadProvider: "claude",
+      });
+      const sessionId = run.sessionId!;
+      store.close();
+
+      const logs: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((msg) => logs.push(String(msg)));
+
+      const code = await sessionCommandFromCli(
+        { db: dbPath, model: "claude-sonnet-5", reason: "dispatch test" },
+        ["session", "config-set", sessionId],
+      );
+
+      expect(code).toBe(0);
+      expect(logs.join("\n")).toContain("Session config updated");
+    });
   });
 });
 

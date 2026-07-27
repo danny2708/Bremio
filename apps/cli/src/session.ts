@@ -482,6 +482,167 @@ export async function continueSessionCommand(options: {
   return 0;
 }
 
+export interface ConfigSetOptions {
+  id: string;
+  mode?: string;
+  leadAgentId?: string;
+  workerAgentId?: string;
+  model?: string;
+  reasoningLevel?: string;
+  permission?: string;
+  approvalMode?: string;
+  cwd?: string;
+  baseBranch?: string;
+  collaborationState?: string;
+  reason?: string;
+  changedBy?: string;
+  databasePath?: string;
+}
+
+async function readExistingConfig(
+  id: string,
+  dbPath?: string,
+): Promise<Record<string, unknown> | undefined> {
+  if (dbPath) {
+    try {
+      const store = await RunStore.open(dbPath);
+      try {
+        return store.getSessionConfig(id) as Record<string, unknown> | undefined;
+      } finally {
+        store.close();
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  const status = await daemonStatus();
+  if (!status.running) return undefined;
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(id)}/config`,
+      {
+        headers: { "x-bremio-token": status.endpoint.token },
+      },
+    );
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as { config: Record<string, unknown> };
+    return data.config;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeConfigDirect(
+  id: string,
+  payload: Record<string, unknown>,
+  dbPath?: string,
+): Promise<{ config?: any; error?: string }> {
+  try {
+    const store = await RunStore.open(dbPath ?? defaultDatabasePath());
+    try {
+      return { config: store.createSessionConfig({ sessionId: id, ...payload }) };
+    } finally {
+      store.close();
+    }
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
+export async function configSetCommand(options: ConfigSetOptions): Promise<number> {
+  const { id } = options;
+  if (!id) {
+    console.error(c.red("error: session id is required"));
+    return 1;
+  }
+
+  // Read existing config, then merge overrides on top — otherwise a partial
+  // update (e.g. just --model) would null out every other field in the new
+  // revision, fragmenting the per-session record.
+  const existing = await readExistingConfig(id, options.databasePath);
+  if (!existing) {
+    console.error(c.red(`error: cannot read current config for session: ${id}`));
+    return 1;
+  }
+
+  const payload: Record<string, unknown> = {
+    mode: existing.mode,
+    leadAgentId: existing.lead_agent_id ?? existing.leadAgentId,
+    workerAgentId: existing.worker_agent_id ?? existing.workerAgentId,
+    model: existing.model,
+    reasoningLevel: existing.reasoning_level ?? existing.reasoningLevel,
+    permission: existing.permission,
+    approvalMode: existing.approval_mode ?? existing.approvalMode,
+    cwd: existing.cwd,
+    baseBranch: existing.base_branch ?? existing.baseBranch,
+    collaborationState: existing.collaboration_state ?? existing.collaborationState,
+  };
+  if (options.mode !== undefined) payload.mode = options.mode;
+  if (options.leadAgentId !== undefined) payload.leadAgentId = options.leadAgentId;
+  if (options.workerAgentId !== undefined) payload.workerAgentId = options.workerAgentId;
+  if (options.model !== undefined) payload.model = options.model;
+  if (options.reasoningLevel !== undefined) payload.reasoningLevel = options.reasoningLevel;
+  if (options.permission !== undefined) payload.permission = options.permission;
+  if (options.approvalMode !== undefined) payload.approvalMode = options.approvalMode;
+  if (options.cwd !== undefined) payload.cwd = options.cwd;
+  if (options.baseBranch !== undefined) payload.baseBranch = options.baseBranch;
+  if (options.collaborationState !== undefined) payload.collaborationState = options.collaborationState;
+  payload.changedBy = options.changedBy ?? "cli";
+  payload.changeReason = options.reason ?? "";
+
+  let config: any;
+  if (options.databasePath) {
+    const r = await writeConfigDirect(id, payload, options.databasePath);
+    if (r.error) { console.error(c.red(`error: ${r.error}`)); return 1; }
+    config = r.config;
+  } else {
+    const status = await daemonStatus();
+    if (status.running) {
+      try {
+        const res = await fetch(
+          `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(id)}/config`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-bremio-token": status.endpoint.token,
+            },
+            body: JSON.stringify(payload),
+          },
+        );
+        if (res.ok) {
+          const data = (await res.json()) as { config: any };
+          config = data.config;
+        } else {
+          const errText = await res.text();
+          console.error(c.red(`error: ${errText}`));
+          return 1;
+        }
+      } catch {
+        const r = await writeConfigDirect(id, payload);
+        if (r.error) { console.error(c.red(`error: ${r.error}`)); return 1; }
+        config = r.config;
+      }
+    } else {
+      const r = await writeConfigDirect(id, payload);
+      if (r.error) { console.error(c.red(`error: ${r.error}`)); return 1; }
+      config = r.config;
+    }
+  }
+
+  console.log(` ${c.green("✓")} Session config updated (revision ${config.revision})`);
+  const line = "─".repeat(50);
+  console.log(line);
+  for (const [k, v] of Object.entries(config)) {
+    if (k === "sessionId" || k === "revision" || k === "createdAt" || k === "provenance") continue;
+    if (v !== null && v !== undefined && v !== "") {
+      console.log(`  ${c.dim(k)}: ${v}`);
+    }
+  }
+  console.log(line);
+  return 0;
+}
+
 export async function sessionCommandFromCli(
   values: Record<string, unknown>,
   positionals: string[],
@@ -520,8 +681,31 @@ export async function sessionCommandFromCli(
       ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}),
     });
   }
+  if (subCommand === "config-set") {
+    const id = positionals[2];
+    if (!id) {
+      console.error(c.red("error: session id is required for 'bremio session config-set <id>'"));
+      return 2;
+    }
+    return configSetCommand({
+      id,
+      mode: values.mode as string | undefined,
+      leadAgentId: values["lead-agent"] as string | undefined,
+      workerAgentId: values["worker-agent"] as string | undefined,
+      model: values.model as string | undefined,
+      reasoningLevel: values["reasoning-level"] as string | undefined,
+      permission: values.permission as string | undefined,
+      approvalMode: values["approval-mode"] as string | undefined,
+      cwd: values.cwd as string | undefined,
+      baseBranch: values["base-branch"] as string | undefined,
+      collaborationState: values["collaboration-state"] as string | undefined,
+      reason: values.reason as string | undefined,
+      changedBy: values["changed-by"] as string | undefined,
+      ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}),
+    });
+  }
   console.error(
-    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', or 'continue'`),
+    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', 'continue', or 'config-set'`),
   );
   return 2;
 }
