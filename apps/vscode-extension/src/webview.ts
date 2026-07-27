@@ -1204,6 +1204,10 @@ function renderTranscript(session, turns) {
   return out;
 }
 
+function displayMode(mode) {
+  return mode === "team" ? "Co-lab" : mode === "single" ? "Solo" : mode;
+}
+
 function renderRuns(payload) {
   const runs = payload.runs ?? [];
   const legacy = payload.legacyReports ?? [];
@@ -1224,7 +1228,7 @@ function renderRuns(payload) {
         \${run.retryOfRunId ? '<span class="badge ok">retry</span>' : ""}
         <div class="spacer"></div>
         <span class="agent" data-agent="\${escapeHtml(run.leadProvider ?? "")}">
-          <span class="muted">\${escapeHtml(run.mode)}</span></span>
+          <span class="muted">\${escapeHtml(displayMode(run.mode))}</span></span>
       </div>
       <div class="secondary">\${escapeHtml((run.prompt ?? "").slice(0, 160))}</div>
       \${interrupted ? '<div class="muted">The daemon restarted while this run was in flight. Its work was not judged.</div>' : ""}

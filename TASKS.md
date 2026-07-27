@@ -133,7 +133,7 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S6-T1 | Domain/UI codec: Solo/Co-lab over persisted `single`/`team` — **no DB rewrite** | M | S1-T1 | — |
+| [x] | S6-T1 | Domain/UI codec: Solo/Co-lab over persisted `single`/`team` — **no DB rewrite** | M | S1-T1 | — |
 | [ ] | S6-T2 | Transition state machine with recorded reasons + hysteresis | L | S6-T1, S3-T1 | — |
 | [ ] | S6-T3 | Change configuration mid-session (appends a revision) | M | S1-T2 | ‖ S6-T2 |
 | [ ] | S6-T4 | **Finish deleting the grant surface.** S5-T7 removed the internals nobody called but kept everything a user can reach: `POST/GET /approval/grants`, `/revoke`, the `bremio approval grant` commands, `CreateApprovalGrantSchema`, and `createApprovalGrant`/`listApprovalGrants`/`revokeApprovalGrant`. A user can still create a grant that authorises nothing, and `expires_at` is now stored with nothing that reads or prunes it. Either remove the surface or say plainly in `--help` that grants are inert. | M | — | ‖ everything |

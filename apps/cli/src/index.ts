@@ -23,7 +23,7 @@ import {
   type RunBremioHooks,
   type SingleRunHooks,
 } from "@bremio/orchestrator";
-import { validateCombination, type WorkspaceStrategy } from "@bremio/policy";
+import { executionToCollaboration, validateCombination, type WorkspaceStrategy } from "@bremio/policy";
 import { ExecutionModeSchema, type ReasoningLevel, type TaskStatus } from "@bremio/protocol";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
@@ -589,8 +589,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   }
 
   if (mode) {
-    const colabMode = mode === "team" ? "colab" : "solo";
-    const validation = validateCombination(colabMode, "autopilot", workspaceStrategy);
+    const validation = validateCombination(executionToCollaboration(mode), "autopilot", workspaceStrategy);
     if (!validation.valid) {
       errors.push(validation.reason ?? "Invalid combination of mode and workspace strategy");
     }

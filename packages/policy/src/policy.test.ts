@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { canBackControlMode, evaluate, validateCombination } from "./policy";
+import {
+  canBackControlMode,
+  collaborationToExecution,
+  displayLabel,
+  evaluate,
+  executionToCollaboration,
+  validateCombination,
+} from "./policy";
 import type { ActionClass, ControlMode } from "./policy";
 
 const ALL_CONTROL_MODES: ControlMode[] = ["plan", "approve", "autopilot"];
@@ -174,5 +181,37 @@ describe("canBackControlMode (docs/15 §2.2)", () => {
     // adapter-local declares readOnlyEnforcement: "unsupported". It is
     // unregistered today, so this is a trap set for whoever registers it.
     expect(canBackControlMode("plan", "unsupported", "direct-workspace").ok).toBe(false);
+  });
+});
+
+describe("Solo/Co-lab codec (docs/15 §2.1)", () => {
+  it("converts single → solo", () => {
+    expect(executionToCollaboration("single")).toBe("solo");
+  });
+
+  it("converts team → colab", () => {
+    expect(executionToCollaboration("team")).toBe("colab");
+  });
+
+  it("converts solo → single", () => {
+    expect(collaborationToExecution("solo")).toBe("single");
+  });
+
+  it("converts colab → team", () => {
+    expect(collaborationToExecution("colab")).toBe("team");
+  });
+
+  it("round-trips through both codecs", () => {
+    for (const mode of ["single", "team"] as const) {
+      expect(collaborationToExecution(executionToCollaboration(mode))).toBe(mode);
+    }
+  });
+
+  it("displayLabel returns Solo for solo", () => {
+    expect(displayLabel("solo")).toBe("Solo");
+  });
+
+  it("displayLabel returns Co-lab for colab", () => {
+    expect(displayLabel("colab")).toBe("Co-lab");
   });
 });

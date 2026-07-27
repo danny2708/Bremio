@@ -2,6 +2,35 @@ import type { ReadOnlyEnforcement } from "@bremio/adapter-sdk";
 
 export type CollaborationMode = "solo" | "colab";
 
+/**
+ * Persisted/protocol execution mode — the value stored in `runs.mode`,
+ * `session_config.mode`, `StartRunSchema`, and report JSON.
+ * @see ExecutionModeSchema in `@bremio/protocol`
+ */
+export type ExecutionMode = "single" | "team";
+
+/**
+ * Codec: persisted `ExecutionMode` → domain `CollaborationMode`.
+ * No DB, report, ledger or protocol value is rewritten (per docs/15 §2.1).
+ */
+export function executionToCollaboration(mode: ExecutionMode): CollaborationMode {
+  return mode === "team" ? "colab" : "solo";
+}
+
+/**
+ * Codec: domain `CollaborationMode` → persisted `ExecutionMode`.
+ */
+export function collaborationToExecution(mode: CollaborationMode): ExecutionMode {
+  return mode === "colab" ? "team" : "single";
+}
+
+/**
+ * User-facing display label for a CollaborationMode.
+ */
+export function displayLabel(mode: CollaborationMode): string {
+  return mode === "colab" ? "Co-lab" : "Solo";
+}
+
 export type ControlMode = "plan" | "approve" | "autopilot";
 
 export type WorkspaceStrategy = "direct-workspace" | "isolated-worktree";

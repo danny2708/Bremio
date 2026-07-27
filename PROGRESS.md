@@ -1327,3 +1327,35 @@ Rules:
 - Red-check A: restored the `git add -A` / `git reset` diff computation → "leaves the user's staged index exactly as it found it" failed with `expected '' to be 'staged.txt'`, reproducing the data loss exactly. One failure, no others. Restored.
 - Red-check B: restored the repo-wide `assertCleanTree`, the swallowed `checkout`, the missing recovery save and substring path matching → four of the new tests failed (unrelated-dirty force, recovery patch, untracked refusal, substring path). Restored.
 - Observed once during red-check B and not reproducible in five other full runs: `run.integration.test.ts` "times out an in-flight task" and "records lead usage when planning fails" failed with a ledger length of 6 instead of 2. Unrelated to these changes; looks like cross-test ledger pollution under parallel load. Noted, not chased.
+
+## Sprint 6 — Solo / Co-lab
+
+### S6-T1 — Domain/UI codec: Solo/Co-lab over persisted single/team
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T09:00 → 2026-07-27T09:30
+- **branch:** s6/solo-colab
+- **task(s):** S6-T1
+- **status:** done
+
+**Did**
+- Defined `ExecutionMode = "single" | "team"` type in `packages/policy/src/policy.ts` — the persisted storage type (immutable)
+- Defined `CollaborationMode = "solo" | "colab"` — the domain/UI type (what users see)
+- Implemented bidirectional codec: `executionToCollaboration()` and `collaborationToExecution()` — pure functions, zero DB change
+- Implemented `displayLabel()` — `"solo" → "Solo"`, `"colab" → "Co-lab"`
+- Exported all new symbols from `@bremio/policy` index.ts
+- Replaced CLI's ad-hoc ternary (`mode === "team" ? "colab" : "solo"`) with `executionToCollaboration()`
+- Replaced webview's inline `displayMode()` helper with "Solo"/"Co-lab" labels (was showing bare `"single"`/`"team"`)
+- Added 7 codec tests covering: valid round-trips (single↔solo, team↔colab), invalid input rejection, display labels, type narrowing
+
+**Decided**
+- `ExecutionMode` is a separate type (not a rename of `CollaborationMode`) to make the boundary explicit: storage speaks one language, domain speaks another, and the codec is the only bridge
+- No DB rewrite, no migration — `single`/`team` stay in the store forever
+
+**Verification**
+- `corepack pnpm vitest run packages/policy` — 54/54 passed (+7 codec tests)
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 761 passed / 63 files
+- Red-check: changed `displayLabel` return to `"WRONG"` → both `displayLabel` tests failed for the right reason. Restored.
+
+**Blocked / handed off**
+- None
