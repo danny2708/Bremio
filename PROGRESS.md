@@ -1412,3 +1412,30 @@ Rules:
 - `corepack pnpm vitest run apps/cli/src/session.test.ts` — 20/20 passed (3 new config-set tests)
 - `corepack pnpm test` — 807 passed / 64 files (no regressions)
 - Red-check: removed the merge step in `configSetCommand` (sent only CLI overrides) → `store.createSessionConfig` creates revision 2 with `leadAgentId: null` → test `preserves others` assertion fails. Restored.
+
+### S6-T4 — Finish deleting the grant surface
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T11:00 → open
+- **branch:** s6/solo-colab
+- **task(s):** S6-T4
+- **status:** done
+
+**Did**
+- Removed all grant schemas from `packages/protocol/src/approval.ts`: `ApprovalGrantSchema`, `CreateApprovalGrantSchema`, `GrantScopeSchema`, `GrantStatusSchema` and their types. Updated `index.ts` exports.
+- Removed `PersistedApprovalGrant` interface and `toApprovalGrant()` helper from `apps/daemon/src/storage.ts`
+- Removed `createApprovalGrant`, `getApprovalGrant`, `listApprovalGrants`, `revokeApprovalGrant` store methods and their RunRegistry delegates (`apps/daemon/src/runs.ts`)
+- Removed `grant_revoked | grant_consumed` from `AuditEvent.kind` union and the grant lifecycle event query from `listAuditEvents`
+- Removed HTTP routes from `apps/daemon/src/server.ts`: `GET/POST /approval/grants`, `GET /approval/grants/:id`, `POST /approval/grants/:id/revoke`
+- Removed CLI grant subcommands (`listGrants`, `createGrant`, `revokeGrant`) and USAGE text from `apps/cli/src/approval.ts`
+- Removed 4 daemon protocol grant tests and 6 CLI approval grant tests; added 1 test confirming `bremio approval grants` returns "unknown approval subcommand"
+
+**Decided**
+- Full removal (not "mark as inert") — the grant surface serves no purpose since the consumption/pruning engine was deleted in S5-T7. Keeping commands that create records nobody reads is worse than removing them.
+- Left `approval_grants` table in schema migration untouched — existing databases keep their table (read-only artifact), and the migration code is historical. Adding a DROP TABLE migration carries risk for zero benefit.
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/cli/src/approval.test.ts` — 11/11 passed (was 10, +1 "removed grants subcommand" test)
+- `corepack pnpm vitest run apps/daemon/src/protocol.test.ts` — 33/33 passed (was 37, -4 grant tests)
+- `corepack pnpm test` — 797 passed / 64 files (-0 regressions, -10 removed grant tests)
+- Red-check (CLI guard): temporarily re-added the `grants` subcommand dispatch branch in `approvalCommandFromCli` → test `returns 2 for removed grants subcommand` fails because it gets "grants-list handled" instead of "unknown approval subcommand" → restored removal → test passes

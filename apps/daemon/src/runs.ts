@@ -34,7 +34,6 @@ import {
   isTerminal,
   type AuditEvent,
   type CreateSessionConfigInput,
-  type PersistedApprovalGrant,
   type PersistedApprovalRequest,
   type PersistedRun,
   type PersistedRunEvent,
@@ -436,39 +435,6 @@ export class RunRegistry {
 
   getApprovalRequest(id: string): PersistedApprovalRequest | undefined {
     return this.store.getApprovalRequest(id);
-  }
-
-  // ── Approval grants ───────────────────────────────────────────────
-
-  createApprovalGrant(input: {
-    sessionId: string;
-    workspaceId?: string;
-    scope: string;
-    actionClass?: string;
-    target?: string;
-    ttlMs: number;
-    createdBy: string;
-    precedence: number;
-    originatingDigest?: string;
-  }): PersistedApprovalGrant {
-    const id = `apg-${Date.now().toString(36)}-${(this.#counter += 1).toString(36)}`;
-    return this.store.createApprovalGrant({ id, ...input });
-  }
-
-  listApprovalGrants(filters: {
-    sessionId?: string;
-    workspaceId?: string;
-    scope?: string;
-  } = {}): PersistedApprovalGrant[] {
-    return this.store.listApprovalGrants(filters);
-  }
-
-  revokeApprovalGrant(id: string, revokedBy?: string): PersistedApprovalGrant | undefined {
-    return this.store.revokeApprovalGrant(id, revokedBy);
-  }
-
-  getApprovalGrant(id: string): PersistedApprovalGrant | undefined {
-    return this.store.getApprovalGrant(id);
   }
 
   listAuditEvents(filters: { sessionId?: string; limit?: number } = {}): AuditEvent[] {

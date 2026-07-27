@@ -340,24 +340,6 @@ export interface PersistedApprovalRequest {
   reason?: string;
 }
 
-export interface PersistedApprovalGrant {
-  id: string;
-  sessionId: string;
-  workspaceId?: string;
-  scope: string;
-  actionClass?: string;
-  target?: string;
-  expiresAt: string;
-  revokedAt?: string;
-  revokedBy?: string;
-  consumedAt?: string;
-  consumedBy?: string;
-  createdAt: string;
-  createdBy: string;
-  originatingDigest?: string;
-  precedence: number;
-}
-
 export interface CreateRunInput {
   id: string;
   mode: "single" | "team";
@@ -1133,75 +1115,6 @@ export class RunStore {
     return this.getApprovalRequest(id);
   }
 
-  // ── Approval grants ────────────────────────────────────────────────
-
-  createApprovalGrant(input: {
-    id: string;
-    sessionId: string;
-    workspaceId?: string;
-    scope: string;
-    actionClass?: string;
-    target?: string;
-    ttlMs: number;
-    createdBy: string;
-    precedence: number;
-    originatingDigest?: string;
-  }): PersistedApprovalGrant {
-    const now = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + input.ttlMs).toISOString();
-    this.db
-      .prepare(
-        `INSERT INTO approval_grants
-           (id, session_id, workspace_id, scope, action_class, target,
-            expires_at, created_at, created_by, originating_digest, precedence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.id, input.sessionId, input.workspaceId ?? null, input.scope,
-        input.actionClass ?? null, input.target ?? null,
-        expiresAt, now, input.createdBy, input.originatingDigest ?? null, input.precedence,
-      );
-    return this.getApprovalGrant(input.id) as PersistedApprovalGrant;
-  }
-
-  getApprovalGrant(id: string): PersistedApprovalGrant | undefined {
-    const row = this.db.prepare("SELECT * FROM approval_grants WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? toApprovalGrant(row) : undefined;
-  }
-
-  listApprovalGrants(filters: {
-    sessionId?: string;
-    workspaceId?: string;
-    scope?: string;
-  } = {}): PersistedApprovalGrant[] {
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    if (filters.sessionId) { conditions.push("session_id = ?"); params.push(filters.sessionId); }
-    if (filters.workspaceId) { conditions.push("workspace_id = ?"); params.push(filters.workspaceId); }
-    if (filters.scope) { conditions.push("scope = ?"); params.push(filters.scope); }
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const rows = this.db
-      .prepare(`SELECT * FROM approval_grants ${where} ORDER BY created_at DESC`)
-      .all(...(params as string[])) as Array<Record<string, unknown>>;
-    return rows.map(toApprovalGrant);
-  }
-
-  revokeApprovalGrant(id: string, revokedBy?: string): PersistedApprovalGrant | undefined {
-    const now = new Date().toISOString();
-    this.db
-      .prepare(
-        revokedBy
-          ? `UPDATE approval_grants SET revoked_at = ?, revoked_by = ?
-             WHERE id = ? AND revoked_at IS NULL AND consumed_at IS NULL`
-          : `UPDATE approval_grants SET revoked_at = ?
-             WHERE id = ? AND revoked_at IS NULL AND consumed_at IS NULL`,
-      )
-      .run(...(revokedBy ? [now, revokedBy, id] : [now, id]));
-    return this.getApprovalGrant(id);
-  }
-
   // ── Audit log ─────────────────────────────────────────────────────
 
   listAuditEvents(filters: {
@@ -1236,33 +1149,6 @@ export class RunStore {
       });
     }
 
-    // Grant lifecycle events
-    const grantRows = this.db
-      .prepare(
-        `SELECT 'grant_revoked' AS kind, id, session_id, revoked_at AS event_at, revoked_by, 'revoked' AS state
-         FROM approval_grants
-         WHERE revoked_at IS NOT NULL
-           ${filters.sessionId ? "AND session_id = ?" : ""}
-         UNION ALL
-         SELECT 'grant_consumed' AS kind, id, session_id, consumed_at AS event_at, consumed_by, 'consumed' AS state
-         FROM approval_grants
-         WHERE consumed_at IS NOT NULL
-           ${filters.sessionId ? "AND session_id = ?" : ""}
-         ORDER BY event_at DESC
-         LIMIT ?`,
-      )
-      .all(...(filters.sessionId ? [filters.sessionId, filters.sessionId, limit] : [limit])) as Array<Record<string, unknown>>;
-    for (const g of grantRows) {
-      results.push({
-        kind: String(g.kind) as AuditEvent["kind"],
-        id: String(g.id),
-        sessionId: String(g.session_id),
-        eventAt: String(g.event_at),
-        decidedBy: g.revoked_by ? String(g.revoked_by) : undefined,
-        state: String(g.state),
-      });
-    }
-
     // Session config changes
     const cfgRows = this.db
       .prepare(
@@ -1292,7 +1178,7 @@ export class RunStore {
 }
 
 export interface AuditEvent {
-  kind: "approval_decision" | "grant_revoked" | "grant_consumed" | "config_change";
+  kind: "approval_decision" | "config_change";
   id: string;
   sessionId: string;
   runId?: string;
@@ -1709,26 +1595,6 @@ function toApprovalRequest(row: Record<string, unknown>): PersistedApprovalReque
     ...(row.decided_at ? { decidedAt: String(row.decided_at) } : {}),
     ...(row.decided_by ? { decidedBy: String(row.decided_by) } : {}),
     ...(row.reason ? { reason: String(row.reason) } : {}),
-  };
-}
-
-function toApprovalGrant(row: Record<string, unknown>): PersistedApprovalGrant {
-  return {
-    id: String(row.id),
-    sessionId: String(row.session_id),
-    ...(row.workspace_id ? { workspaceId: String(row.workspace_id) } : {}),
-    scope: String(row.scope),
-    ...(row.action_class ? { actionClass: String(row.action_class) } : {}),
-    ...(row.target ? { target: String(row.target) } : {}),
-    expiresAt: String(row.expires_at),
-    ...(row.revoked_at ? { revokedAt: String(row.revoked_at) } : {}),
-    ...(row.revoked_by ? { revokedBy: String(row.revoked_by) } : {}),
-    ...(row.consumed_at ? { consumedAt: String(row.consumed_at) } : {}),
-    ...(row.consumed_by ? { consumedBy: String(row.consumed_by) } : {}),
-    createdAt: String(row.created_at),
-    createdBy: String(row.created_by),
-    ...(row.originating_digest ? { originatingDigest: String(row.originating_digest) } : {}),
-    precedence: Number(row.precedence),
   };
 }
 
