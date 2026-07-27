@@ -1245,3 +1245,29 @@ Rules:
 - `corepack pnpm typecheck` — clean (root + extension)
 - Red-check: removed force branch from `applyPatch` → "rejects apply when user-modified files conflict" fails with `ApplyConflictError` with `conflictedFiles` detail → restored
 - Red-check: removed `checkout HEAD` from force path → "applies with force" fails with `ApplicatonError` from `assertCleanTree` → restored
+
+### S5-T7 — Delete the grant surface (overrideableByGrant + dead store methods)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T08:30 → 2026-07-27T08:35
+- **branch:** s5/change-transparency
+- **task(s):** S5-T7
+- **status:** done
+
+**Did**
+- Removed `overrideableByGrant` field from `PolicyEvaluation` interface in `packages/policy/src/policy.ts`
+- Removed `overrideableByGrant: true` from the three denied `AUTOPILOT_RULES` entries (git-destructive, outside-workspace, user-config)
+- Removed `expireApprovalRequests()`, `consumeApprovalGrant()`, `pruneExpiredApprovalGrants()` from `apps/daemon/src/storage.ts` — three store methods with zero production callers and zero test callers
+- Updated test in `policy.test.ts`: dropped `overrideableByGrant` assertion from the autopilot-denied-actions test
+- Updated `docs/15` §2.5 to reflect that the deny list is enforced in `AUTOPILOT_RULES` and the override mechanism was deleted as dead code
+- Left the `consumed_at`/`consumed_by` columns in the SQL schema and `PersistedApprovalGrant` interface — they are data fields, not behavior; removing them would be migration churn with no benefit
+
+**Decided**
+- Deleted rather than wired, following the S4-T9 precedent: the three store methods had zero production callers, zero test callers, and `consumeApprovalGrant` didn't even check `expires_at`. Keeping dead code that claims to do something it doesn't is worse than removing it. If an override mechanism is needed in the future, it should be built properly with a design that connects policy evaluation to the grant store — not through a half-wired field on a pure function.
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/policy/src/policy.test.ts` — 47/47 passed (updated test)
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts` — 49/49 passed (methods removed, no tests affected)
+- `corepack pnpm vitest run apps/daemon/src/protocol.test.ts` — 37/37 passed
+- `corepack pnpm test` — 747/747 passed across 63 files (no regressions)
+- No red-checks needed — this is a deletion task (same as S4-T9); every test that passed before still passes

@@ -1123,17 +1123,6 @@ export class RunStore {
     return this.getApprovalRequest(id);
   }
 
-  expireApprovalRequests(olderThanMs: number): number {
-    const cutoff = new Date(Date.now() - olderThanMs).toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE approval_requests SET state = 'expired', decided_at = ?
-         WHERE state = 'pending' AND requested_at < ?`,
-      )
-      .run(new Date().toISOString(), cutoff);
-    return Number(result.changes);
-  }
-
   // ── Approval grants ────────────────────────────────────────────────
 
   createApprovalGrant(input: {
@@ -1201,31 +1190,6 @@ export class RunStore {
       )
       .run(...(revokedBy ? [now, revokedBy, id] : [now, id]));
     return this.getApprovalGrant(id);
-  }
-
-  consumeApprovalGrant(id: string, consumedBy?: string): PersistedApprovalGrant | undefined {
-    const now = new Date().toISOString();
-    this.db
-      .prepare(
-        consumedBy
-          ? `UPDATE approval_grants SET consumed_at = ?, consumed_by = ?
-             WHERE id = ? AND consumed_at IS NULL AND revoked_at IS NULL`
-          : `UPDATE approval_grants SET consumed_at = ?
-             WHERE id = ? AND consumed_at IS NULL AND revoked_at IS NULL`,
-      )
-      .run(...(consumedBy ? [now, consumedBy, id] : [now, id]));
-    return this.getApprovalGrant(id);
-  }
-
-  pruneExpiredApprovalGrants(): number {
-    const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `DELETE FROM approval_grants
-         WHERE expires_at < ? AND revoked_at IS NULL AND consumed_at IS NULL`,
-      )
-      .run(now);
-    return Number(result.changes);
   }
 
   // ── Audit log ─────────────────────────────────────────────────────

@@ -207,14 +207,9 @@ mcp-tool · git-destructive · outside-workspace · user-config
 ### 2.5 Autopilot's non-negotiable deny list
 
 **Recorded late — this decision was approved in the `docs/14` Q4 review and was
-missing from the first version of this lock.** Sprint 2 built its policy matrix
-to the spec as written, so `autopilot` currently allows all ten action classes
-with the reason *"autopilot allows all actions"*. That is a gap in this document,
-not in that sprint's work.
+missing from the first version of this lock.**
 
-Autopilot means "do not ask me about ordinary work". It does **not** mean "no
-limits". These classes stay denied under autopilot unless an explicit,
-narrowly-scoped, auditable and revocable override says otherwise:
+These classes are denied under autopilot:
 
 - `outside-workspace` — writes beyond the approved workspace or worktree
 - `git-destructive` — force-push and history rewriting
@@ -223,9 +218,13 @@ narrowly-scoped, auditable and revocable override says otherwise:
 - anything that would exfiltrate secrets
 - destructive commands aimed outside the worktree
 
-Autopilot also defaults to `isolated-worktree` (§2.3). Wiring these into
-`AUTOPILOT_RULES` belongs to the approval sprint, since the override mechanism
-is `ApprovalGrant`.
+The first three (`outside-workspace`, `git-destructive`, `user-config`) are
+enforced in `AUTOPILOT_RULES` (`packages/policy`). The remaining items depend on
+an action-class taxonomy that does not yet exist — they are pinned here so they
+are not silently forgotten. No override mechanism exists: `overrideableByGrant`
+and the grant-consumption lifecycle (`consumeApprovalGrant`,
+`pruneExpiredApprovalGrants`, `expireApprovalRequests`) were deleted in S5-T7
+as dead code that nothing called.
 
 ---
 
