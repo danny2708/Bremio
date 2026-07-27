@@ -259,4 +259,147 @@ describe("MergeManager", () => {
       expect(result.trim()).toBe("");
     });
   });
+
+  describe("extractPatchFiles", () => {
+    it("extracts file paths from diff --git lines", () => {
+      const patch = [
+        "diff --git a/src/a.txt b/src/a.txt",
+        "index abc..def",
+        "--- a/src/a.txt",
+        "+++ b/src/a.txt",
+        "@@ -1 +1,2 @@",
+        " a",
+        "+b",
+        "diff --git a/src/c.txt b/src/c.txt",
+        "index 123..456",
+        "--- a/src/c.txt",
+        "+++ b/src/c.txt",
+        "@@ -1 +1,2 @@",
+        " c",
+        "+d",
+      ].join("\n") + "\n";
+
+      const mgr = new MergeManager(repo);
+      const files = mgr.extractPatchFiles(patch);
+      expect(files).toEqual(["src/a.txt", "src/c.txt"]);
+    });
+
+    it("returns empty array for an empty patch", () => {
+      const mgr = new MergeManager(repo);
+      expect(mgr.extractPatchFiles("")).toEqual([]);
+    });
+  });
+
+  describe("detectConflicts", () => {
+    it("finds user-modified files that overlap with the patch", async () => {
+      await write("AGENT.txt", "agent content\n");
+      await write("USER.txt", "user content\n");
+      git(["add", "-A"]);
+      git(["commit", "-q", "-m", "init"]);
+
+      // User modifies USER.txt
+      await write("USER.txt", "user changed this\n");
+
+      const patch = [
+        "diff --git a/AGENT.txt b/AGENT.txt",
+        "--- a/AGENT.txt",
+        "+++ b/AGENT.txt",
+        "@@ -1 +1,2 @@",
+        " agent content",
+        "+agent addition",
+        "diff --git a/USER.txt b/USER.txt",
+        "--- a/USER.txt",
+        "+++ b/USER.txt",
+        "@@ -1 +1,2 @@",
+        " user content",
+        "+agent addition",
+      ].join("\n") + "\n";
+
+      const mgr = new MergeManager(repo);
+      const conflicts = await mgr.detectConflicts(patch);
+      expect(conflicts).toHaveLength(1);
+      expect(conflicts[0]?.file).toBe("USER.txt");
+      expect(conflicts[0]?.status).toBe("user_modified");
+    });
+
+    it("returns empty when no patch files are dirty", async () => {
+      await write("AGENT.txt", "agent content\n");
+      git(["add", "-A"]);
+      git(["commit", "-q", "-m", "init"]);
+
+      const patch = "diff --git a/AGENT.txt b/AGENT.txt\n--- a/AGENT.txt\n+++ b/AGENT.txt\n@@ -1 +1,2 @@\n agent content\n+agent addition\n";
+
+      const mgr = new MergeManager(repo);
+      const conflicts = await mgr.detectConflicts(patch);
+      expect(conflicts).toHaveLength(0);
+    });
+
+    it("returns empty when dirty files are not in the patch", async () => {
+      await write("AGENT.txt", "agent\n");
+      await write("OTHER.txt", "other\n");
+      git(["add", "-A"]);
+      git(["commit", "-q", "-m", "init"]);
+      await write("OTHER.txt", "user changed OTHER, not in patch\n");
+
+      const patch = "diff --git a/AGENT.txt b/AGENT.txt\n--- a/AGENT.txt\n+++ b/AGENT.txt\n@@ -1 +1,2 @@\n agent\n+agent addition\n";
+
+      const mgr = new MergeManager(repo);
+      const conflicts = await mgr.detectConflicts(patch);
+      expect(conflicts).toHaveLength(0);
+    });
+  });
+
+  describe("applyPatch / revertPatch with force", () => {
+    it("rejects apply when user-modified files conflict (no force)", async () => {
+      await write("SHARED.txt", "original\n");
+      git(["add", "-A"]);
+      git(["commit", "-q", "-m", "init"]);
+      await write("SHARED.txt", "user edited\n");
+
+      const patch = "diff --git a/SHARED.txt b/SHARED.txt\n--- a/SHARED.txt\n+++ b/SHARED.txt\n@@ -1 +1,2 @@\n original\n+agent addition\n";
+
+      const mgr = new MergeManager(repo);
+      const err = await mgr.applyPatch(patch).catch((e) => e);
+      expect(err).toBeInstanceOf(ApplyConflictError);
+      expect(err.conflictedFiles).toBeDefined();
+      expect(err.conflictedFiles[0]?.file).toBe("SHARED.txt");
+      expect(err.conflictedFiles[0]?.status).toBe("user_modified");
+      // File content should be unchanged on rejection
+      expect(await fs.readFile(path.join(repo, "SHARED.txt"), "utf8")).toBe("user edited\n");
+    });
+
+    it("applies with force, overwriting user changes", async () => {
+      await write("SHARED.txt", "original\n");
+      git(["add", "-A"]);
+      git(["commit", "-q", "-m", "init"]);
+      await write("SHARED.txt", "user edited\n");
+
+      const patch = "diff --git a/SHARED.txt b/SHARED.txt\n--- a/SHARED.txt\n+++ b/SHARED.txt\n@@ -1 +1,2 @@\n original\n+agent addition\n";
+
+      const mgr = new MergeManager(repo);
+      await mgr.applyPatch(patch, { force: true });
+      const content = await fs.readFile(path.join(repo, "SHARED.txt"), "utf8");
+      expect(content).toBe("original\nagent addition\n");
+    });
+
+    it("rejects revert when user-modified files conflict (no force)", async () => {
+      await write("SHARED.txt", "original\n");
+      git(["add", "-A"]);
+      git(["commit", "-q", "-m", "init"]);
+
+      const patch = "diff --git a/SHARED.txt b/SHARED.txt\n--- a/SHARED.txt\n+++ b/SHARED.txt\n@@ -1 +1,2 @@\n original\n+agent added\n";
+      const mgr = new MergeManager(repo);
+      // Apply normally first
+      await mgr.applyPatch(patch);
+      git(["add", "-A"]);
+      git(["commit", "-q", "-m", "agent change"]);
+      // User edits the file
+      await write("SHARED.txt", "user changed this\n");
+      // Now try to revert — should fail with conflict
+      const err = await mgr.revertPatch(patch).catch((e) => e);
+      expect(err).toBeInstanceOf(ApplyConflictError);
+      expect(err.conflictedFiles).toBeDefined();
+      expect(err.conflictedFiles[0]?.file).toBe("SHARED.txt");
+    });
+  });
 });

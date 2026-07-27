@@ -365,7 +365,8 @@ export class BremioClient {
     runId: string;
     taskId?: string;
     filePath?: string;
-  }): Promise<{ ok: boolean; output?: string; error?: string }> {
+    force?: boolean;
+  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }> }> {
     return this.#call("/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -378,7 +379,8 @@ export class BremioClient {
     runId: string;
     taskId?: string;
     filePath?: string;
-  }): Promise<{ ok: boolean; output?: string; error?: string }> {
+    force?: boolean;
+  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }> }> {
     return this.#call("/revert", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

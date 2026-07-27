@@ -7,12 +7,19 @@ export interface ApplyPatchRequest {
   runId: string;
   taskId?: string;
   filePath?: string;
+  force?: boolean;
+}
+
+export interface ConflictFile {
+  file: string;
+  status: string;
 }
 
 export interface ApplyRevertResult {
   ok: boolean;
   output?: string;
   error?: string;
+  conflictedFiles?: ConflictFile[];
 }
 
 /** A stored report that might be Single or Team mode. */
@@ -83,12 +90,27 @@ export async function applyRunPatch(request: ApplyPatchRequest): Promise<ApplyRe
       request.filePath,
     );
     const manager = new MergeManager(request.repoPath);
-    const result = await manager.applyPatch(patch);
+
+    // Detect pre-existing conflicts first for rich reporting.
+    const preConflicts = await manager.detectConflicts(patch);
+    if (preConflicts.length > 0 && !request.force) {
+      return {
+        ok: false,
+        error: `User edits conflict with ${preConflicts.length} file(s) the agent changed. Use --force to overwrite user changes.`,
+        conflictedFiles: preConflicts,
+      };
+    }
+
+    const result = await manager.applyPatch(patch, { force: request.force });
     return { ok: true, output: result.output };
   } catch (err) {
     const msg = (err as Error).message;
     if (err instanceof ApplyConflictError) {
-      return { ok: false, error: `conflict: ${msg}` };
+      return {
+        ok: false,
+        error: `conflict: ${msg}`,
+        conflictedFiles: err.conflictedFiles,
+      };
     }
     return { ok: false, error: msg };
   }
@@ -104,12 +126,27 @@ export async function revertRunPatch(request: ApplyPatchRequest): Promise<ApplyR
       request.filePath,
     );
     const manager = new MergeManager(request.repoPath);
-    const result = await manager.revertPatch(patch);
+
+    // Detect pre-existing conflicts first for rich reporting.
+    const preConflicts = await manager.detectConflicts(patch);
+    if (preConflicts.length > 0 && !request.force) {
+      return {
+        ok: false,
+        error: `User edits conflict with ${preConflicts.length} file(s) the agent changed. Use --force to overwrite user changes.`,
+        conflictedFiles: preConflicts,
+      };
+    }
+
+    const result = await manager.revertPatch(patch, { force: request.force });
     return { ok: true, output: result.output };
   } catch (err) {
     const msg = (err as Error).message;
     if (err instanceof ApplyConflictError) {
-      return { ok: false, error: `conflict: ${msg}` };
+      return {
+        ok: false,
+        error: `conflict: ${msg}`,
+        conflictedFiles: err.conflictedFiles,
+      };
     }
     return { ok: false, error: msg };
   }

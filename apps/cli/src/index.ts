@@ -123,12 +123,14 @@ ${c.bold("apply")}    apply a run's changes to the working tree (per task or per
   <runId>                 The run whose changes to apply.
   --task <taskId>         Apply only this task's changes (Team runs).
   --file <path>           Apply only one file's changes.
+  --force                 Overwrite conflicting user edits in the working tree.
   --repo <path>           Repo to look in (default: current directory).
 
 ${c.bold("revert")}   revert a run's changes from the working tree (per task or per file)
   <runId>                 The run whose changes to revert.
   --task <taskId>         Revert only this task's changes (Team runs).
   --file <path>           Revert only one file's changes.
+  --force                 Overwrite conflicting user edits in the working tree.
   --repo <path>           Repo to look in (default: current directory).
 
 ${c.bold("stats")}    summarize the usage ledger (.bremio/ledger.jsonl)
@@ -188,6 +190,7 @@ function parseCli() {
       verbose: { type: "boolean", default: false },
       task: { type: "string" },
       file: { type: "string" },
+      force: { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", short: "v", default: false },
@@ -245,7 +248,7 @@ async function main(): Promise<void> {
       return;
     case "apply":
     case "revert":
-      process.exitCode = await applyCommandFromCli(values, positionals, command as "apply" | "revert");
+      process.exitCode = await applyCommandFromCli(values, positionals, command);
       return;
     case "stats":
       process.exitCode = await statsCommandFromCli(values);
@@ -978,6 +981,7 @@ async function applyCommandFromCli(
     repoPath,
     runId,
     revert: verb === "revert",
+    force: values.force === true,
     ...(values.task ? { taskId: values.task } : {}),
     ...(values.file ? { filePath: values.file } : {}),
   });

@@ -7,8 +7,12 @@ import { simpleGit, type SimpleGit } from "simple-git";
 export class ApplyConflictError extends Error {
   constructor(
     public readonly files: string[],
+    public readonly conflictedFiles?: Array<{ file: string; status: string }>,
   ) {
-    super(`apply hit conflicts in: ${files.join(", ") || "(unknown files)"}`);
+    const detail = conflictedFiles?.length
+      ? `conflicts: ${conflictedFiles.map((c) => `${c.file} (${c.status})`).join(", ")}`
+      : `conflicts in: ${files.join(", ") || "(unknown files)"}`;
+    super(`apply hit ${detail}`);
     this.name = "ApplyConflictError";
   }
 }
@@ -260,19 +264,93 @@ export class MergeManager {
   }
 
   /**
+   * Extract the list of files touched by a unified diff patch.
+   */
+  extractPatchFiles(patch: string): string[] {
+    const files: string[] = [];
+    for (const line of patch.split("\n")) {
+      if (line.startsWith("diff --git ")) {
+        // diff --git a/src/file.ts b/src/file.ts → extract the "b/" path
+        const parts = line.split(" ");
+        const bPath = parts[parts.length - 1]; // "b/src/file.ts"
+        if (bPath && bPath.startsWith("b/")) {
+          files.push(bPath.slice(2));
+        }
+      }
+    }
+    return files;
+  }
+
+  /**
+   * Check which files from a patch have user changes in the working tree
+   * (modified, deleted, or untracked) that would make clean application fail.
+   * Returns an empty array when no conflicts are expected.
+   */
+  async detectConflicts(patch: string): Promise<Array<{ file: string; status: string }>> {
+    const patchFiles = this.extractPatchFiles(patch);
+    if (patchFiles.length === 0) return [];
+
+    const s = await this.git.status();
+    const userChanges = new Map<string, string>();
+
+    for (const f of s.modified) userChanges.set(f, "user_modified");
+    for (const f of s.deleted) userChanges.set(f, "user_deleted");
+    for (const f of s.created) userChanges.set(f, "user_added");
+
+    const conflicts: Array<{ file: string; status: string }> = [];
+    for (const pf of patchFiles) {
+      const userStatus = userChanges.get(pf);
+      if (userStatus) {
+        conflicts.push({ file: pf, status: userStatus });
+      }
+    }
+    return conflicts;
+  }
+
+  /**
    * Apply a unified diff patch to the working tree via `git apply`.
+   * When `force` is true, resets any conflicting files to HEAD before
+   * applying, overwriting user modifications with the agent's version.
    * On conflict, aborts and throws ApplyConflictError.
    */
-  async applyPatch(patch: string): Promise<{ output: string }> {
+  async applyPatch(patch: string, options?: { force?: boolean }): Promise<{ output: string }> {
+    const conflicts = await this.detectConflicts(patch);
+    if (conflicts.length > 0) {
+      if (!options?.force) {
+        throw new ApplyConflictError(
+          conflicts.map((c) => c.file),
+          conflicts,
+        );
+      }
+      // Force mode: reset conflicting files to HEAD so the patch applies cleanly.
+      for (const c of conflicts) {
+        await this.git.raw(["checkout", "HEAD", "--", c.file]).catch(() => {});
+      }
+    }
     await this.assertCleanTree();
     return this.runApply(["apply"], patch);
   }
 
   /**
    * Reverse-apply a unified diff (revert changes) via `git apply --reverse`.
+   * When `force` is true, resets any conflicting files to HEAD before
+   * reverting, overwriting user modifications with the agent's version.
    * On conflict, aborts and throws ApplyConflictError.
    */
-  async revertPatch(patch: string): Promise<{ output: string }> {
+  async revertPatch(patch: string, options?: { force?: boolean }): Promise<{ output: string }> {
+    const conflicts = await this.detectConflicts(patch);
+    if (conflicts.length > 0) {
+      if (!options?.force) {
+        throw new ApplyConflictError(
+          conflicts.map((c) => c.file),
+          conflicts,
+        );
+      }
+      // Force mode: reset conflicting files to HEAD so the patch applies cleanly.
+      for (const c of conflicts) {
+        await this.git.raw(["checkout", "HEAD", "--", c.file]).catch(() => {});
+      }
+    }
     await this.assertCleanTree();
     return this.runApply(["apply", "--reverse"], patch);
   }

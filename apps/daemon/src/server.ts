@@ -56,6 +56,7 @@ const ApplyRevertSchema = z.object({
   runId: z.string().min(1),
   taskId: z.string().optional(),
   filePath: z.string().optional(),
+  force: z.boolean().optional(),
 });
 
 export interface DaemonServerOptions {

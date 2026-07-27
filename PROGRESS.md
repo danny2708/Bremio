@@ -1213,3 +1213,35 @@ Rules:
 
 **Blocked / handed off**
 - None
+
+### S5-T6 — Conflict handling when the user edited the same file
+- **agent:** Claude (opencode)
+- **time:** 2026-07-26T23:50 → 2026-07-27T08:20
+- **branch:** s5/change-transparency
+- **task(s):** S5-T6
+- **status:** done
+
+**Did**
+- Added `extractPatchFiles(patch)` to `MergeManager` — returns file paths from `diff --git` lines
+- Added `detectConflicts(patch)` to `MergeManager` — compares patch files against `git status` modified/deleted/created; returns `{ file, status }[]`
+- Added `force` option to `applyPatch(patch, { force: true })` — resets conflicting files to HEAD before applying cleanly (overwrites user changes)
+- Added `force` option to `revertPatch(patch, { force: true })` — same reset-before-revert pattern
+- Added `conflictedFiles` field to `ApplyConflictError` — details which files and their user-change status
+- Added `force` field to `ApplyRevertSchema` in daemon server
+- Added `conflictedFiles` to `ApplyRevertResult` in daemon apply.ts
+- Added `forceApplyDiff`/`forceRevertDiff` message handlers to extension.ts with "Overwrite & apply"/"Overwrite & revert" buttons in panel
+- Added `--force` option to CLI apply/revert commands
+- Added 8 new tests: `extractPatchFiles` (2), `detectConflicts` (3), force apply (1), force-reject no-force (2)
+- All 23 workspace tests pass, typecheck clean, 56 extension tests pass
+
+**Decided**
+- Force mode uses `git checkout HEAD -- <file>` to reset conflicting files before clean `git apply`, rather than `git apply --reject` — the latter writes `.rej` files and skips unmatched hunks, which silently discards agent changes. Overwriting user changes is explicit and visible.
+- `renamed` entries in `git status` are excluded from conflict detection because simple-git's type treats `renamed` as `never[]` and the conflict path runs `git checkout HEAD` which naturally handles renames correctly.
+- `s.created` is included in conflict detection (so a user-created file conflicting with an agent write is surfaced before force-mode reset).
+
+**Verification**
+- `corepack pnpm vitest run packages/workspace/src/merge.test.ts` — 23/23 passed (was 15, +8 new)
+- `corepack pnpm vitest run apps/vscode-extension/src/extension.test.ts` — 56/56 passed
+- `corepack pnpm typecheck` — clean (root + extension)
+- Red-check: removed force branch from `applyPatch` → "rejects apply when user-modified files conflict" fails with `ApplyConflictError` with `conflictedFiles` detail → restored
+- Red-check: removed `checkout HEAD` from force path → "applies with force" fails with `ApplicatonError` from `assertCleanTree` → restored

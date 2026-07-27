@@ -1081,9 +1081,20 @@ window.addEventListener("message", (event) => {
     $("gate").innerHTML = renderDiffViewer(message.diff);
   }
   if (message.type === "applyResult" || message.type === "revertResult") {
+    const verb = message.type === "applyResult" ? "apply" : "revert";
     const cls = message.ok ? "warn" : "bad";
-    $("gate").insertAdjacentHTML("beforeend",
-      '<div class="banner ' + cls + '">' + escapeHtml(message.detail) + "</div>");
+    let html = '<div class="banner ' + cls + '">' + escapeHtml(message.detail) + "</div>";
+    if (message.conflictedFiles && message.conflictedFiles.length > 0) {
+      html += '<div class="card" style="margin-top:8px"><span class="card-title">Conflicting files</span>';
+      for (const cf of message.conflictedFiles) {
+        const label = cf.status === "user_modified" ? "modified by you" : cf.status === "user_deleted" ? "deleted by you" : cf.status;
+        html += '<div class="row muted" style="font-size:11px">- ' + escapeHtml(cf.file) + ' (' + label + ')</div>';
+      }
+      html += '<div class="row" style="margin-top:8px">'
+        + '<button class="ghost" data-action="force-' + verb + '-diff">Overwrite & ' + verb + '</button>'
+        + '</div></div>';
+    }
+    $("gate").insertAdjacentHTML("beforeend", html);
   }
 });
 
@@ -1311,9 +1322,15 @@ document.addEventListener("click", (event) => {
     });
     return;
   }
-  if (button.dataset.action === "apply-diff" || button.dataset.action === "revert-diff") {
+  if (button.dataset.action === "apply-diff" || button.dataset.action === "revert-diff"
+      || button.dataset.action === "force-apply-diff" || button.dataset.action === "force-revert-diff") {
     const runId = activeRunId;
-    if (runId) vscode.postMessage({ type: button.dataset.action === "apply-diff" ? "applyDiff" : "revertDiff", runId });
+    if (!runId) return;
+    const type = button.dataset.action === "apply-diff" ? "applyDiff"
+      : button.dataset.action === "force-apply-diff" ? "forceApplyDiff"
+      : button.dataset.action === "force-revert-diff" ? "forceRevertDiff"
+      : "revertDiff";
+    vscode.postMessage({ type, runId });
     return;
   }
   const runId = button.dataset.run;

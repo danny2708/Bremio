@@ -7,6 +7,7 @@ export interface ApplyCommandOptions {
   taskId?: string;
   filePath?: string;
   revert: boolean;
+  force?: boolean;
 }
 
 /** `bremio apply` / `bremio revert` — apply or revert a run's changes to the working tree. */
@@ -48,12 +49,14 @@ export async function applyCommand(opts: ApplyCommandOptions): Promise<number> {
           runId,
           taskId: opts.taskId,
           filePath: opts.filePath,
+          force: opts.force,
         })
       : await client.applyPatch({
           repoPath: opts.repoPath,
           runId,
           taskId: opts.taskId,
           filePath: opts.filePath,
+          force: opts.force,
         });
 
     if (result.ok) {
@@ -61,6 +64,18 @@ export async function applyCommand(opts: ApplyCommandOptions): Promise<number> {
       if (result.output) console.log(c.dim(result.output));
       return 0;
     }
+
+    const conflicts = result.conflictedFiles;
+    if (conflicts && conflicts.length > 0) {
+      console.error(c.yellow(`⚠ ${label} blocked by user edits in:`));
+      for (const cf of conflicts) {
+        const statusLabel = cf.status === "user_modified" ? "modified" : cf.status === "user_deleted" ? "deleted" : cf.status;
+        console.error(c.yellow(`  - ${cf.file} (${statusLabel})`));
+      }
+      console.error(c.dim(`  Re-run with --force to overwrite user changes.`));
+      return 1;
+    }
+
     console.error(c.red(`✗ ${label} failed: ${result.error ?? "unknown error"}`));
     return 1;
   } catch (err) {
