@@ -22,10 +22,18 @@ import { CodexAdapter } from "@bremio/adapter-codex";
 import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import { MergeManager, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
 import {
+  evaluateTransition,
+  effectiveMode,
+  defaultHysteresisFloor,
+  type CollaborationState,
+  type TransitionApproval,
+  type TransitionEvent,
+  type TransitionResult,
+} from "@bremio/policy";
+import {
   isTerminal,
   type AuditEvent,
   type CreateSessionConfigInput,
-  type PersistedApprovalGrant,
   type PersistedApprovalRequest,
   type PersistedRun,
   type PersistedRunEvent,
@@ -301,6 +309,75 @@ export class RunRegistry {
     return config;
   }
 
+  /**
+   * Evaluate a Solo/Co-lab transition for a session and, if it fires, persist
+   * the new collaboration state as a session-config revision.
+   *
+   * The state machine guards (topology edges + hysteresis + approval) are
+   * evaluated in the pure `@bremio/policy` layer. This method reads the
+   * current state from the store, calls the evaluator, and persists the
+   * result — it does not invent any rules of its own.
+   */
+  evaluateSessionTransition(input: {
+    sessionId: string;
+    event: TransitionEvent;
+    reason: string;
+    turnsInStableMode?: number;
+    minTurnsInMode?: number;
+    approval?: TransitionApproval;
+    changedBy?: string;
+  }): TransitionResult & { config?: SessionConfig } {
+    const config = this.store.getSessionConfig(input.sessionId);
+    if (!config) return { ok: false, reason: `no config for session: ${input.sessionId}` };
+
+    // Derive the current CollaborationState from the persisted value, or from
+    // the execution mode (legacy configs written before the column existed).
+    const from: CollaborationState = (
+      config.collaborationState
+      ?? (config.mode === "team" ? "colab" : "solo")
+    ) as CollaborationState;
+
+    const turnsInStableMode = input.turnsInStableMode ?? this.store.countSessionRuns(input.sessionId);
+
+    const result = evaluateTransition({
+      from,
+      event: input.event,
+      reason: input.reason,
+      turnsInStableMode,
+      minTurnsInMode: input.minTurnsInMode ?? defaultHysteresisFloor,
+      approval: input.approval,
+    });
+
+    if (!result.ok) return result;
+
+    // Persist the new state as the latest session-config revision.
+    const newConfig = this.store.createSessionConfig({
+      sessionId: input.sessionId,
+      mode: config.mode,
+      leadAgentId: config.leadAgentId,
+      workerAgentId: config.workerAgentId,
+      collaborationState: result.transition.to,
+      changeReason: result.transition.reason,
+      changedBy: input.changedBy ?? "system",
+    });
+
+    this.#publishSession(input.sessionId, {
+      kind: "session-updated",
+      sessionId: input.sessionId,
+      data: {
+        configRevision: newConfig.revision,
+        transition: {
+          from: result.transition.from,
+          to: result.transition.to,
+          event: result.transition.event,
+          reason: result.transition.reason,
+        },
+      },
+    });
+
+    return { ok: true, transition: result.transition, config: newConfig };
+  }
+
   // ── Approval requests ─────────────────────────────────────────────
 
   createApprovalRequest(input: {
@@ -358,39 +435,6 @@ export class RunRegistry {
 
   getApprovalRequest(id: string): PersistedApprovalRequest | undefined {
     return this.store.getApprovalRequest(id);
-  }
-
-  // ── Approval grants ───────────────────────────────────────────────
-
-  createApprovalGrant(input: {
-    sessionId: string;
-    workspaceId?: string;
-    scope: string;
-    actionClass?: string;
-    target?: string;
-    ttlMs: number;
-    createdBy: string;
-    precedence: number;
-    originatingDigest?: string;
-  }): PersistedApprovalGrant {
-    const id = `apg-${Date.now().toString(36)}-${(this.#counter += 1).toString(36)}`;
-    return this.store.createApprovalGrant({ id, ...input });
-  }
-
-  listApprovalGrants(filters: {
-    sessionId?: string;
-    workspaceId?: string;
-    scope?: string;
-  } = {}): PersistedApprovalGrant[] {
-    return this.store.listApprovalGrants(filters);
-  }
-
-  revokeApprovalGrant(id: string, revokedBy?: string): PersistedApprovalGrant | undefined {
-    return this.store.revokeApprovalGrant(id, revokedBy);
-  }
-
-  getApprovalGrant(id: string): PersistedApprovalGrant | undefined {
-    return this.store.getApprovalGrant(id);
   }
 
   listAuditEvents(filters: { sessionId?: string; limit?: number } = {}): AuditEvent[] {

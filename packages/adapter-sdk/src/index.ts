@@ -30,7 +30,7 @@ export {
   type AgentRunRequest,
 } from "./types";
 
-export type { AgentAdapter, AgentPluginManifest } from "./adapter";
+export type { AgentAdapter, AgentPluginManifest, AgentToolVocabulary } from "./adapter";
 
 export {
   boundedRetryPolicy,

@@ -7,6 +7,7 @@ import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import { daemonStatus, defaultDatabasePath, RunStore } from "@bremio/daemon";
 import { extractResponse, renderEvent } from "@bremio/event-view";
 import { createRegistry, runBremio, runSingleAgent } from "@bremio/orchestrator";
+import { effectiveMode, type CollaborationState } from "@bremio/policy";
 import { c, formatEventView, statusGlyph } from "./ui";
 
 export interface SessionListOptions {
@@ -344,6 +345,32 @@ export function resolveSessionIdentity(input: {
   return { ok: true, mode, primaryAgent, ...(workerAgent ? { workerAgent } : {}) };
 }
 
+/**
+ * The mode a continuation actually runs in, once S6-T2's transition state
+ * machine is accounted for.
+ *
+ * `identity.mode` reflects the *last turn that ran* — history, not intent. An
+ * approved Solo→Co-lab transition is recorded separately, on the session
+ * config's `collaborationState`, and does not retroactively change any turn.
+ * Without consulting it, an approved transition changed nothing observable:
+ * the next continue kept resuming in whatever mode the previous run used, and
+ * the state machine was decorative past the row it wrote.
+ */
+export function resolveContinuationMode(
+  identity: { mode: "single" | "team"; workerAgent?: string },
+  collaborationState: CollaborationState | undefined,
+): { mode: "single" | "team"; workerAgent?: string } {
+  if (!collaborationState) return identity;
+  // effectiveMode speaks docs/15's Solo/Co-lab vocabulary; the run APIs still
+  // speak the persisted single/team vocabulary (S6-T1's UI codec, not a DB one).
+  const mode = effectiveMode(collaborationState) === "colab" ? "team" : "single";
+  // A transition to Co-lab may not carry a worker (none was needed in Solo);
+  // `runBremio` auto-assigns one from the registry when `workerId` is omitted.
+  return mode === "team"
+    ? { mode, ...(identity.workerAgent ? { workerAgent: identity.workerAgent } : {}) }
+    : { mode };
+}
+
 export async function continueSessionCommand(options: {
   id: string;
   prompt: string;
@@ -401,11 +428,16 @@ export async function continueSessionCommand(options: {
     console.error(c.red(`error: ${resolved.error}`));
     return 1;
   }
-  const { mode, primaryAgent } = resolved;
+  const { primaryAgent } = resolved;
   const turnIndex = (detail.turns ?? []).length;
 
   // S1-T5: check session config provenance and prompt if partial/legacy.
   const cfg = detail.config;
+
+  const { mode, workerAgent } = resolveContinuationMode(
+    resolved,
+    cfg?.collaborationState as CollaborationState | undefined,
+  );
   if (cfg && cfg.provenance === "legacy-derived" && cfg.completeness === "partial") {
     console.log(c.yellow(`\n⚠ Session ${id} was created from legacy data. Its configuration was derived:`));
     console.log(`   Mode:          ${cfg.mode ?? c.dim("unknown")}`);
@@ -466,7 +498,7 @@ export async function continueSessionCommand(options: {
       leadId: primaryAgent,
       // Carried forward for the same reason as the lead: the worker was chosen
       // once and must not be re-picked from whatever happens to be registered.
-      ...(resolved.workerAgent ? { workerId: resolved.workerAgent } : {}),
+      ...(workerAgent ? { workerId: workerAgent } : {}),
       repoPath,
       prompt,
       registry,
@@ -479,6 +511,167 @@ export async function continueSessionCommand(options: {
     console.log(`Turn ${turnIndex} status: ${statusGlyph(status)}`);
   }
 
+  return 0;
+}
+
+export interface ConfigSetOptions {
+  id: string;
+  mode?: string;
+  leadAgentId?: string;
+  workerAgentId?: string;
+  model?: string;
+  reasoningLevel?: string;
+  permission?: string;
+  approvalMode?: string;
+  cwd?: string;
+  baseBranch?: string;
+  collaborationState?: string;
+  reason?: string;
+  changedBy?: string;
+  databasePath?: string;
+}
+
+async function readExistingConfig(
+  id: string,
+  dbPath?: string,
+): Promise<Record<string, unknown> | undefined> {
+  if (dbPath) {
+    try {
+      const store = await RunStore.open(dbPath);
+      try {
+        return store.getSessionConfig(id) as Record<string, unknown> | undefined;
+      } finally {
+        store.close();
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  const status = await daemonStatus();
+  if (!status.running) return undefined;
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(id)}/config`,
+      {
+        headers: { "x-bremio-token": status.endpoint.token },
+      },
+    );
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as { config: Record<string, unknown> };
+    return data.config;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeConfigDirect(
+  id: string,
+  payload: Record<string, unknown>,
+  dbPath?: string,
+): Promise<{ config?: any; error?: string }> {
+  try {
+    const store = await RunStore.open(dbPath ?? defaultDatabasePath());
+    try {
+      return { config: store.createSessionConfig({ sessionId: id, ...payload }) };
+    } finally {
+      store.close();
+    }
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
+export async function configSetCommand(options: ConfigSetOptions): Promise<number> {
+  const { id } = options;
+  if (!id) {
+    console.error(c.red("error: session id is required"));
+    return 1;
+  }
+
+  // Read existing config, then merge overrides on top — otherwise a partial
+  // update (e.g. just --model) would null out every other field in the new
+  // revision, fragmenting the per-session record.
+  const existing = await readExistingConfig(id, options.databasePath);
+  if (!existing) {
+    console.error(c.red(`error: cannot read current config for session: ${id}`));
+    return 1;
+  }
+
+  const payload: Record<string, unknown> = {
+    mode: existing.mode,
+    leadAgentId: existing.lead_agent_id ?? existing.leadAgentId,
+    workerAgentId: existing.worker_agent_id ?? existing.workerAgentId,
+    model: existing.model,
+    reasoningLevel: existing.reasoning_level ?? existing.reasoningLevel,
+    permission: existing.permission,
+    approvalMode: existing.approval_mode ?? existing.approvalMode,
+    cwd: existing.cwd,
+    baseBranch: existing.base_branch ?? existing.baseBranch,
+    collaborationState: existing.collaboration_state ?? existing.collaborationState,
+  };
+  if (options.mode !== undefined) payload.mode = options.mode;
+  if (options.leadAgentId !== undefined) payload.leadAgentId = options.leadAgentId;
+  if (options.workerAgentId !== undefined) payload.workerAgentId = options.workerAgentId;
+  if (options.model !== undefined) payload.model = options.model;
+  if (options.reasoningLevel !== undefined) payload.reasoningLevel = options.reasoningLevel;
+  if (options.permission !== undefined) payload.permission = options.permission;
+  if (options.approvalMode !== undefined) payload.approvalMode = options.approvalMode;
+  if (options.cwd !== undefined) payload.cwd = options.cwd;
+  if (options.baseBranch !== undefined) payload.baseBranch = options.baseBranch;
+  if (options.collaborationState !== undefined) payload.collaborationState = options.collaborationState;
+  payload.changedBy = options.changedBy ?? "cli";
+  payload.changeReason = options.reason ?? "";
+
+  let config: any;
+  if (options.databasePath) {
+    const r = await writeConfigDirect(id, payload, options.databasePath);
+    if (r.error) { console.error(c.red(`error: ${r.error}`)); return 1; }
+    config = r.config;
+  } else {
+    const status = await daemonStatus();
+    if (status.running) {
+      try {
+        const res = await fetch(
+          `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(id)}/config`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-bremio-token": status.endpoint.token,
+            },
+            body: JSON.stringify(payload),
+          },
+        );
+        if (res.ok) {
+          const data = (await res.json()) as { config: any };
+          config = data.config;
+        } else {
+          const errText = await res.text();
+          console.error(c.red(`error: ${errText}`));
+          return 1;
+        }
+      } catch {
+        const r = await writeConfigDirect(id, payload);
+        if (r.error) { console.error(c.red(`error: ${r.error}`)); return 1; }
+        config = r.config;
+      }
+    } else {
+      const r = await writeConfigDirect(id, payload);
+      if (r.error) { console.error(c.red(`error: ${r.error}`)); return 1; }
+      config = r.config;
+    }
+  }
+
+  console.log(` ${c.green("✓")} Session config updated (revision ${config.revision})`);
+  const line = "─".repeat(50);
+  console.log(line);
+  for (const [k, v] of Object.entries(config)) {
+    if (k === "sessionId" || k === "revision" || k === "createdAt" || k === "provenance") continue;
+    if (v !== null && v !== undefined && v !== "") {
+      console.log(`  ${c.dim(k)}: ${v}`);
+    }
+  }
+  console.log(line);
   return 0;
 }
 
@@ -520,8 +713,31 @@ export async function sessionCommandFromCli(
       ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}),
     });
   }
+  if (subCommand === "config-set") {
+    const id = positionals[2];
+    if (!id) {
+      console.error(c.red("error: session id is required for 'bremio session config-set <id>'"));
+      return 2;
+    }
+    return configSetCommand({
+      id,
+      mode: values.mode as string | undefined,
+      leadAgentId: values["lead-agent"] as string | undefined,
+      workerAgentId: values["worker-agent"] as string | undefined,
+      model: values.model as string | undefined,
+      reasoningLevel: values["reasoning-level"] as string | undefined,
+      permission: values.permission as string | undefined,
+      approvalMode: values["approval-mode"] as string | undefined,
+      cwd: values.cwd as string | undefined,
+      baseBranch: values["base-branch"] as string | undefined,
+      collaborationState: values["collaboration-state"] as string | undefined,
+      reason: values.reason as string | undefined,
+      changedBy: values["changed-by"] as string | undefined,
+      ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}),
+    });
+  }
   console.error(
-    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', or 'continue'`),
+    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', 'continue', or 'config-set'`),
   );
   return 2;
 }

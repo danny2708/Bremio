@@ -138,4 +138,44 @@ describe("collectRun usage", () => {
     expect(run.actualReasoningLevel).toBeUndefined();
     expect(run.usage).toBeUndefined();
   });
+
+  it("uses adapter-declared tool vocabulary when provided", async () => {
+    const run = await collectRun(events(
+      {
+        type: "tool_use",
+        runId: "r",
+        ts: 1,
+        name: "edit",
+        input: { file_path: "src/main.ts" },
+      },
+      {
+        type: "tool_use",
+        runId: "r",
+        ts: 2,
+        name: "read_file",
+        input: { file_path: "README.md" },
+      },
+      {
+        type: "tool_use",
+        runId: "r",
+        ts: 3,
+        name: "Read",  // Claude-style, NOT in the custom vocabulary
+        input: { file_path: "src/utils.ts" },
+      },
+      { type: "completed", runId: "r", ts: 4, outcome: { status: "completed" } },
+    ), {
+      toolVocabulary: {
+        read: ["read_file"],
+        write: ["edit"],
+        shell: [],
+      },
+    });
+
+    // "edit" is in write vocabulary → tracked as write
+    expect(run.filesWritten).toEqual(["src/main.ts"]);
+    // "read_file" is in read vocabulary → tracked as read
+    expect(run.filesRead).toEqual(["README.md"]);
+    // "Read" is not in either vocabulary → not tracked
+    expect(run.filesRead).not.toContain("src/utils.ts");
+  });
 });

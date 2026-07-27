@@ -116,68 +116,6 @@ describe("approval CLI — request subcommands", () => {
   });
 });
 
-describe("approval CLI — grant subcommands", () => {
-  let logs: string[];
-  let errs: string[];
-
-  beforeEach(() => {
-    logs = [];
-    errs = [];
-    vi.spyOn(console, "log").mockImplementation((msg) => logs.push(String(msg)));
-    vi.spyOn(console, "error").mockImplementation((msg) => errs.push(String(msg)));
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
-
-  it("1. grants list shows grants", async () => {
-    mockFetch({
-      grants: [
-        { id: "grant-1", scope: "session", actionClass: "write", expiresAt: new Date(Date.now() + 3600000).toISOString() },
-      ],
-    });
-    const code = await approvalCommandFromCli({ json: false }, ["approval", "grants", "list"]);
-    expect(code).toBe(0);
-    const out = logs.join("\n");
-    expect(out).toContain("grant-1");
-    expect(out).toContain("session");
-  });
-
-  it("2. grants create requires --scope and --ttl", async () => {
-    const code = await approvalCommandFromCli({ json: false }, ["approval", "grants", "create"]);
-    expect(code).toBe(2);
-    expect(errs.join("\n")).toContain("--scope");
-  });
-
-  it("3. grants create sends request and prints result", async () => {
-    mockFetch({ grant: { id: "grant-new", scope: "session", actionClass: "write", expiresAt: new Date(Date.now() + 60000).toISOString() } });
-    const code = await approvalCommandFromCli(
-      { json: false, scope: "session", ttl: "60000" },
-      ["approval", "grants", "create"],
-    );
-    expect(code).toBe(0);
-    const out = logs.join("\n");
-    expect(out).toContain("grant-new");
-    expect(out).toContain("session");
-  });
-
-  it("4. grants revoke prints confirmation", async () => {
-    mockFetch({ grant: { id: "grant-1", state: "revoked" } });
-    const code = await approvalCommandFromCli({ json: false }, ["approval", "grants", "revoke", "grant-1"]);
-    expect(code).toBe(0);
-    const out = logs.join("\n");
-    expect(out).toContain("Revoked");
-    expect(out).toContain("grant-1");
-  });
-
-  it("5. grants revoke returns 1 on missing id", async () => {
-    const code = await approvalCommandFromCli({ json: false }, ["approval", "grants", "revoke"]);
-    expect(code).toBe(2);
-  });
-});
-
 describe("approval CLI — --json output", () => {
   let logs: string[];
   let errs: string[];
@@ -229,9 +167,9 @@ describe("approval CLI — unknown subcommand", () => {
     expect(errs.join("\n")).toContain("unknown approval subcommand");
   });
 
-  it("returns 2 for unknown grants subcommand", async () => {
-    const code = await approvalCommandFromCli({ json: false }, ["approval", "grants", "bogus"]);
+  it("returns 2 for removed grants subcommand", async () => {
+    const code = await approvalCommandFromCli({ json: false }, ["approval", "grants", "list"]);
     expect(code).toBe(2);
-    expect(errs.join("\n")).toContain("unknown grants subcommand");
+    expect(errs.join("\n")).toContain("unknown approval subcommand");
   });
 });

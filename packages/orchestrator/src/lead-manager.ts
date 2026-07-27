@@ -173,7 +173,8 @@ async function runLead(
     });
   }
   try {
-    const run = await collectRun(events, { log, ...(opts.onEvent ? { onEvent: opts.onEvent } : {}) });
+    const toolVocabulary = lead.getToolVocabulary?.();
+    const run = await collectRun(events, { log, ...(opts.onEvent ? { onEvent: opts.onEvent } : {}), ...(toolVocabulary ? { toolVocabulary } : {}) });
     if (!timedOut) return run;
     return {
       ...run,

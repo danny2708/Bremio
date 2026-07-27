@@ -800,12 +800,12 @@ describe("session_config (S1-T1/T2)", () => {
     expect(s.listSessions("/tmp/repo")).toHaveLength(1);
   });
 
-  it("pristine and migrated stores both report user_version = 9", async () => {
+  it("pristine and migrated stores both report user_version = 10", async () => {
     const fresh = await store();
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(9);
+    expect(freshVer).toBe(10);
 
     const file = await createV3Fixture();
     const migrated = await RunStore.open(file);
@@ -813,7 +813,7 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(9);
+    expect(migratedVer).toBe(10);
   });
 
   it("re-running migration on v5 is a no-op", async () => {

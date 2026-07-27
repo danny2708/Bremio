@@ -10,6 +10,7 @@ import type {
   AgentCapabilities,
   AgentHealth,
   AgentRunRequest,
+  AgentToolVocabulary,
   AdapterRuntimeCapabilities,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
@@ -103,6 +104,14 @@ const CAPABILITIES: AgentCapabilities = {
 export class OpenCodeAdapter implements AgentAdapter {
   readonly id = "opencode";
   readonly provider = "opencode";
+
+  getToolVocabulary(): AgentToolVocabulary {
+    return {
+      read: ["read", "glob", "grep"],
+      write: ["edit"],
+      shell: ["shell"],
+    };
+  }
 
   private readonly explicitBin: string | undefined;
   private readonly extraArgs: string[];

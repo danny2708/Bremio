@@ -6,6 +6,7 @@ import type {
   AgentCapabilities,
   AgentHealth,
   AgentRunRequest,
+  AgentToolVocabulary,
   AdapterRuntimeCapabilities,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
@@ -175,6 +176,10 @@ export function buildAgyInvocation(
 export class AntigravityAdapter implements AgentAdapter {
   readonly id = "antigravity";
   readonly provider = "google";
+
+  getToolVocabulary(): AgentToolVocabulary {
+    return { read: [], write: [], shell: [] };
+  }
 
   private readonly explicitBin: string | undefined;
   private readonly agyArgs: string[];

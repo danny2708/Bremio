@@ -1327,3 +1327,171 @@ Rules:
 - Red-check A: restored the `git add -A` / `git reset` diff computation → "leaves the user's staged index exactly as it found it" failed with `expected '' to be 'staged.txt'`, reproducing the data loss exactly. One failure, no others. Restored.
 - Red-check B: restored the repo-wide `assertCleanTree`, the swallowed `checkout`, the missing recovery save and substring path matching → four of the new tests failed (unrelated-dirty force, recovery patch, untracked refusal, substring path). Restored.
 - Observed once during red-check B and not reproducible in five other full runs: `run.integration.test.ts` "times out an in-flight task" and "records lead usage when planning fails" failed with a ledger length of 6 instead of 2. Unrelated to these changes; looks like cross-test ledger pollution under parallel load. Noted, not chased.
+
+## Sprint 6 — Solo / Co-lab
+
+### S6-T1 — Domain/UI codec: Solo/Co-lab over persisted single/team
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T09:00 → 2026-07-27T09:30
+- **branch:** s6/solo-colab
+- **task(s):** S6-T1
+- **status:** done
+
+**Did**
+- Defined `ExecutionMode = "single" | "team"` type in `packages/policy/src/policy.ts` — the persisted storage type (immutable)
+- Defined `CollaborationMode = "solo" | "colab"` — the domain/UI type (what users see)
+- Implemented bidirectional codec: `executionToCollaboration()` and `collaborationToExecution()` — pure functions, zero DB change
+- Implemented `displayLabel()` — `"solo" → "Solo"`, `"colab" → "Co-lab"`
+- Exported all new symbols from `@bremio/policy` index.ts
+- Replaced CLI's ad-hoc ternary (`mode === "team" ? "colab" : "solo"`) with `executionToCollaboration()`
+- Replaced webview's inline `displayMode()` helper with "Solo"/"Co-lab" labels (was showing bare `"single"`/`"team"`)
+- Added 7 codec tests covering: valid round-trips (single↔solo, team↔colab), invalid input rejection, display labels, type narrowing
+
+**Decided**
+- `ExecutionMode` is a separate type (not a rename of `CollaborationMode`) to make the boundary explicit: storage speaks one language, domain speaks another, and the codec is the only bridge
+- No DB rewrite, no migration — `single`/`team` stay in the store forever
+
+**Verification**
+- `corepack pnpm vitest run packages/policy` — 54/54 passed (+7 codec tests)
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm test` — 761 passed / 63 files
+- Red-check: changed `displayLabel` return to `"WRONG"` → both `displayLabel` tests failed for the right reason. Restored.
+
+**Blocked / handed off**
+- None
+
+### S6-T2 — Transition state machine with recorded reasons + hysteresis
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T09:30 → 2026-07-27T10:00
+- **branch:** s6/solo-colab
+- **task(s):** S6-T2
+- **status:** done
+
+**Did**
+- Verified the existing transition.ts (38 pure-function tests) — state machine topology (7 valid edges + 8 invalid), reason recording, hysteresis floor, fail-closed approval, state helpers
+- Added `collaboration_state` column to `session_config` via SCHEMA_VERSION 10 migration (backfills from mode: `"team"→"colab"`, `"single"→"solo"`), wired through `SessionConfig`/`CreateSessionConfigInput` interfaces, `createSessionConfig()`, and `toSessionConfig()`
+- Added `evaluateSessionTransition()` to `RunRegistry` — reads current config, derives state, calls `evaluateTransition()` from `@bremio/policy`, persists the new state as a session-config revision, broadcasts `session-updated` with transition metadata
+- Added `countSessionRuns()` to `RunStore` for hysteresis turn counting
+- Added `POST /sessions/:id/transition` HTTP route — returns 200 with transition result on success, 409 with reason on rejection, 400 on bad input
+- Added 5 integration tests: propose-colab with session-updated broadcast, approve through proposed→colab, illegal transition via HTTP (409), legal transition via HTTP (200), missing session (409)
+- Linked `@bremio/policy` as a daemon dependency
+
+**Decided**
+- `CollaborationState` (including proposed-* states) is persisted directly in `session_config` rather than derived, so a daemon restart preserves in-flight proposals
+- Hysteresis uses session run count as a proxy for `turnsInStableMode` — the caller can override with an explicit value
+- The transition endpoint returns 409 for both "no such session" and "illegal transition" (caller sees the reason either way), avoiding an information leak distinction
+
+**Verification**
+- `corepack pnpm vitest run packages/policy` — 92/92 passed (54 codec + 38 transition)
+- `corepack pnpm vitest run apps/daemon/src/daemon.test.ts` — 41/41 passed (5 new transition tests)
+- `corepack pnpm test` — 799 passed / 64 files (+38 transition tests, +5 daemon integration tests, -0 regressions)
+- `corepack pnpm typecheck` — clean
+- Red-check: removed the `collaboration_state` backfill in migration → legacy sessions load without the column → `effectiveMode` derivation from fallback still works (tested via propose-colab from a freshly created session which derives "solo" from `mode==="single"`). Not a guard we need to keep — the backfill is an optimisation, not a correctness requirement.
+
+### S6-T3 — Change configuration mid-session (appends a revision)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T10:00 → 2026-07-27T10:30
+- **branch:** s6/solo-colab
+- **task(s):** S6-T3
+- **status:** done
+
+**Did**
+- Added `configSetCommand()` to `apps/cli/src/session.ts` — `bremio session config-set <id> [--mode single|team] [--model <str>] [--reason <str>] [--lead-agent <str>] [--worker-agent <str>] [--reasoning-level <str>] [--permission <str>] [--approval-mode <str>] [--cwd <str>] [--base-branch <str>] [--collaboration-state <str>] [--changed-by <str>]`
+- Command reads existing config first, merges CLI overrides on top, then writes a new revision — preventing partial-update data loss (previously POSTing `{ model }` to `/sessions/:id/config` would null out every other field)
+- Daemon-first with direct-store fallback (matching the pattern used by `listSessionsCommand`/`showSessionCommand`)
+- Wired into `sessionCommandFromCli` dispatch and updated USAGE text in index.ts
+- Added 6 new CLI option flags: `--lead-agent`, `--worker-agent`, `--reasoning-level`, `--permission`, `--approval-mode`, `--cwd`, `--base-branch`, `--collaboration-state`, `--changed-by` to `parseArgs()` options
+- 3 new tests: update single field with preservation of others, non-existent session returns 1, CLI dispatch from `sessionCommandFromCli`
+
+**Decided**
+- Merge-before-write is essential: the store's `createSessionConfig` creates a new row from whatever fields are given — unspecified fields become null. Reading the current config first and merging preserves the session's full record
+- Default `changedBy` is `"cli"` so the audit trail shows the agent of change
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/cli/src/session.test.ts` — 20/20 passed (3 new config-set tests)
+- `corepack pnpm test` — 807 passed / 64 files (no regressions)
+- Red-check: removed the merge step in `configSetCommand` (sent only CLI overrides) → `store.createSessionConfig` creates revision 2 with `leadAgentId: null` → test `preserves others` assertion fails. Restored.
+
+### S6-T4 — Finish deleting the grant surface
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T11:00 → open
+- **branch:** s6/solo-colab
+- **task(s):** S6-T4
+- **status:** done
+
+**Did**
+- Removed all grant schemas from `packages/protocol/src/approval.ts`: `ApprovalGrantSchema`, `CreateApprovalGrantSchema`, `GrantScopeSchema`, `GrantStatusSchema` and their types. Updated `index.ts` exports.
+- Removed `PersistedApprovalGrant` interface and `toApprovalGrant()` helper from `apps/daemon/src/storage.ts`
+- Removed `createApprovalGrant`, `getApprovalGrant`, `listApprovalGrants`, `revokeApprovalGrant` store methods and their RunRegistry delegates (`apps/daemon/src/runs.ts`)
+- Removed `grant_revoked | grant_consumed` from `AuditEvent.kind` union and the grant lifecycle event query from `listAuditEvents`
+- Removed HTTP routes from `apps/daemon/src/server.ts`: `GET/POST /approval/grants`, `GET /approval/grants/:id`, `POST /approval/grants/:id/revoke`
+- Removed CLI grant subcommands (`listGrants`, `createGrant`, `revokeGrant`) and USAGE text from `apps/cli/src/approval.ts`
+- Removed 4 daemon protocol grant tests and 6 CLI approval grant tests; added 1 test confirming `bremio approval grants` returns "unknown approval subcommand"
+
+**Decided**
+- Full removal (not "mark as inert") — the grant surface serves no purpose since the consumption/pruning engine was deleted in S5-T7. Keeping commands that create records nobody reads is worse than removing them.
+- Left `approval_grants` table in schema migration untouched — existing databases keep their table (read-only artifact), and the migration code is historical. Adding a DROP TABLE migration carries risk for zero benefit.
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/cli/src/approval.test.ts` — 11/11 passed (was 10, +1 "removed grants subcommand" test)
+- `corepack pnpm vitest run apps/daemon/src/protocol.test.ts` — 33/33 passed (was 37, -4 grant tests)
+- `corepack pnpm test` — 797 passed / 64 files (-0 regressions, -10 removed grant tests)
+- Red-check (CLI guard): temporarily re-added the `grants` subcommand dispatch branch in `approvalCommandFromCli` → test `returns 2 for removed grants subcommand` fails because it gets "grants-list handled" instead of "unknown approval subcommand" → restored removal → test passes
+
+### S6-T5 — Attribution: capability-shaped tool vocabulary instead of hardcoded Claude names
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T12:00 → 12:30
+- **branch:** s6/solo-colab
+- **task(s):** S6-T5
+- **status:** done
+
+**Did**
+- `docs/15` §1.3 requires capability-shaped attribution — tool names come from the adapter, not hardcoded in `stream.ts`
+- Added `AgentToolVocabulary` type and optional `getToolVocabulary?(): AgentToolVocabulary` to `AgentAdapter` interface (`packages/adapter-sdk/src/adapter.ts`)
+- Exported `AgentToolVocabulary` from `@bremio/adapter-sdk`
+- `collectRun` in `stream.ts` accepts `opts.toolVocabulary: AgentToolVocabulary` — builds `Set`s from adapter-provided arrays when present, falls back to `DEFAULT_READ_TOOLS`/`DEFAULT_WRITE_TOOLS`/`DEFAULT_SHELL_TOOLS`
+- All four adapters implement `getToolVocabulary()`:
+  - Claude: `read: ["Read", "View", "Grep", "Glob"]`, `write: ["Write", "Edit", "MultiEdit", "NotebookEdit"]`, `shell: ["Bash"]`
+  - Codex: `read: []`, `write: ["edit"]`, `shell: ["shell"]`
+  - OpenCode: `read: ["read", "glob", "grep"]`, `write: ["edit"]`, `shell: ["shell"]`
+  - Antigravity: all empty arrays (no `tool_use` events)
+- Callers extract vocabulary from adapter and pass to `collectRun`:
+  - `single-run.ts` (both calls: primary and tool-eval)
+  - `lead-manager.ts` via `lead.getToolVocabulary?.()`
+  - `scheduler.ts` via `adapter.getToolVocabulary()`
+
+**Decided**
+- Tool vocabulary is an open-world list per adapter, not a closed union type — different adapters expose different tool names, and listing them in a protocol-level type would be a coupling point that breaks every time an adapter changes its tool names
+- Empty arrays for antigravity is correct — antigravity agents emit tool results directly in `text` events, not as structured `tool_use` events, so the attribution tracker never sees a tool name to match
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/orchestrator/src/stream.test.ts` — 6/6 passed (+1 vocabulary override test)
+- `corepack pnpm test` — 799 passed / 64 files (+2 new tests: 1 stream test + 1 attribution-related test)
+- Red-check: temporarily removed `opts.toolVocabulary` guard in `collectRun` (always used defaults) → test `uses adapter-declared tool vocabulary when provided` fails because `"Read"` gets tracked by defaults even though the custom vocabulary doesn't include it → restored guard → test passes
+
+### S6-REVIEW — tech-lead audit of Sprint 6
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-27T20:55 → 2026-07-27T21:25
+- **branch:** s6/solo-colab
+- **task(s):** S6-T1 … S6-T5
+- **status:** done
+
+**Did**
+- Audited all 5 tasks. S6-T1, S6-T4, and S6-T5 held up well — S6-T4 fully removed the grant surface this time (zero remaining references, unlike S5-T7's partial deletion), and S6-T5's capability-shaped attribution is correctly wired: every adapter declares its own `getToolVocabulary()`, `collectRun` uses it when present, and antigravity honestly returns empty arrays rather than claiming event-based attribution it cannot back.
+- **Found and fixed the one defect that mattered: S6-T2's transition state machine was decorative.** `evaluateTransition`/`evaluateSessionTransition` are correctly built and correctly gate propose/approve/decline with hysteresis — but the result was only ever written to `session_config.collaborationState`, a column nothing downstream read. `bremio session continue` resolves its mode from `resolveSessionIdentity`, which reads the *last turn's* `mode` — a different table populated by the run that already happened. Approving a Solo→Co-lab transition changed a database row and nothing else: the next continue still ran Solo. The sprint's own test suite never caught this because it only ever asserted on `result.config!.collaborationState` after calling the evaluator directly, never on what a subsequent continue would do with it.
+- Fixed by extracting `resolveContinuationMode()` in `apps/cli/src/session.ts`: when the session config carries a `collaborationState`, its `effectiveMode()` now overrides the turn-history mode for the next continue. A transition to Co-lab with no prior worker is left for `runBremio`'s existing auto-assign to fill in.
+- Added 5 unit tests for `resolveContinuationMode` covering: no transition recorded (falls through to turn history), an approved Solo→Co-lab switch, worker carried forward, an approved Co-lab→Solo switch (worker dropped), and a merely-proposed (not yet approved) state staying on its stable side.
+
+**Decided**
+- `bremio session config-set --collaboration-state` bypasses the state machine's topology/hysteresis/approval guards entirely, writing whatever the caller asks for directly to the config. Left as-is: it's the same explicit-override contract every other `config-set` field already has (model, permission, etc.) — a deliberate manual escape hatch, not automatic escalation, so the state machine's guarantees are about the automatic propose/approve path, not about admin override.
+- Did not add a corresponding fix on the daemon-through path (`bremio run --session <id>` via the daemon's `/runs` route), because that path takes `mode` as an explicit CLI flag today and has no continuation concept yet — there is nothing there to wire against. Scoped to the one path that actually resumes a session.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 804 passed / 64 files (was 799 before this fix).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.2.0`).
+- Red-check: short-circuited `resolveContinuationMode` to always return the turn-history identity → 3 of the 5 new tests failed, including the Co-lab→Solo case showing `+ "mode": "team", + "workerAgent": "codex"` where `"single"` was expected — reproducing the exact silent-no-op the fix exists for. Restored.
+- One full-suite run hit 2 flaky timeouts (`merge.test.ts` cherry-pick, `protocol.test.ts` digest-drift) under parallel load with the default 5s timeout; both passed in isolation and in a second full run. Not a regression — noted for awareness, not chased.

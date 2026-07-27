@@ -2,7 +2,11 @@ export {
   canBackControlMode,
   evaluate,
   validateCombination,
+  executionToCollaboration,
+  collaborationToExecution,
+  displayLabel,
   type CollaborationMode,
+  type ExecutionMode,
   type ControlMode,
   type WorkspaceStrategy,
   type ApprovalSeam,
@@ -11,3 +15,18 @@ export {
   type PolicyEvaluation,
   type ApprovalRequirement,
 } from "./policy";
+
+export {
+  defaultHysteresisFloor,
+  evaluateTransition,
+  effectiveMode,
+  isStableState,
+  resolveTransitionApproval,
+  type CollaborationState,
+  type TransitionEvent,
+  type ModeTransition,
+  type TransitionResult,
+  type TransitionApproval,
+  type ResolveApprovalInput,
+  type EvaluateTransitionInput,
+} from "./transition";

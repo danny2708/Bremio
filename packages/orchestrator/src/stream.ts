@@ -6,6 +6,7 @@ import type {
   UsageSummary,
 } from "@bremio/protocol";
 import type { TaskLog } from "@bremio/workspace";
+import type { AgentToolVocabulary } from "@bremio/adapter-sdk";
 
 export interface CollectedRun {
   outcome: RunOutcome;
@@ -26,13 +27,23 @@ export interface CollectedRun {
   actualReasoningLevel?: ReasoningLevel;
 }
 
-const SHELL_TOOLS = new Set(["shell", "bash", "Bash", "run_command"]);
+export interface CollectRunOptions {
+  log?: TaskLog;
+  onEvent?: (event: AgentEvent) => void;
+  /**
+   * Adapter-declared tool vocabulary for read/write/shell attribution.
+   * When omitted, a default superset matching all known adapters is used.
+   * When provided, only these exact tool names are matched — the adapter
+   * knows its own vocabulary best (docs/15 §1.3).
+   */
+  toolVocabulary?: AgentToolVocabulary;
+}
 
-/** Tool names that indicate the agent read a file. */
-const READ_TOOLS = new Set(["read", "Read", "view", "View", "grep", "Grep", "glob", "Glob"]);
+const DEFAULT_READ_TOOLS = new Set(["read", "Read", "view", "View", "grep", "Grep", "glob", "Glob"]);
 
-/** Tool names that indicate the agent wrote or edited a file. */
-const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "edit"]);
+const DEFAULT_WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "edit"]);
+
+const DEFAULT_SHELL_TOOLS = new Set(["shell", "bash", "Bash", "run_command"]);
 
 /**
  * Drain an adapter's event stream: mirror every event to the task log and an
@@ -42,7 +53,7 @@ const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "edit
  */
 export async function collectRun(
   events: AsyncIterable<AgentEvent>,
-  opts: { log?: TaskLog; onEvent?: (event: AgentEvent) => void } = {},
+  opts: CollectRunOptions = {},
 ): Promise<CollectedRun> {
   let outcome: RunOutcome | undefined;
   const textParts: string[] = [];
@@ -57,20 +68,32 @@ export async function collectRun(
   const models = new Set<string>();
   const reasoningLevels = new Set<ReasoningLevel>();
 
+  const tools = opts.toolVocabulary
+    ? {
+        shell: new Set(opts.toolVocabulary.shell),
+        read: new Set(opts.toolVocabulary.read),
+        write: new Set(opts.toolVocabulary.write),
+      }
+    : {
+        shell: DEFAULT_SHELL_TOOLS,
+        read: DEFAULT_READ_TOOLS,
+        write: DEFAULT_WRITE_TOOLS,
+      };
+
   for await (const event of events) {
     opts.log?.event(event);
     opts.onEvent?.(event);
 
     if (event.type === "message") {
       textParts.push(event.text);
-    } else if (event.type === "tool_use" && SHELL_TOOLS.has(event.name)) {
+    } else if (event.type === "tool_use" && tools.shell.has(event.name)) {
       const cmd = (event.input as { command?: unknown } | undefined)?.command;
       if (typeof cmd === "string" && cmd.trim()) {
         const command = cmd.trim();
         commands.push(command);
         pendingShellCommands.push(command);
       }
-    } else if (event.type === "tool_use" && READ_TOOLS.has(event.name)) {
+    } else if (event.type === "tool_use" && tools.read.has(event.name)) {
       const input = event.input as Record<string, unknown> | undefined;
       const fp = typeof input?.file_path === "string"
         ? input.file_path
@@ -82,7 +105,7 @@ export async function collectRun(
       if (typeof fp === "string" && fp.trim()) {
         filesRead.push(fp.trim());
       }
-    } else if (event.type === "tool_use" && WRITE_TOOLS.has(event.name)) {
+    } else if (event.type === "tool_use" && tools.write.has(event.name)) {
       const input = event.input as Record<string, unknown> | undefined;
       const fp = typeof input?.file_path === "string"
         ? input.file_path
@@ -94,7 +117,7 @@ export async function collectRun(
       if (typeof fp === "string" && fp.trim()) {
         filesWritten.push(fp.trim());
       }
-    } else if (event.type === "tool_result" && SHELL_TOOLS.has(event.name)) {
+    } else if (event.type === "tool_result" && tools.shell.has(event.name)) {
       const command = pendingShellCommands.shift() ?? event.name;
       const exitCode = event.exitCode ?? (event.ok ? 0 : 1);
       tests.push({

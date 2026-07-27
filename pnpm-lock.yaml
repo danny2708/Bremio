@@ -117,6 +117,9 @@ importers:
       '@bremio/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
+      '@bremio/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@bremio/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

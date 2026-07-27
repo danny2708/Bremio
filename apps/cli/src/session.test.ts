@@ -4,7 +4,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunStore } from "@bremio/daemon";
 import {
+  configSetCommand,
   listSessionsCommand,
+  resolveContinuationMode,
   resolveSessionIdentity,
   sessionCommandFromCli,
   showSessionCommand,
@@ -162,6 +164,103 @@ describe("A3-T1: bremio session list and bremio session show", () => {
     expect(code).toBe(1);
     expect(errorLogs.join("\n")).toContain("session not found: unknown-session-id");
   });
+
+  describe("S6-T3: bremio session config-set (change config mid-session)", () => {
+    let tmpDir: string;
+    let dbPath: string;
+
+    beforeEach(async () => {
+      tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-config-set-"));
+      dbPath = path.join(tmpDir, "bremio.db");
+    });
+
+    afterEach(async () => {
+      vi.restoreAllMocks();
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it("updates a single config field and preserves others", async () => {
+      const store = await RunStore.open(dbPath);
+      const repoPath = path.join(tmpDir, "repo");
+      await fs.mkdir(repoPath, { recursive: true });
+
+      const run = store.createRun({
+        id: "cfg-seed-1",
+        mode: "single",
+        repositoryPath: repoPath,
+        prompt: "seed",
+        leadProvider: "claude",
+      });
+      const sessionId = run.sessionId!;
+      store.close();
+
+      const logs: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((msg) => logs.push(String(msg)));
+
+      const code = await configSetCommand({
+        id: sessionId,
+        model: "claude-sonnet-5",
+        reason: "switching model mid-session",
+        databasePath: dbPath,
+      });
+
+      expect(code).toBe(0);
+      const output = logs.join("\n");
+      expect(output).toContain("Session config updated");
+      expect(output).toContain("claude-sonnet-5");
+      expect(output).toContain("switching model mid-session");
+
+      // Verify the revision was appended and the mode/lead are preserved.
+      const store2 = await RunStore.open(dbPath);
+      try {
+        const config = store2.getSessionConfig(sessionId);
+        expect(config).toBeDefined();
+        expect(config!.revision).toBe(2);
+        expect(config!.model).toBe("claude-sonnet-5");
+        expect(config!.leadAgentId).toBe("claude");
+        expect(config!.changeReason).toBe("switching model mid-session");
+      } finally {
+        store2.close();
+      }
+    });
+
+    it("returns exit code 1 for a non-existent session", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const code = await configSetCommand({
+        id: "nonexistent",
+        reason: "test",
+        databasePath: dbPath,
+      });
+      expect(code).toBe(1);
+    });
+
+    it("dispatches config-set from sessionCommandFromCli", async () => {
+      const store = await RunStore.open(dbPath);
+      const repoPath = path.join(tmpDir, "repo2");
+      await fs.mkdir(repoPath, { recursive: true });
+
+      const run = store.createRun({
+        id: "cfg-dispatch-1",
+        mode: "single",
+        repositoryPath: repoPath,
+        prompt: "dispatch test",
+        leadProvider: "claude",
+      });
+      const sessionId = run.sessionId!;
+      store.close();
+
+      const logs: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((msg) => logs.push(String(msg)));
+
+      const code = await sessionCommandFromCli(
+        { db: dbPath, model: "claude-sonnet-5", reason: "dispatch test" },
+        ["session", "config-set", sessionId],
+      );
+
+      expect(code).toBe(0);
+      expect(logs.join("\n")).toContain("Session config updated");
+    });
+  });
 });
 
 describe("resuming a session must not change which agent runs it", () => {
@@ -272,5 +371,42 @@ describe("resuming a session must not change which agent runs it", () => {
       availableAgentIds: AGENTS,
     });
     expect(result).toMatchObject({ ok: true, primaryAgent: "codex" });
+  });
+});
+
+describe("S6-T2 follow-up: an approved transition must change the next continue", () => {
+  // evaluateSessionTransition (packages/policy) persists an approved move as
+  // `collaborationState` on the session config — a different table from the
+  // run history resolveSessionIdentity reads. Before this, nothing consulted
+  // it: `bremio session continue` kept resuming in whatever mode the
+  // *previous run* used, so approving Solo→Co-lab was observably a no-op.
+
+  it("keeps resuming in the last turn's mode when no transition was ever recorded", () => {
+    const identity = { mode: "single" as const };
+    expect(resolveContinuationMode(identity, undefined)).toEqual(identity);
+  });
+
+  it("switches an approved Solo→Co-lab transition to Team on the next continue", () => {
+    const identity = { mode: "single" as const };
+    expect(resolveContinuationMode(identity, "colab")).toEqual({ mode: "team" });
+  });
+
+  it("carries the prior worker forward rather than re-picking one", () => {
+    const identity = { mode: "single" as const, workerAgent: "antigravity" };
+    expect(resolveContinuationMode(identity, "colab")).toEqual({
+      mode: "team",
+      workerAgent: "antigravity",
+    });
+  });
+
+  it("switches an approved Co-lab→Solo transition to Single, dropping the worker", () => {
+    const identity = { mode: "team" as const, workerAgent: "codex" };
+    expect(resolveContinuationMode(identity, "solo")).toEqual({ mode: "single" });
+  });
+
+  it("treats a pending proposal as still on its stable side", () => {
+    // effectiveMode(proposed-colab) is "solo": nothing was approved yet.
+    const identity = { mode: "single" as const };
+    expect(resolveContinuationMode(identity, "proposed-colab")).toEqual({ mode: "single" });
   });
 });

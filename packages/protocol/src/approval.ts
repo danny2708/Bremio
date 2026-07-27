@@ -26,12 +26,6 @@ export type ApprovalRequestState = z.infer<typeof ApprovalRequestStateSchema>;
 export const RiskLevelSchema = z.enum(["low", "medium", "high"]);
 export type RiskLevel = z.infer<typeof RiskLevelSchema>;
 
-export const GrantScopeSchema = z.enum(["once", "session", "workspace"]);
-export type GrantScope = z.infer<typeof GrantScopeSchema>;
-
-export const GrantStatusSchema = z.enum(["active", "consumed", "revoked", "expired"]);
-export type GrantStatus = z.infer<typeof GrantStatusSchema>;
-
 export const ActionDigestSchema = z.object({
   actionClass: ActionClassSchema,
   target: z.string(),
@@ -63,24 +57,6 @@ export const ApprovalDecisionSchema = z.object({
 });
 export type ApprovalDecision = z.infer<typeof ApprovalDecisionSchema>;
 
-export const ApprovalGrantSchema = z.object({
-  id: z.string(),
-  sessionId: z.string(),
-  workspaceId: z.string().optional(),
-  scope: GrantScopeSchema,
-  actionClass: ActionClassSchema.optional(),
-  target: z.string().optional(),
-  expiresAt: z.string(),
-  revokedAt: z.string().optional(),
-  consumedAt: z.string().optional(),
-  createdAt: z.string(),
-  createdBy: z.string(),
-  originatingDigest: z.string().optional(),
-  precedence: z.number(),
-  grantStatus: GrantStatusSchema.optional(),
-});
-export type ApprovalGrant = z.infer<typeof ApprovalGrantSchema>;
-
 export const CreateApprovalRequestSchema = z.object({
   sessionId: z.string(),
   runId: z.string(),
@@ -95,16 +71,3 @@ export const DecideApprovalRequestSchema = z.object({
   reason: z.string().optional(),
 });
 export type DecideApprovalRequest = z.infer<typeof DecideApprovalRequestSchema>;
-
-export const CreateApprovalGrantSchema = z.object({
-  sessionId: z.string(),
-  workspaceId: z.string().optional(),
-  scope: GrantScopeSchema,
-  actionClass: ActionClassSchema.optional(),
-  target: z.string().optional(),
-  ttlMs: z.number().positive(),
-  createdBy: z.string(),
-  precedence: z.number().int(),
-  originatingDigest: z.string().optional(),
-});
-export type CreateApprovalGrant = z.infer<typeof CreateApprovalGrantSchema>;

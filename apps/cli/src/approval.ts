@@ -196,128 +196,6 @@ async function cancelRequest(options: { id: string; json?: boolean }): Promise<n
 }
 
 /* ------------------------------------------------------------------ */
-/*  Grant sub-commands                                                 */
-/* ------------------------------------------------------------------ */
-
-async function listGrants(options: {
-  sessionId?: string;
-  workspaceId?: string;
-  scope?: string;
-  json?: boolean;
-}): Promise<number> {
-  const params = new URLSearchParams();
-  if (options.sessionId) params.set("sessionId", options.sessionId);
-  if (options.workspaceId) params.set("workspaceId", options.workspaceId);
-  if (options.scope) params.set("scope", options.scope);
-  const qs = params.toString();
-
-  const result = await daemonCall<{ grants: unknown[] }>(`/approval/grants${qs ? `?${qs}` : ""}`);
-  if (!result.ok) {
-    console.error(c.red(`error: ${result.text}`));
-    return 1;
-  }
-
-  if (options.json) {
-    console.log(JSON.stringify({ grants: result.data.grants }, null, 2));
-    return 0;
-  }
-
-  const grants = result.data.grants;
-  if (grants.length === 0) {
-    console.log(c.dim("No approval grants found."));
-    return 0;
-  }
-
-  const line = "─".repeat(72);
-  console.log(`\n${line}`);
-  console.log(` ${c.bold("Approval grants")}  ${c.dim(String(grants.length))}`);
-  console.log(line);
-  for (const g of grants) {
-    const grant = g as Record<string, unknown>;
-    const scopeStr = c.cyan(String(grant.scope ?? ""));
-    const actionStr = grant.actionClass ? c.dim(String(grant.actionClass)) : c.dim("(any)");
-    const expires = grant.expiresAt ? new Date(String(grant.expiresAt)).toLocaleString() : "";
-    console.log(`  ${c.cyan(String(grant.id))}  ${scopeStr}  ${actionStr}  ${c.dim(expires)}`);
-    if (grant.target) console.log(`    target: ${c.dim(String(grant.target))}`);
-  }
-  console.log(line);
-  return 0;
-}
-
-async function createGrant(options: {
-  sessionId?: string;
-  workspaceId?: string;
-  scope: string;
-  actionClass?: string;
-  target?: string;
-  ttlMs: number;
-  createdBy?: string;
-  precedence?: number;
-  json?: boolean;
-}): Promise<number> {
-  const body: Record<string, unknown> = {
-    sessionId: options.sessionId ?? "cli",
-    scope: options.scope,
-    ttlMs: options.ttlMs,
-    createdBy: options.createdBy ?? "cli",
-    precedence: options.precedence ?? 1,
-  };
-  if (options.workspaceId) body.workspaceId = options.workspaceId;
-  if (options.actionClass) body.actionClass = options.actionClass;
-  if (options.target) body.target = options.target;
-
-  const result = await daemonCall<{ grant: Record<string, unknown> }>("/approval/grants", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-  if (!result.ok) {
-    console.error(c.red(`error: ${result.text}`));
-    return 1;
-  }
-
-  if (options.json) {
-    console.log(JSON.stringify({ grant: result.data.grant }, null, 2));
-    return 0;
-  }
-
-  const grant = result.data.grant;
-  console.log(`${c.green("Created")} grant ${c.cyan(String(grant.id))}`);
-  console.log(`  scope:      ${c.cyan(String(grant.scope))}`);
-  console.log(`  expires:    ${c.dim(String(grant.expiresAt ?? ""))}`);
-  if (grant.actionClass) console.log(`  action:     ${String(grant.actionClass)}`);
-  if (grant.target) console.log(`  target:     ${String(grant.target)}`);
-  return 0;
-}
-
-async function revokeGrant(options: { id: string; json?: boolean }): Promise<number> {
-  if (!options.id) {
-    console.error(c.red("error: grant id is required for 'bremio approval grants revoke <id>'"));
-    return 2;
-  }
-
-  const result = await daemonCall<{ grant: Record<string, unknown> }>(
-    `/approval/grants/${encodeURIComponent(options.id)}/revoke`,
-    { method: "POST" },
-  );
-  if (!result.ok) {
-    if (result.status === 409) {
-      console.error(c.red(`error: grant ${options.id} is not active`));
-      return 1;
-    }
-    console.error(c.red(`error: ${result.text}`));
-    return 1;
-  }
-
-  if (options.json) {
-    console.log(JSON.stringify({ grant: result.data.grant }, null, 2));
-    return 0;
-  }
-
-  console.log(`${c.yellow("Revoked")} grant ${c.cyan(options.id)}`);
-  return 0;
-}
-
-/* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -354,24 +232,12 @@ Subcommands:
                            Reject a pending request
   cancel <id>              Cancel a pending request
 
-  grants list [--session <id>] [--workspace <id>] [--scope <s>]
-                           List approval grants
-  grants create --scope <s> --ttl <ms> [options]
-                           Create an approval grant
-  grants revoke <id>       Revoke an active grant
-
 Options:
   --json                   Output as JSON
   --decided-by <name>      Who is making the decision (default: cli)
   --session <id>           Filter by session
   --run <id>               Filter by run
-  --state <s>              Filter by state (pending|approved|rejected|...)
-  --workspace <id>         Workspace ID for grants
-  --scope <s>              Grant scope (once|session|workspace)
-  --ttl <ms>               Grant time-to-live in milliseconds
-  --action-class <c>       Action class restriction for grant
-  --target <t>             Target restriction for grant
-  --precedence <n>         Grant precedence (default: 1)`);
+  --state <s>              Filter by state (pending|approved|rejected|...)`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -415,55 +281,6 @@ export async function approvalCommandFromCli(
 
   if (subCommand === "cancel") {
     return cancelRequest({ id: positionals[2] ?? "", json });
-  }
-
-  if (subCommand === "grants") {
-    const grantSub = positionals[2];
-    if (!grantSub) {
-      console.error(c.red("error: expected 'list', 'create', or 'revoke'"));
-      return 2;
-    }
-
-    if (grantSub === "list") {
-      return listGrants({
-        sessionId: values.session as string | undefined,
-        workspaceId: values.workspace as string | undefined,
-        scope: values.scope as string | undefined,
-        json,
-      });
-    }
-
-    if (grantSub === "create") {
-      const scope = values.scope as string | undefined;
-      const ttlStr = values.ttl as string | undefined;
-      if (!scope || !ttlStr) {
-        console.error(c.red("error: --scope and --ttl <ms> are required for 'grants create'"));
-        return 2;
-      }
-      const ttlMs = Number(ttlStr);
-      if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
-        console.error(c.red("error: --ttl must be a positive number"));
-        return 2;
-      }
-      return createGrant({
-        sessionId: values.session as string | undefined,
-        workspaceId: values.workspace as string | undefined,
-        scope,
-        actionClass: values["action-class"] as string | undefined,
-        target: values.target as string | undefined,
-        ttlMs,
-        createdBy: values["decided-by"] as string | undefined,
-        precedence: values.precedence !== undefined ? Number(values.precedence) : undefined,
-        json,
-      });
-    }
-
-    if (grantSub === "revoke") {
-      return revokeGrant({ id: positionals[3] ?? "", json });
-    }
-
-    console.error(c.red(`error: unknown grants subcommand '${grantSub}'; expected 'list', 'create', or 'revoke'`));
-    return 2;
   }
 
   console.error(c.red(`error: unknown approval subcommand '${subCommand}'`));

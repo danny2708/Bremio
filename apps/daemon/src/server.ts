@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { z } from "zod";
 import {
-  CreateApprovalGrantSchema,
   CreateApprovalRequestSchema,
   DecideApprovalRequestSchema,
   ReasoningLevelSchema,
@@ -282,6 +281,21 @@ async function handle(
     }
   }
 
+  const sessionTransitionPost = /^\/sessions\/([^/]+)\/transition$/.exec(route);
+  if (method === "POST" && sessionTransitionPost) {
+    const id = decodeURIComponent(sessionTransitionPost[1] ?? "");
+    try {
+      const body = (await readJsonBody(req)) as Record<string, unknown>;
+      const result = registry.evaluateSessionTransition({ sessionId: id, ...body } as Parameters<typeof registry.evaluateSessionTransition>[0]);
+      if (result.ok) {
+        return sendJson(res, 200, { transition: result.transition, config: result.config });
+      }
+      return sendJson(res, 409, { error: result.reason });
+    } catch (err) {
+      return sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
   const runDetail = /^\/runs\/([^/]+)$/.exec(route);
   if (method === "GET" && runDetail) {
     const id = decodeURIComponent(runDetail[1] ?? "");
@@ -436,40 +450,6 @@ async function handle(
     const result = registry.cancelApprovalRequest(id, cancelledBy);
     if (!result) return sendJson(res, 409, { error: `request ${id} is not pending` });
     return sendJson(res, 200, { request: result });
-  }
-
-  if (method === "GET" && route === "/approval/grants") {
-    const sessionId = url.searchParams.get("sessionId") ?? undefined;
-    const workspaceId = url.searchParams.get("workspaceId") ?? undefined;
-    const scope = url.searchParams.get("scope") ?? undefined;
-    return sendJson(res, 200, { grants: registry.listApprovalGrants({ sessionId, workspaceId, scope }) });
-  }
-
-  if (method === "POST" && route === "/approval/grants") {
-    const parsed = CreateApprovalGrantSchema.safeParse(await readJsonBody(req));
-    if (!parsed.success) {
-      return sendJson(res, 400, { error: "invalid grant", detail: parsed.error.issues });
-    }
-    const grant = registry.createApprovalGrant(parsed.data);
-    return sendJson(res, 201, { grant });
-  }
-
-  const approvalGrantDetail = /^\/approval\/grants\/([^/]+)$/.exec(route);
-  if (method === "GET" && approvalGrantDetail) {
-    const id = decodeURIComponent(approvalGrantDetail[1] ?? "");
-    const grant = registry.getApprovalGrant(id);
-    if (!grant) return sendJson(res, 404, { error: `unknown grant: ${id}` });
-    return sendJson(res, 200, { grant });
-  }
-
-  const approvalRevoke = /^\/approval\/grants\/([^/]+)\/revoke$/.exec(route);
-  if (method === "POST" && approvalRevoke) {
-    const id = decodeURIComponent(approvalRevoke[1] ?? "");
-    const body = (await readJsonBody(req).catch(() => undefined)) as Record<string, unknown> | undefined;
-    const revokedBy = body?.revokedBy as string | undefined;
-    const result = registry.revokeApprovalGrant(id, revokedBy);
-    if (!result) return sendJson(res, 409, { error: `grant ${id} is not active` });
-    return sendJson(res, 200, { grant: result });
   }
 
   if (method === "GET" && route === "/audit") {

@@ -23,7 +23,7 @@ import {
   type RunBremioHooks,
   type SingleRunHooks,
 } from "@bremio/orchestrator";
-import { validateCombination, type WorkspaceStrategy } from "@bremio/policy";
+import { executionToCollaboration, validateCombination, type WorkspaceStrategy } from "@bremio/policy";
 import { ExecutionModeSchema, type ReasoningLevel, type TaskStatus } from "@bremio/protocol";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
@@ -71,6 +71,7 @@ ${c.bold("Usage")}
   bremio compare [--agent <agent>] [--lead <agent>] --repo <path> "<prompt>"
   bremio session list [--repo <path>] [--json]
   bremio session show <id> [--json] [--max-events <n>]
+  bremio session config-set <id> [--mode single|team] [--model <str>] [--reason <str>]
   bremio merge <taskId> [--run <runId>] [--strategy <merge|cherry-pick>] [--yes]
   bremio stats [--since <date>] [--repo <path>]
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
@@ -176,6 +177,15 @@ function parseCli() {
       "workspace": { type: "string" },
       session: { type: "string" },
       reason: { type: "string" },
+      "lead-agent": { type: "string" },
+      "worker-agent": { type: "string" },
+      "reasoning-level": { type: "string" },
+      permission: { type: "string" },
+      "approval-mode": { type: "string" },
+      cwd: { type: "string" },
+      "base-branch": { type: "string" },
+      "collaboration-state": { type: "string" },
+      "changed-by": { type: "string" },
       scope: { type: "string" },
       ttl: { type: "string" },
       "action-class": { type: "string" },
@@ -589,8 +599,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   }
 
   if (mode) {
-    const colabMode = mode === "team" ? "colab" : "solo";
-    const validation = validateCombination(colabMode, "autopilot", workspaceStrategy);
+    const validation = validateCombination(executionToCollaboration(mode), "autopilot", workspaceStrategy);
     if (!validation.valid) {
       errors.push(validation.reason ?? "Invalid combination of mode and workspace strategy");
     }
