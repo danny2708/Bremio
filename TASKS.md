@@ -125,7 +125,7 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 | [x] | S5-T5 | Apply / revert per file and per task | M | S5-T3 | — |
 | [x] | S5-T6 | Conflict handling when the user edited the same file | M | S5-T2, S5-T5 | — |
 | [x] | S5-T7 | **Delete the grant surface.** `overrideableByGrant` removed from `PolicyEvaluation` and `AUTOPILOT_RULES`; `consumeApprovalGrant`, `pruneExpiredApprovalGrants`, `expireApprovalRequests` deleted from `storage.ts`. Chose deletion over wiring (same shape as S4-T9). | L | — | ‖ everything |
-| [ ] | S5-T8 | `#startReview` files its approval request with `sessionId: runId`, so review approvals are grouped under a session id that is really a run id. `/approval/requests?sessionId=` and the audit log both inherit the mistake. | S | — | ‖ everything |
+| [x] | S5-T8 | `#startReview` files its approval request with `sessionId: runId`, so review approvals are grouped under a session id that is really a run id. `/approval/requests?sessionId=` and the audit log both inherit the mistake. Fixed: passes the run's actual session ID from the store. | S | — | ‖ everything |
 
 ---
 

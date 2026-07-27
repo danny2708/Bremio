@@ -1271,3 +1271,29 @@ Rules:
 - `corepack pnpm vitest run apps/daemon/src/protocol.test.ts` — 37/37 passed
 - `corepack pnpm test` — 747/747 passed across 63 files (no regressions)
 - No red-checks needed — this is a deletion task (same as S4-T9); every test that passed before still passes
+
+### S5-T8 — `#startReview` files its approval request with `sessionId: runId`
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T08:36 → 2026-07-27T08:45
+- **branch:** s5/change-transparency
+- **task(s):** S5-T8
+- **status:** done
+
+**Did**
+- Added `sessionId` parameter to `#startReview(runId, sessionId, report, repoPath)` — uses the run's actual session ID instead of `runId` when creating the approval request
+- In `#execute`, fetches the run's `sessionId` from the store via `this.store.getRun(runId)?.sessionId` before calling `#startReview`
+- Falls back to `runId` if `sessionId` is somehow undefined (defensive, never expected in practice)
+- Added test assertion in the "merges the approved worktree" test verifying `approvalRequest.sessionId` equals the run's actual `sessionId` and is NOT equal to `runId`
+- 747 tests pass, typecheck clean
+
+**Decided**
+- Fetch from the store rather than from `input.sessionId` because `StartRunInput.sessionId` is optional — the store auto-assigns a session when none is provided (via `crypto.randomUUID()` in `createRun`). The store is the single source of truth for the run-to-session mapping.
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/daemon/src/review-apply.test.ts` — 4/4 passed (includes new assertion)
+- `corepack pnpm test` — 747/747 passed across 63 files
+- Red-check: replaced `sessionId` with `runId` in `#startReview` → test fails with `expected 'run-...' to be '<uuid>'`, confirming the approval request was filed under the run ID instead of the session ID. Restored.
+
+**Blocked / handed off**
+- None
