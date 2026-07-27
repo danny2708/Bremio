@@ -776,4 +776,147 @@ describe("multi-client SSE fan-out (S4-T8)", () => {
     expect(received).toHaveLength(0);
     unsub();
   });
+
+  describe("session transitions (S6-T2)", () => {
+    it("proposes colab from solo and broadcasts session-updated", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run = store.createRun({
+        id: "transition-prop-colab",
+        mode: "single",
+        repositoryPath: "/tmp/repo",
+        prompt: "propose colab",
+      });
+      const sessionId = run.sessionId!;
+
+      const received: SessionEvent[] = [];
+      const unsub = registry.subscribeSession(sessionId, (e) => received.push(e));
+
+      const result = registry.evaluateSessionTransition({
+        sessionId,
+        event: "propose-colab",
+        reason: "complexity: 4 subtasks",
+        turnsInStableMode: 2,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.transition.from).toBe("solo");
+        expect(result.transition.to).toBe("proposed-colab");
+        expect(result.transition.mode).toBe("solo");
+        expect(result.config).toBeDefined();
+        expect(result.config!.collaborationState).toBe("proposed-colab");
+        expect(result.config!.changeReason).toBe("complexity: 4 subtasks");
+      }
+
+      expect(received.length).toBeGreaterThanOrEqual(1);
+      expect(received[0]?.kind).toBe("session-updated");
+      unsub();
+    });
+
+    it("approves colab from proposed-colab", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run = store.createRun({
+        id: "transition-approve-colab",
+        mode: "single",
+        repositoryPath: "/tmp/repo",
+        prompt: "approve colab",
+        leadProvider: "claude",
+      });
+      const sessionId = run.sessionId!;
+
+      // First propose.
+      const propose = registry.evaluateSessionTransition({
+        sessionId,
+        event: "propose-colab",
+        reason: "complexity: 3 subtasks",
+        turnsInStableMode: 2,
+      });
+      expect(propose.ok).toBe(true);
+
+      // Then approve.
+      const approve = registry.evaluateSessionTransition({
+        sessionId,
+        event: "approve",
+        reason: "lead approved",
+        approval: { approved: true, via: "flag" },
+      });
+      expect(approve.ok).toBe(true);
+      if (approve.ok) {
+        expect(approve.transition.to).toBe("colab");
+        expect(approve.transition.mode).toBe("colab");
+        expect(approve.config!.collaborationState).toBe("colab");
+      }
+    });
+
+    it("rejects an illegal transition via the HTTP endpoint with 409", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run = store.createRun({
+        id: "transition-http-409",
+        mode: "single",
+        repositoryPath: "/tmp/repo",
+        prompt: "bad transition",
+      });
+      const sessionId = run.sessionId!;
+      const handle = await daemon(registry);
+
+      const res = await call(handle, `/sessions/${sessionId}/transition`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: "approve",
+          reason: "no proposal in flight",
+          turnsInStableMode: 2,
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      const body = await res.json() as { error: string };
+      expect(body.error).toContain("no edge");
+    });
+
+    it("fires a transition via the HTTP endpoint and returns 200", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run = store.createRun({
+        id: "transition-http-200",
+        mode: "single",
+        repositoryPath: "/tmp/repo",
+        prompt: "good transition",
+      });
+      const sessionId = run.sessionId!;
+      const handle = await daemon(registry);
+
+      const res = await call(handle, `/sessions/${sessionId}/transition`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: "propose-colab",
+          reason: "complexity increased",
+          turnsInStableMode: 2,
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { transition: { from: string; to: string } };
+      expect(body.transition.from).toBe("solo");
+      expect(body.transition.to).toBe("proposed-colab");
+    });
+
+    it("returns 404 for a non-existent session via HTTP", async () => {
+      const handle = await daemon();
+
+      const res = await call(handle, "/sessions/nonexistent/transition", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: "propose-colab", reason: "test" }),
+      });
+
+      expect(res.status).toBe(409);
+      const body = await res.json() as { error: string };
+      expect(body.error).toContain("no config");
+    });
+  });
 });

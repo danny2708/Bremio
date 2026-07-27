@@ -1359,3 +1359,31 @@ Rules:
 
 **Blocked / handed off**
 - None
+
+### S6-T2 — Transition state machine with recorded reasons + hysteresis
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T09:30 → 2026-07-27T10:00
+- **branch:** s6/solo-colab
+- **task(s):** S6-T2
+- **status:** done
+
+**Did**
+- Verified the existing transition.ts (38 pure-function tests) — state machine topology (7 valid edges + 8 invalid), reason recording, hysteresis floor, fail-closed approval, state helpers
+- Added `collaboration_state` column to `session_config` via SCHEMA_VERSION 10 migration (backfills from mode: `"team"→"colab"`, `"single"→"solo"`), wired through `SessionConfig`/`CreateSessionConfigInput` interfaces, `createSessionConfig()`, and `toSessionConfig()`
+- Added `evaluateSessionTransition()` to `RunRegistry` — reads current config, derives state, calls `evaluateTransition()` from `@bremio/policy`, persists the new state as a session-config revision, broadcasts `session-updated` with transition metadata
+- Added `countSessionRuns()` to `RunStore` for hysteresis turn counting
+- Added `POST /sessions/:id/transition` HTTP route — returns 200 with transition result on success, 409 with reason on rejection, 400 on bad input
+- Added 5 integration tests: propose-colab with session-updated broadcast, approve through proposed→colab, illegal transition via HTTP (409), legal transition via HTTP (200), missing session (409)
+- Linked `@bremio/policy` as a daemon dependency
+
+**Decided**
+- `CollaborationState` (including proposed-* states) is persisted directly in `session_config` rather than derived, so a daemon restart preserves in-flight proposals
+- Hysteresis uses session run count as a proxy for `turnsInStableMode` — the caller can override with an explicit value
+- The transition endpoint returns 409 for both "no such session" and "illegal transition" (caller sees the reason either way), avoiding an information leak distinction
+
+**Verification**
+- `corepack pnpm vitest run packages/policy` — 92/92 passed (54 codec + 38 transition)
+- `corepack pnpm vitest run apps/daemon/src/daemon.test.ts` — 41/41 passed (5 new transition tests)
+- `corepack pnpm test` — 799 passed / 64 files (+38 transition tests, +5 daemon integration tests, -0 regressions)
+- `corepack pnpm typecheck` — clean
+- Red-check: removed the `collaboration_state` backfill in migration → legacy sessions load without the column → `effectiveMode` derivation from fallback still works (tested via propose-colab from a freshly created session which derives "solo" from `mode==="single"`). Not a guard we need to keep — the backfill is an optimisation, not a correctness requirement.

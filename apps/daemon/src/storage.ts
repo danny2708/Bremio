@@ -24,7 +24,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -244,6 +244,7 @@ export interface SessionConfig {
   createdAt: string;
   changedBy?: string;
   changeReason?: string;
+  collaborationState?: string;
 }
 
 export interface CreateSessionConfigInput {
@@ -260,6 +261,7 @@ export interface CreateSessionConfigInput {
   provenance?: RecordProvenance;
   changedBy?: string;
   changeReason?: string;
+  collaborationState?: string;
 }
 
 export interface PersistedSessionContext {
@@ -930,8 +932,8 @@ export class RunStore {
       .prepare(
         `INSERT INTO session_config (session_id, revision, mode, lead_agent_id, worker_agent_id,
           model, reasoning_level, permission, approval_mode, cwd, base_branch,
-          provenance, completeness, missing_fields, created_at, changed_by, change_reason)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          provenance, completeness, missing_fields, created_at, changed_by, change_reason, collaboration_state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.sessionId,
@@ -951,6 +953,7 @@ export class RunStore {
         now,
         input.changedBy ?? null,
         input.changeReason ?? null,
+        input.collaborationState ?? null,
       );
     return this.getSessionConfig(input.sessionId)!;
   }
@@ -976,6 +979,13 @@ export class RunStore {
       .prepare("SELECT * FROM session_config WHERE session_id = ? ORDER BY revision ASC")
       .all(sessionId) as Array<Record<string, unknown>>;
     return rows.map(toSessionConfig);
+  }
+
+  countSessionRuns(sessionId: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS cnt FROM runs WHERE session_id = ?")
+      .get(sessionId) as { cnt: number };
+    return Number(row.cnt);
   }
 
   recordBinding(
@@ -1599,6 +1609,14 @@ function migrate(db: Database): void {
       );
     }
 
+    if (Number(current) < 10) {
+      addColumnIfMissing(db, "session_config", "collaboration_state", "TEXT");
+      db.exec(
+        `UPDATE session_config SET collaboration_state = CASE mode WHEN 'team' THEN 'colab' ELSE 'solo' END
+         WHERE collaboration_state IS NULL`,
+      );
+    }
+
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -1659,6 +1677,7 @@ function toSessionConfig(row: Record<string, unknown>): SessionConfig {
     createdAt: String(row.created_at),
     ...(row.changed_by ? { changedBy: String(row.changed_by) } : {}),
     ...(row.change_reason ? { changeReason: String(row.change_reason) } : {}),
+    ...(row.collaboration_state ? { collaborationState: String(row.collaboration_state) } : {}),
   };
 }
 

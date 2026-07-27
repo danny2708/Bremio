@@ -282,6 +282,21 @@ async function handle(
     }
   }
 
+  const sessionTransitionPost = /^\/sessions\/([^/]+)\/transition$/.exec(route);
+  if (method === "POST" && sessionTransitionPost) {
+    const id = decodeURIComponent(sessionTransitionPost[1] ?? "");
+    try {
+      const body = (await readJsonBody(req)) as Record<string, unknown>;
+      const result = registry.evaluateSessionTransition({ sessionId: id, ...body } as Parameters<typeof registry.evaluateSessionTransition>[0]);
+      if (result.ok) {
+        return sendJson(res, 200, { transition: result.transition, config: result.config });
+      }
+      return sendJson(res, 409, { error: result.reason });
+    } catch (err) {
+      return sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
   const runDetail = /^\/runs\/([^/]+)$/.exec(route);
   if (method === "GET" && runDetail) {
     const id = decodeURIComponent(runDetail[1] ?? "");

@@ -15,3 +15,18 @@ export {
   type PolicyEvaluation,
   type ApprovalRequirement,
 } from "./policy";
+
+export {
+  defaultHysteresisFloor,
+  evaluateTransition,
+  effectiveMode,
+  isStableState,
+  resolveTransitionApproval,
+  type CollaborationState,
+  type TransitionEvent,
+  type ModeTransition,
+  type TransitionResult,
+  type TransitionApproval,
+  type ResolveApprovalInput,
+  type EvaluateTransitionInput,
+} from "./transition";
