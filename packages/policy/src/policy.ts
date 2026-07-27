@@ -115,8 +115,6 @@ export interface PolicyEvaluation {
   allowed: boolean;
   approvalRequired: ApprovalRequirement;
   reason: string;
-  /** When true, a denial can be overridden by an active ApprovalGrant. */
-  overrideableByGrant?: true;
 }
 
 type Rule = PolicyEvaluation;
@@ -155,9 +153,9 @@ const AUTOPILOT_RULES: Record<ActionClass, Rule> = {
   command:          { allowed: true,  approvalRequired: "none",        reason: "autopilot allows commands" },
   network:          { allowed: true,  approvalRequired: "none",        reason: "autopilot allows network access" },
   "mcp-tool":       { allowed: true,  approvalRequired: "none",        reason: "autopilot allows MCP tool use" },
-  "git-destructive":{ allowed: false, approvalRequired: "none", overrideableByGrant: true, reason: "destructive git requires a grant in autopilot" },
-  "outside-workspace": { allowed: false, approvalRequired: "none", overrideableByGrant: true, reason: "outside-workspace access requires a grant in autopilot" },
-  "user-config":    { allowed: false, approvalRequired: "none", overrideableByGrant: true, reason: "user config changes require a grant in autopilot" },
+  "git-destructive":{ allowed: false, approvalRequired: "none", reason: "destructive git is denied in autopilot" },
+  "outside-workspace": { allowed: false, approvalRequired: "none", reason: "outside-workspace access is denied in autopilot" },
+  "user-config":    { allowed: false, approvalRequired: "none", reason: "user config changes are denied in autopilot" },
 };
 
 const MODE_MATRIX: Record<ControlMode, Record<ActionClass, Rule>> = {

@@ -36,6 +36,35 @@ export const UsageSummarySchema = z.object({
 });
 export type UsageSummary = z.infer<typeof UsageSummarySchema>;
 
+/** How a file was affected during a turn. */
+export const ChangeTypeSchema = z.enum(["read", "write", "create", "delete"]);
+export type ChangeType = z.infer<typeof ChangeTypeSchema>;
+
+/** Where change evidence came from. */
+export const ChangeSourceSchema = z.enum(["git", "event"]);
+export type ChangeSource = z.infer<typeof ChangeSourceSchema>;
+
+/** Who we attribute the change to. */
+export const AttributionSchema = z.enum(["agent", "user"]);
+export type Attribution = z.infer<typeof AttributionSchema>;
+
+/** Git diff output — stat (summary) and patch (full diff). */
+export const DiffResultSchema = z.object({
+  stat: z.string(),
+  patch: z.string(),
+});
+export type DiffResult = z.infer<typeof DiffResultSchema>;
+
+/** A single file operation recorded during a turn, with provenance. */
+export const TurnFileChangeSchema = z.object({
+  filePath: z.string(),
+  changeType: ChangeTypeSchema,
+  source: ChangeSourceSchema,
+  /** Whether the agent or the user caused this change. */
+  attributedTo: AttributionSchema,
+});
+export type TurnFileChange = z.infer<typeof TurnFileChangeSchema>;
+
 /**
  * TaskResult — what an agent returns after running one task. Collected by the
  * result-aggregator into the final report. Operational fields (worktree path,
@@ -49,6 +78,12 @@ export const TaskResultSchema = z.object({
   status: TaskStatusSchema,
   summary: z.string(),
   filesChanged: z.array(z.string()).default([]),
+  /** Files the agent read during this task (from tool_use events). */
+  filesRead: z.array(z.string()).default([]),
+  /** Aggregated change ledger with provenance labels. */
+  changeLedger: z.array(TurnFileChangeSchema).default([]),
+  /** Git diff (stat + patch) for the changes this task made. */
+  diff: DiffResultSchema.optional(),
   commandsExecuted: z.array(z.string()).default([]),
   tests: z.array(TestRunSchema).default([]),
   findings: z.array(FindingSchema).default([]),

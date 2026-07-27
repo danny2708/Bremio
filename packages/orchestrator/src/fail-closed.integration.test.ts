@@ -168,8 +168,8 @@ describe("fail-closed properties hold in combination", () => {
       mode: "single", runId: "r1", createdAt: new Date().toISOString(),
       prompt: "test", primaryAgentId: "claude", repoPath: "/tmp", runDir: "/tmp/r1",
       result: {
-        status: "failed", summary: "crashed", filesChanged: [], commandsExecuted: [],
-        tests: [], logsPath: "/tmp/r1/log", durationMs: 50, error: "agent failed",
+        status: "failed", summary: "crashed", filesChanged: [], filesRead: [], changeLedger: [],
+        commandsExecuted: [], tests: [], logsPath: "/tmp/r1/log", durationMs: 50, error: "agent failed",
       },
       verification: { status: "failed", reasons: ["agent run failed"] },
       workspace: { dirtyBefore: [], dirtyAfter: [] },
@@ -180,8 +180,8 @@ describe("fail-closed properties hold in combination", () => {
       mode: "single", runId: "r2", createdAt: new Date().toISOString(),
       prompt: "test", primaryAgentId: "claude", repoPath: "/tmp", runDir: "/tmp/r2",
       result: {
-        status: "completed", summary: "ok", filesChanged: [], commandsExecuted: [],
-        tests: [{ command: "pnpm test", passed: 1, failed: 0, exitCode: 0 }],
+        status: "completed", summary: "ok", filesChanged: [], filesRead: [], changeLedger: [],
+        commandsExecuted: [], tests: [{ command: "pnpm test", passed: 1, failed: 0, exitCode: 0 }],
         logsPath: "/tmp/r2/log", durationMs: 100,
       },
       verification: { status: "passed", reasons: [] },

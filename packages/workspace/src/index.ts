@@ -14,6 +14,7 @@ export { TaskLog, formatEvent } from "./logs";
 
 export {
   MergeManager,
+  ApplyConflictError,
   MergeConflictError,
   CherryPickConflictError,
   MergeStateError,

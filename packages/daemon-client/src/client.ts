@@ -209,6 +209,26 @@ export class DaemonClient {
     return this.post<{ cancelled: boolean }>(`/runs/${encodeURIComponent(id)}/cancel`);
   }
 
+  async applyPatch(request: {
+    repoPath: string;
+    runId: string;
+    taskId?: string;
+    filePath?: string;
+    force?: boolean;
+  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }>; recoveryPatch?: string }> {
+    return this.post("/apply", request);
+  }
+
+  async revertPatch(request: {
+    repoPath: string;
+    runId: string;
+    taskId?: string;
+    filePath?: string;
+    force?: boolean;
+  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }>; recoveryPatch?: string }> {
+    return this.post("/revert", request);
+  }
+
   async runDetail(id: string, repoPath: string): Promise<{
     run?: { id: string; status: string };
     events?: RunEvent[];

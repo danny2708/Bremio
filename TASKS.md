@@ -114,18 +114,18 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 
 ---
 
-## Sprint 5 — Change transparency
+## Sprint 5 — Change transparency ✅ COMPLETE
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S5-T1 | Change model: files read/written per turn, git- and event-sourced, labelled | M | S4-T2 | — |
-| [ ] | S5-T2 | Attribution: distinguish user edits from agent edits | M | S5-T1 | — |
-| [ ] | S5-T3 | Diff API | S | S5-T1 | — |
-| [ ] | S5-T4 | Panel diff viewer | M | S5-T3 | — |
-| [ ] | S5-T5 | Apply / revert per file and per task | M | S5-T3 | — |
-| [ ] | S5-T6 | Conflict handling when the user edited the same file | M | S5-T2, S5-T5 | — |
-| [ ] | S5-T7 | **Wire `ApprovalGrant` into evaluation, or delete the grant surface.** `evaluate()` returns `overrideableByGrant` and nothing reads it; `consumeApprovalGrant`, `pruneExpiredApprovalGrants` and `expireApprovalRequests` have zero production callers; `consumeApprovalGrant` does not check `expires_at`, so an expired grant is still consumable. `docs/15` §2.5 documents an override path that does not exist. Same shape as S4-T9 — **needs a decision before starting.** | L | — | ‖ everything |
-| [ ] | S5-T8 | `#startReview` files its approval request with `sessionId: runId`, so review approvals are grouped under a session id that is really a run id. `/approval/requests?sessionId=` and the audit log both inherit the mistake. | S | — | ‖ everything |
+| [x] | S5-T1 | Change model: files read/written per turn, git- and event-sourced, labelled | M | S4-T2 | — |
+| [x] | S5-T2 | Attribution: distinguish user edits from agent edits | M | S5-T1 | — |
+| [x] | S5-T3 | Diff API | S | S5-T1 | — |
+| [x] | S5-T4 | Panel diff viewer | M | S5-T3 | — |
+| [x] | S5-T5 | Apply / revert per file and per task | M | S5-T3 | — |
+| [x] | S5-T6 | Conflict handling when the user edited the same file | M | S5-T2, S5-T5 | — |
+| [x] | S5-T7 | **Delete the grant surface.** `overrideableByGrant` removed from `PolicyEvaluation` and `AUTOPILOT_RULES`; `consumeApprovalGrant`, `pruneExpiredApprovalGrants`, `expireApprovalRequests` deleted from `storage.ts`. Chose deletion over wiring (same shape as S4-T9). | L | — | ‖ everything |
+| [x] | S5-T8 | `#startReview` files its approval request with `sessionId: runId`, so review approvals are grouped under a session id that is really a run id. `/approval/requests?sessionId=` and the audit log both inherit the mistake. Fixed: passes the run's actual session ID from the store. | S | — | ‖ everything |
 
 ---
 
@@ -136,6 +136,8 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 | [ ] | S6-T1 | Domain/UI codec: Solo/Co-lab over persisted `single`/`team` — **no DB rewrite** | M | S1-T1 | — |
 | [ ] | S6-T2 | Transition state machine with recorded reasons + hysteresis | L | S6-T1, S3-T1 | — |
 | [ ] | S6-T3 | Change configuration mid-session (appends a revision) | M | S1-T2 | ‖ S6-T2 |
+| [ ] | S6-T4 | **Finish deleting the grant surface.** S5-T7 removed the internals nobody called but kept everything a user can reach: `POST/GET /approval/grants`, `/revoke`, the `bremio approval grant` commands, `CreateApprovalGrantSchema`, and `createApprovalGrant`/`listApprovalGrants`/`revokeApprovalGrant`. A user can still create a grant that authorises nothing, and `expires_at` is now stored with nothing that reads or prunes it. Either remove the surface or say plainly in `--help` that grants are inert. | M | — | ‖ everything |
+| [ ] | S6-T5 | Attribution's `READ_TOOLS` / `WRITE_TOOLS` in `stream.ts` list Claude's tool names (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Read`, `Grep`, `Glob`). A codex or antigravity write in direct-workspace matches none of them, so unless the agent commits, its change is attributed to the **user**. Attribution is provider-shaped where `docs/15` §1.3 requires capability-shaped — derive it from the adapter's declared tool vocabulary. | M | S5-T2 | ‖ everything |
 
 ---
 

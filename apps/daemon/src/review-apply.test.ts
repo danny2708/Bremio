@@ -169,6 +169,12 @@ describe("review-before-apply, driven through the run path", () => {
     const requestId = (review.data as { requestId: string }).requestId;
     expect(store.getRun(run.id)?.status).toBe("pending_approval");
 
+    // Verify the approval request is filed under the run's session, not the run id.
+    const approvalRequest = registry.getApprovalRequest(requestId);
+    const runSessionId = store.getRun(run.id)?.sessionId;
+    expect(approvalRequest?.sessionId).toBe(runSessionId);
+    expect(approvalRequest?.sessionId).not.toBe(run.id);
+
     expect(registry.resolvePendingApproval(requestId, "approved")).toBe(true);
     const finished = await settled(store, run.id);
 

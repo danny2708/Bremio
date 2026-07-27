@@ -345,6 +345,51 @@ export function formatTaskExecution(input: {
   return parts.join(" | ");
 }
 
+/**
+ * Parse a unified-diff patch and return HTML with syntax-highlighted lines.
+ * Self-contained (no module-scope references) because `panelHtml` inlines its
+ * source into the webview script via `.toString()`, matching `renderCapacityCards`.
+ */
+export function renderDiffViewer(diff: { stat: string; patch: string }): string {
+  const esc = (value: unknown): string =>
+    String(value ?? "").replace(
+      /[&<>"']/g,
+      (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }) as Record<string, string>)[c] ?? c,
+    );
+  if (!diff.patch && !diff.stat) return '<div class="muted">No changes in this run.</div>';
+
+  const statHtml = diff.stat
+    ? '<div class="diff-stat">' + esc(diff.stat).replace(/\n/g, "<br>") + "</div>"
+    : "";
+
+  const lines = diff.patch.split("\n");
+  let patchHtml = "";
+  for (const line of lines) {
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      patchHtml += '<div class="diff-add">' + esc(line) + "</div>";
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      patchHtml += '<div class="diff-remove">' + esc(line) + "</div>";
+    } else if (line.startsWith("@")) {
+      patchHtml += '<div class="diff-hunk">' + esc(line) + "</div>";
+    } else if (line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("---") || line.startsWith("+++")) {
+      patchHtml += '<div class="diff-meta">' + esc(line) + "</div>";
+    } else {
+      patchHtml += "<div>" + esc(line) + "</div>";
+    }
+  }
+
+  return '<div class="diff-viewer">'
+    + '<div class="diff-header"><span class="card-title">Diff</span></div>'
+    + statHtml
+    + '<pre class="diff-patch">' + patchHtml + "</pre>"
+    + '<div class="row" style="margin-top:8px">'
+    + '<button class="ghost" data-action="apply-diff">Apply</button>'
+    + '<button class="ghost" data-action="revert-diff">Revert</button>'
+    + '<div class="spacer"></div>'
+    + '<button class="ghost" data-action="back-to-gate">Back</button>'
+    + "</div></div>";
+}
+
 export function renderLogLine(event: { kind?: string; taskId?: string; message?: string; data?: unknown }): {
   summary: string;
   detail?: string;
@@ -731,6 +776,17 @@ pre.log {
 .process summary { cursor: pointer; }
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
+
+/* Diff viewer: syntax-highlighted unified-diff inside the panel. */
+.diff-viewer { margin-bottom: 10px; }
+.diff-header { margin-bottom: 8px; }
+.diff-stat { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; padding: 6px 8px; background: var(--surface-raised); border-radius: 4px; }
+.diff-patch { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.6; background: var(--vscode-textCodeBlock-background, var(--surface-raised)); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 480px; overflow: auto; white-space: pre; margin: 0 0 10px; }
+.diff-patch div { min-height: 1em; }
+.diff-add { background: rgba(55, 200, 55, 0.12); color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950); }
+.diff-remove { background: rgba(200, 55, 55, 0.12); color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149); }
+.diff-hunk { color: var(--text-muted); font-weight: 600; }
+.diff-meta { color: var(--text-muted); }
 </style>
 </head>
 <body>
@@ -1021,6 +1077,25 @@ window.addEventListener("message", (event) => {
     $("gate").insertAdjacentHTML("beforeend",
       '<div class="banner ' + cls + '">' + escapeHtml(message.detail) + "</div>");
   }
+  if (message.type === "showDiff") {
+    $("gate").innerHTML = renderDiffViewer(message.diff);
+  }
+  if (message.type === "applyResult" || message.type === "revertResult") {
+    const verb = message.type === "applyResult" ? "apply" : "revert";
+    const cls = message.ok ? "warn" : "bad";
+    let html = '<div class="banner ' + cls + '">' + escapeHtml(message.detail) + "</div>";
+    if (message.conflictedFiles && message.conflictedFiles.length > 0) {
+      html += '<div class="card" style="margin-top:8px"><span class="card-title">Conflicting files</span>';
+      for (const cf of message.conflictedFiles) {
+        const label = cf.status === "user_modified" ? "modified by you" : cf.status === "user_deleted" ? "deleted by you" : cf.status;
+        html += '<div class="row muted" style="font-size:11px">- ' + escapeHtml(cf.file) + ' (' + label + ')</div>';
+      }
+      html += '<div class="row" style="margin-top:8px">'
+        + '<button class="ghost" data-action="force-' + verb + '-diff">Overwrite & ' + verb + '</button>'
+        + '</div></div>';
+    }
+    $("gate").insertAdjacentHTML("beforeend", html);
+  }
 });
 
 function renderGate(gate, runId) {
@@ -1031,9 +1106,12 @@ function renderGate(gate, runId) {
   }
   return '<div class="card"><div class="card-head"><span class="card-title">Quality gate passed</span>'
     + '<span class="badge ok">ready</span></div>'
-    + '<div class="secondary">Review the diff, then merge into the base branch.</div>'
+    + '<div class="secondary">Review the diff, then apply, revert or merge changes.</div>'
     + '<div class="row" style="margin-top:10px">'
     + '<button class="ghost" data-action="diff" data-run="' + escapeHtml(runId) + '">View diff</button>'
+    + '<button class="ghost" data-action="apply-diff">Apply</button>'
+    + '<button class="ghost" data-action="revert-diff">Revert</button>'
+    + '<div class="spacer"></div>'
     + '<button class="primary" data-action="merge" data-run="' + escapeHtml(runId) + '">Merge</button>'
     + "</div></div>";
 }
@@ -1053,6 +1131,7 @@ const formatTaskExecution = ${formatTaskExecution.toString()};
 const renderLogLine = ${renderLogLine.toString()};
 const assembleTaskLanes = ${assembleTaskLanes.toString()};
 const extractResponse = ${extractResponse.toString()};
+const renderDiffViewer = ${renderDiffViewer.toString()};
 
 function renderSessionList(sessions) {
   if (!sessions || sessions.length === 0) {
@@ -1220,6 +1299,11 @@ document.addEventListener("click", (event) => {
     vscode.postMessage({ type: "tab", tab: "sessions" });
     return;
   }
+  if (button.dataset.action === "back-to-gate") {
+    const runId = activeRunId;
+    if (runId) vscode.postMessage({ type: "openRun", runId });
+    return;
+  }
   if (button.dataset.action === "continue-session") {
     const prompt = $("continue-prompt").value.trim();
     if (!prompt) return;
@@ -1236,6 +1320,17 @@ document.addEventListener("click", (event) => {
       sessionId: button.dataset.session,
       attachments: [],
     });
+    return;
+  }
+  if (button.dataset.action === "apply-diff" || button.dataset.action === "revert-diff"
+      || button.dataset.action === "force-apply-diff" || button.dataset.action === "force-revert-diff") {
+    const runId = activeRunId;
+    if (!runId) return;
+    const type = button.dataset.action === "apply-diff" ? "applyDiff"
+      : button.dataset.action === "force-apply-diff" ? "forceApplyDiff"
+      : button.dataset.action === "force-revert-diff" ? "forceRevertDiff"
+      : "revertDiff";
+    vscode.postMessage({ type, runId });
     return;
   }
   const runId = button.dataset.run;

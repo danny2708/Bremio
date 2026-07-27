@@ -4,7 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { canBackControlMode, type ControlMode, type WorkspaceStrategy } from "@bremio/policy";
 import type { AdapterRuntimeCapabilities } from "@bremio/adapter-sdk";
-import type { AgentEvent, ReasoningLevel, TaskStatus, TestRun, UsageSummary } from "@bremio/protocol";
+import type { AgentEvent, Attribution, ChangeType, ReasoningLevel, TaskStatus, TestRun, TurnFileChange, UsageSummary } from "@bremio/protocol";
 import { prepareTurnExecution, type TurnMechanismDecision } from "@bremio/harness";
 import { TaskLog, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
 import { appendLedgerEntry, ledgerPathFor } from "./ledger";
@@ -51,6 +51,12 @@ export interface SingleAgentResult {
   status: TaskStatus;
   summary: string;
   filesChanged: string[];
+  /** File paths the agent read (from tool_use events). */
+  filesRead: string[];
+  /** Structured change ledger with provenance labels, per turn. */
+  changeLedger: TurnFileChange[];
+  /** Git diff (stat + patch) for the changes this run made. */
+  diff?: { stat: string; patch: string };
   commandsExecuted: string[];
   tests: TestRun[];
   sessionId?: string;
@@ -247,6 +253,8 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
       assistantText: "",
       commands: [],
       tests: [],
+      filesRead: [],
+      filesWritten: [],
     };
   } finally {
     if (timer) clearTimeout(timer);
@@ -255,14 +263,52 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
   }
 
   let filesChanged: string[];
+  let committedFiles: string[] = [];
   let after = before;
+  let diff: { stat: string; patch: string } | undefined;
   if (workspaceStrategy === "isolated-worktree" && worktreeManager && taskWorktree) {
     const collectRes = await worktreeManager.collect(taskWorktree);
     filesChanged = collectRes.filesChanged;
+    if (collectRes.commitHash) {
+      const [stat, patch] = await Promise.all([
+        execFileAsync("git", ["show", "--stat", "--format=", collectRes.commitHash], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout.trim()),
+        execFileAsync("git", ["show", "--format=", "--no-ext-diff", collectRes.commitHash], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout.trim()),
+      ]);
+      if (stat || patch) diff = { stat, patch };
+    }
   } else {
     after = await captureWorkspaceState(repoPath);
-    const committedFiles = await filesChangedBetween(repoPath, before.head, after.head);
+    committedFiles = await filesChangedBetween(repoPath, before.head, after.head);
     filesChanged = [...new Set([...committedFiles, ...after.dirtyFiles])].sort();
+    // Compute the diff: committed changes (if HEAD moved) plus working-tree
+    // changes, tracked and untracked.
+    //
+    // Read-only on purpose. This ran `git add -A` … `git diff --cached` …
+    // `git reset`, which reports the right patch but destroys the user's index:
+    // anyone who had staged a subset of their work (`git add -p`) came back to
+    // a fully-unstaged tree, with no record of what had been staged. `git diff
+    // HEAD` covers staged and unstaged tracked changes without touching the
+    // index; untracked files are diffed one at a time against an empty tree.
+    const hasCommitted = before.head && after.head && before.head !== after.head;
+    const [[committedPatch, committedStat], [dirtyPatch, dirtyStat], untracked] =
+      await Promise.all([
+        hasCommitted
+          ? Promise.all([
+              execFileAsync("git", ["diff", before.head!, after.head!], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+              execFileAsync("git", ["diff", "--stat", before.head!, after.head!], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+            ])
+          : Promise.resolve(["", ""]),
+        after.head
+          ? Promise.all([
+              execFileAsync("git", ["diff", "HEAD"], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+              execFileAsync("git", ["diff", "HEAD", "--stat"], { cwd: repoPath, encoding: "utf8" }).then(r => r.stdout),
+            ])
+          : Promise.resolve(["", ""]),
+        diffUntrackedFiles(repoPath),
+      ]);
+    const patch = [committedPatch, dirtyPatch, untracked.patch].filter(Boolean).join("\n").trim();
+    const stat = [committedStat, dirtyStat, untracked.stat].filter(Boolean).join("\n").trim();
+    if (patch || stat) diff = { stat, patch };
   }
   let status = collected.outcome.status;
   let error = collected.outcome.error;
@@ -270,12 +316,41 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     status = "cancelled";
     error = `single-agent run timed out after ${opts.timeoutMs}ms`;
   }
+  const filesRead = [...new Set(collected.filesRead)].sort();
+  const filesWritten = [...new Set(collected.filesWritten)].sort();
+  // Attribution combines three evidence sources. A change is the agent's when:
+  //  1. the agent committed it via git, or
+  //  2. a Write/Edit tool_use event named the file, or
+  //  3. the file lives in an isolated worktree the agent alone touches.
+  // Everything else is the user's (conservative — never present unattributable
+  // changes as the agent's).
+  const committedSet = new Set(committedFiles);
+  const writtenSet = new Set(filesWritten);
+  const isAgentWrite = (f: string) =>
+    workspaceStrategy === "isolated-worktree" || committedSet.has(f) || writtenSet.has(f);
+  const changeLedger: TurnFileChange[] = [
+    ...filesChanged.map((f) => ({
+      filePath: f,
+      changeType: "write" as ChangeType,
+      source: "git" as const,
+      attributedTo: (isAgentWrite(f) ? "agent" : "user") as Attribution,
+    })),
+    ...filesRead.map((f) => ({
+      filePath: f,
+      changeType: "read" as ChangeType,
+      source: "event" as const,
+      attributedTo: "agent" as Attribution,
+    })),
+  ];
   const result: SingleAgentResult = {
     status,
     summary: collected.outcome.finalText?.trim() ||
       collected.assistantText ||
       "Agent produced no summary.",
     filesChanged,
+    filesRead,
+    changeLedger,
+    ...(diff ? { diff } : {}),
     commandsExecuted: collected.commands,
     tests: collected.tests,
     ...(collected.outcome.sessionId ? { sessionId: collected.outcome.sessionId } : {}),
@@ -443,6 +518,57 @@ async function recordSingleLedger(
   } catch {
     // measurement is best-effort; it must never replace the direct run result
   }
+}
+
+/**
+ * Diff every untracked, non-ignored file against an empty tree.
+ *
+ * `git diff HEAD` cannot see untracked files, and the alternatives that can
+ * (`git add -A`, `git add -N`) both write to the index. Diffing each file
+ * against `/dev/null` is the read-only way to get the same hunks — git accepts
+ * that path on Windows too.
+ */
+async function diffUntrackedFiles(repoPath: string): Promise<{ patch: string; stat: string }> {
+  let listed: string;
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      { cwd: repoPath, encoding: "utf8" },
+    );
+    listed = stdout;
+  } catch {
+    return { patch: "", stat: "" };
+  }
+
+  /** `git diff --no-index` exits 1 whenever the files differ — always, here —
+   *  so the output arrives on the error rather than as a resolved value. */
+  const diffAgainstNothing = async (args: string[], file: string): Promise<string> => {
+    try {
+      const { stdout } = await execFileAsync(
+        "git",
+        ["diff", "--no-index", ...args, "--", "/dev/null", file],
+        { cwd: repoPath, encoding: "utf8" },
+      );
+      return stdout;
+    } catch (err) {
+      return typeof (err as { stdout?: unknown }).stdout === "string"
+        ? (err as { stdout: string }).stdout
+        : "";
+    }
+  };
+
+  const files = listed.split("\0").filter(Boolean);
+  const results = await Promise.all(
+    files.map(async (file) => ({
+      patch: await diffAgainstNothing([], file),
+      stat: await diffAgainstNothing(["--stat"], file),
+    })),
+  );
+  return {
+    patch: results.map((r) => r.patch).filter(Boolean).join("\n"),
+    stat: results.map((r) => r.stat).filter(Boolean).join("\n"),
+  };
 }
 
 async function captureWorkspaceState(repoPath: string): Promise<WorkspaceState> {

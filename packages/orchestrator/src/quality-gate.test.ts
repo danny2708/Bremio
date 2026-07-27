@@ -82,6 +82,8 @@ describe("parseReviewOutput", () => {
       assistantText: "",
       commands: [],
       tests: [],
+      filesRead: [],
+      filesWritten: [],
     });
     expect(parsed).toMatchObject({ ok: true, summary: "reviewed" });
   });

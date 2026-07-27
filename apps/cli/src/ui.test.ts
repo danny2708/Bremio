@@ -78,6 +78,8 @@ describe("S4-T3: reasons for every automatic choice", () => {
             status: "completed",
             summary: "done",
             filesChanged: [],
+            filesRead: [],
+            changeLedger: [],
             commandsExecuted: [],
             tests: [],
             findings: [],

@@ -73,11 +73,10 @@ describe("ControlMode × ActionClass matrix", () => {
   );
 
   it.each(["git-destructive", "outside-workspace", "user-config"] as ActionClass[])(
-    "autopilot mode denies %s but marks it overrideable by grant",
+    "autopilot mode denies %s",
     (action) => {
       const result = evaluate("autopilot", action);
       expect(result.allowed, result.reason).toBe(false);
-      expect(result.overrideableByGrant).toBe(true);
     },
   );
 

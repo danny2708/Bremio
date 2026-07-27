@@ -53,6 +53,13 @@ class SingleMockAdapter implements AgentAdapter {
     this.requests.push(request);
     const ts = Date.now();
     yield { type: "started", runId: request.runId, ts };
+    yield {
+      type: "tool_use",
+      runId: request.runId,
+      ts,
+      name: "Write",
+      input: { file_path: "DIRECT.txt" },
+    };
     await fs.writeFile(path.join(request.cwd, "DIRECT.txt"), "single mode\n", "utf8");
     if (this.emitShellEvidence) {
       yield {
@@ -465,6 +472,185 @@ describe("runSingleAgent", () => {
     } finally {
       await fs.rm(homeSentinel, { force: true }).catch(() => {});
     }
+  });
+
+  // ── S5-T1: change model ──────────────────────────────────────────
+  it("includes filesRead and changeLedger in the report", async () => {
+    const adapter = new SingleMockAdapter();
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "write a file",
+      registry: createRegistry([adapter]),
+    });
+
+    expect(report.result.filesRead).toBeDefined();
+    expect(Array.isArray(report.result.filesRead)).toBe(true);
+    expect(report.result.changeLedger).toBeDefined();
+    expect(Array.isArray(report.result.changeLedger)).toBe(true);
+
+    // The mock adapter wrote DIRECT.txt — that should be attributed to agent
+    // since it was committed via git.
+    expect(report.result.filesChanged).toContain("DIRECT.txt");
+    const writeEntry = report.result.changeLedger.find(
+      (c) => c.filePath === "DIRECT.txt" && c.changeType === "write",
+    );
+    expect(writeEntry).toBeDefined();
+    expect(writeEntry!.attributedTo).toBe("agent");
+
+    // Diff API — report contains git stat/patch for changed files
+    expect(report.result.diff).toBeDefined();
+    expect(report.result.diff!.stat).toContain("DIRECT.txt");
+    expect(report.result.diff!.patch).toContain("DIRECT.txt");
+  });
+
+  it("leaves the user's staged index exactly as it found it", async () => {
+    // Computing the diff ran `git add -A` … `git diff --cached` … `git reset`.
+    // It produced the right patch and destroyed the user's index on the way:
+    // anyone who had staged a subset of their work with `git add -p` came back
+    // to a fully unstaged tree with no record of what had been staged.
+    const git = (args: string[]) => execFileSync("git", args, { cwd: repoPath, stdio: "pipe" });
+    await fs.writeFile(path.join(repoPath, "staged.txt"), "staged content\n", "utf8");
+    await fs.writeFile(path.join(repoPath, "unstaged.txt"), "unstaged content\n", "utf8");
+    git(["add", "staged.txt"]);
+
+    const before = execFileSync("git", ["diff", "--cached", "--name-only"], {
+      cwd: repoPath,
+      encoding: "utf8",
+    });
+    expect(before.trim()).toBe("staged.txt");
+
+    await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "write a file",
+      registry: createRegistry([new SingleMockAdapter()]),
+    });
+
+    const after = execFileSync("git", ["diff", "--cached", "--name-only"], {
+      cwd: repoPath,
+      encoding: "utf8",
+    });
+    expect(after.trim()).toBe("staged.txt");
+  });
+
+  it("reports untracked files in the diff without staging them", async () => {
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "write a file",
+      registry: createRegistry([new SingleMockAdapter()]),
+    });
+
+    // DIRECT.txt is written by the mock and never committed, so it only shows
+    // up if untracked files are diffed — which is what `git add -A` used to buy.
+    expect(report.result.diff!.patch).toContain("DIRECT.txt");
+    const staged = execFileSync("git", ["diff", "--cached", "--name-only"], {
+      cwd: repoPath,
+      encoding: "utf8",
+    });
+    expect(staged.trim()).toBe("");
+  });
+
+  it("attributes changed files: git-committed → agent, pre-existing dirty → user", async () => {
+    // Create a pre-existing dirty file before the run
+    await fs.writeFile(path.join(repoPath, "user-edit.txt"), "user content\n", "utf8");
+    const adapter = new SingleMockAdapter();
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "write a file",
+      registry: createRegistry([adapter]),
+    });
+
+    // DIRECT.txt was committed by the adapter via git → agent
+    const agentEntry = report.result.changeLedger.find(
+      (c) => c.filePath === "DIRECT.txt",
+    );
+    expect(agentEntry).toBeDefined();
+    expect(agentEntry!.attributedTo).toBe("agent");
+
+    // user-edit.txt was dirty before and not committed by the agent → user
+    const userEntry = report.result.changeLedger.find(
+      (c) => c.filePath === "user-edit.txt",
+    );
+    expect(userEntry).toBeDefined();
+    expect(userEntry!.attributedTo).toBe("user");
+  });
+
+  it("isolated worktree: all changes attributed to agent", async () => {
+    const adapter = new SingleMockAdapter();
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "isolated edit",
+      registry: createRegistry([adapter]),
+      workspaceStrategy: "isolated-worktree",
+    });
+
+    expect(report.result.filesChanged).toContain("DIRECT.txt");
+    for (const entry of report.result.changeLedger) {
+      expect(entry.attributedTo).toBe("agent");
+    }
+
+    // Diff API — isolated worktree report contains the worktree diff
+    expect(report.result.diff).toBeDefined();
+    expect(report.result.diff!.stat).toContain("DIRECT.txt");
+  });
+
+  it("changeLedger contains both git-sourced writes and event-sourced reads", async () => {
+    const adapter = new SingleMockAdapter();
+    // Override to emit a read tool event and write a file
+    const origStart = adapter.startRun.bind(adapter);
+    adapter.startRun = async function* (request) {
+      this.requests.push(request);
+      yield { type: "started", runId: request.runId, ts: Date.now() };
+      yield {
+        type: "tool_use",
+        runId: request.runId,
+        ts: Date.now(),
+        name: "read",
+        input: { file_path: "README.md" },
+      };
+      yield {
+        type: "tool_use",
+        runId: request.runId,
+        ts: Date.now(),
+        name: "edit",
+        input: { filepath: "FEATURE.txt" },
+      };
+      await fs.writeFile(path.join(request.cwd, "FEATURE.txt"), "hello\n", "utf8");
+      yield { type: "tool_use", runId: request.runId, ts: Date.now(), name: "shell", input: { command: "pnpm test" } };
+      yield { type: "tool_result", runId: request.runId, ts: Date.now(), name: "shell", ok: true, exitCode: 0 };
+      yield { type: "completed", runId: request.runId, ts: Date.now(), outcome: { status: "completed", finalText: "done" } };
+    };
+
+    const report = await runSingleAgent({
+      primaryAgentId: "codex",
+      repoPath,
+      prompt: "read and write",
+      registry: createRegistry([adapter]),
+    });
+
+    // Event-sourced read from README.md — attributed to agent (reads are always agent)
+    expect(report.result.filesRead).toContain("README.md");
+    const readEntry = report.result.changeLedger.find(
+      (c) => c.filePath === "README.md" && c.changeType === "read",
+    );
+    expect(readEntry).toBeDefined();
+    expect(readEntry!.attributedTo).toBe("agent");
+
+    // Git-sourced write from FEATURE.txt (written by the adapter override) — committed → agent
+    expect(report.result.filesChanged).toContain("FEATURE.txt");
+    const writeEntry = report.result.changeLedger.find(
+      (c) => c.filePath === "FEATURE.txt" && c.changeType === "write",
+    );
+    expect(writeEntry).toBeDefined();
+    expect(writeEntry!.attributedTo).toBe("agent");
+
+    // Diff API — report contains diff for both written and read files
+    expect(report.result.diff).toBeDefined();
+    expect(report.result.diff!.stat).toContain("FEATURE.txt");
   });
 
   it("runs a Single agent in an isolated worktree when workspaceStrategy is isolated-worktree", async () => {

@@ -31,12 +31,22 @@ export {
   FindingSchema,
   TestRunSchema,
   UsageSummarySchema,
+  ChangeTypeSchema,
+  ChangeSourceSchema,
+  TurnFileChangeSchema,
+  AttributionSchema,
+  DiffResultSchema,
   type TaskResult,
   type TaskStatus,
   type ReasoningLevel,
   type Finding,
   type TestRun,
   type UsageSummary,
+  type ChangeType,
+  type ChangeSource,
+  type TurnFileChange,
+  type Attribution,
+  type DiffResult,
 } from "./result";
 
 export {

@@ -43,6 +43,7 @@ import {
   ProtocolMismatchError,
   type RunEvent,
 } from "@bremio/daemon-client";
+import { applyCommand } from "./apply";
 import { mergeCommand } from "./merge";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
 import { collectComparison, printComparison, type ComparisonSide } from "./compare";
@@ -118,6 +119,20 @@ ${c.bold("merge")}    review a completed task's diff, then merge it into the bas
   --strategy <mode>       Integrate task branches with merge (default) or cherry-pick.
   --yes                   Skip the confirmation prompt.
 
+${c.bold("apply")}    apply a run's changes to the working tree (per task or per file)
+  <runId>                 The run whose changes to apply.
+  --task <taskId>         Apply only this task's changes (Team runs).
+  --file <path>           Apply only one file's changes.
+  --force                 Overwrite conflicting user edits in the working tree.
+  --repo <path>           Repo to look in (default: current directory).
+
+${c.bold("revert")}   revert a run's changes from the working tree (per task or per file)
+  <runId>                 The run whose changes to revert.
+  --task <taskId>         Revert only this task's changes (Team runs).
+  --file <path>           Revert only one file's changes.
+  --force                 Overwrite conflicting user edits in the working tree.
+  --repo <path>           Repo to look in (default: current directory).
+
 ${c.bold("stats")}    summarize the usage ledger (.bremio/ledger.jsonl)
   --since <date>          Only count tasks on/after this date (e.g. 2026-07-01).
   --repo <path>           Repo to look in (default: current directory).
@@ -173,6 +188,9 @@ function parseCli() {
       json: { type: "boolean", default: false },
       standalone: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
+      task: { type: "string" },
+      file: { type: "string" },
+      force: { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", short: "v", default: false },
@@ -194,6 +212,8 @@ async function main(): Promise<void> {
     console.log(USAGE);
     return;
   }
+
+
   // Bare `bremio` opens the TUI when attached to a terminal; piped/CI callers
   // still get the usage text so scripts keep working unchanged.
   if (!command) {
@@ -225,6 +245,10 @@ async function main(): Promise<void> {
       return;
     case "merge":
       process.exitCode = await mergeCommandFromCli(values, positionals);
+      return;
+    case "apply":
+    case "revert":
+      process.exitCode = await applyCommandFromCli(values, positionals, command);
       return;
     case "stats":
       process.exitCode = await statsCommandFromCli(values);
@@ -937,6 +961,29 @@ async function mergeCommandFromCli(values: Values, positionals: string[]): Promi
     ...(values.run ? { runId: values.run } : {}),
     ...(values.base ? { base: values.base } : {}),
     ...(values.strategy ? { strategy: values.strategy as "merge" | "cherry-pick" } : {}),
+  });
+}
+
+async function applyCommandFromCli(
+  values: Values,
+  positionals: string[],
+  verb: "apply" | "revert",
+): Promise<number> {
+  const repoPath = resolveRepo(values);
+  if (!repoPath) return 2;
+  const runId = positionals[1] ?? values.run;
+  if (!runId) {
+    console.error(c.red(`error: specify a <runId> to ${verb}`));
+    console.log(`\n${USAGE}`);
+    return 2;
+  }
+  return applyCommand({
+    repoPath,
+    runId,
+    revert: verb === "revert",
+    force: values.force === true,
+    ...(values.task ? { taskId: values.task } : {}),
+    ...(values.file ? { filePath: values.file } : {}),
   });
 }
 

@@ -1,6 +1,10 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { AgentAdapter } from "@bremio/adapter-sdk";
-import type { AgentEvent, Plan, Task, TaskResult } from "@bremio/protocol";
+import type { AgentEvent, Attribution, ChangeType, Plan, Task, TaskResult, TurnFileChange } from "@bremio/protocol";
 import { TaskLog, type WorktreeManager } from "@bremio/workspace";
+
+const execFileAsync = promisify(execFile);
 import { appendLedgerEntry } from "./ledger";
 import { permissionForKind, roleForKind, topologicalOrder } from "./router";
 import { buildTaskPrompt } from "./plan-schema";
@@ -309,12 +313,43 @@ async function runOneTask(
     }
   }
 
+  const filesRead = [...new Set(run.filesRead)].sort();
+  // Team tasks always use isolated worktrees — all changes belong to the agent.
+  const changeLedger: TurnFileChange[] = [
+    ...collected.filesChanged.map((f) => ({
+      filePath: f,
+      changeType: "write" as ChangeType,
+      source: "git" as const,
+      attributedTo: "agent" as Attribution,
+    })),
+    ...filesRead.map((f) => ({
+      filePath: f,
+      changeType: "read" as ChangeType,
+      source: "event" as const,
+      attributedTo: "agent" as Attribution,
+    })),
+  ];
+
+  let diff: { stat: string; patch: string } | undefined;
+  if (collected.commitHash) {
+    try {
+      const [stat, patch] = await Promise.all([
+        execFileAsync("git", ["show", "--stat", "--format=", collected.commitHash], { cwd: worktree.path, encoding: "utf8" }).then(r => r.stdout.trim()),
+        execFileAsync("git", ["show", "--format=", "--no-ext-diff", collected.commitHash], { cwd: worktree.path, encoding: "utf8" }).then(r => r.stdout.trim()),
+      ]);
+      if (stat || patch) diff = { stat, patch };
+    } catch { /* best-effort — diff is metadata, not a gate */ }
+  }
+
   return {
     taskId: task.id,
     agentId,
     status,
     summary,
     filesChanged: collected.filesChanged,
+    filesRead,
+    changeLedger,
+    ...(diff ? { diff } : {}),
     commandsExecuted: run.commands,
     tests,
     findings,
@@ -340,6 +375,8 @@ function cancelledResult(task: Task, agentId: string, error: string): TaskResult
     status: "cancelled",
     summary: error,
     filesChanged: [],
+    filesRead: [],
+    changeLedger: [],
     commandsExecuted: [],
     tests: [],
     findings: [],
@@ -354,6 +391,8 @@ function failedResult(task: Task, agentId: string, error: string): TaskResult {
     status: "failed",
     summary: error,
     filesChanged: [],
+    filesRead: [],
+    changeLedger: [],
     commandsExecuted: [],
     tests: [],
     findings: [],

@@ -616,6 +616,7 @@ export class RunRegistry {
    */
   async #startReview(
     runId: string,
+    sessionId: string,
     report: import("@bremio/orchestrator").SingleRunReport,
     repoPath: string,
   ): Promise<{
@@ -630,7 +631,7 @@ export class RunRegistry {
     const actionDigest = computeDigest(diff.patch);
 
     const { request, autoDenied } = this.createApprovalRequest({
-      sessionId: runId,
+      sessionId,
       runId,
       actionClass: "write",
       actionTarget: wt.branch,
@@ -794,7 +795,8 @@ export class RunRegistry {
         report.worktree &&
         report.result.status === "completed"
       ) {
-        const { decision, actionDigest, unattended } = await this.#startReview(runId, report, input.repoPath);
+        const runSessionId = this.store.getRun(runId)?.sessionId ?? runId;
+        const { decision, actionDigest, unattended } = await this.#startReview(runId, runSessionId, report, input.repoPath);
         if (decision === "approved") {
           // Verify the worktree hasn't drifted since approval: recompute the
           // diff and compare the digest. A mismatch means the changes the user

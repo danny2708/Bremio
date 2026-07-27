@@ -15,6 +15,10 @@ export interface CollectedRun {
   commands: string[];
   /** Shell command outcomes paired from tool_use/tool_result events. */
   tests: TestRun[];
+  /** File paths the agent read (from tool_use events with read-like tool names). */
+  filesRead: string[];
+  /** File paths the agent wrote/edited (from tool_use events with write-like tool names). */
+  filesWritten: string[];
   /** Sum of provider-reported usage events; missing dimensions stay unknown. */
   usage?: UsageSummary;
   /** Provider-confirmed identity, omitted if unavailable or inconsistent. */
@@ -23,6 +27,12 @@ export interface CollectedRun {
 }
 
 const SHELL_TOOLS = new Set(["shell", "bash", "Bash", "run_command"]);
+
+/** Tool names that indicate the agent read a file. */
+const READ_TOOLS = new Set(["read", "Read", "view", "View", "grep", "Grep", "glob", "Glob"]);
+
+/** Tool names that indicate the agent wrote or edited a file. */
+const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "edit"]);
 
 /**
  * Drain an adapter's event stream: mirror every event to the task log and an
@@ -39,6 +49,8 @@ export async function collectRun(
   const commands: string[] = [];
   const pendingShellCommands: string[] = [];
   const tests: TestRun[] = [];
+  const filesRead: string[] = [];
+  const filesWritten: string[] = [];
   let inputTokens: number | undefined;
   let outputTokens: number | undefined;
   let costUsd: number | undefined;
@@ -57,6 +69,30 @@ export async function collectRun(
         const command = cmd.trim();
         commands.push(command);
         pendingShellCommands.push(command);
+      }
+    } else if (event.type === "tool_use" && READ_TOOLS.has(event.name)) {
+      const input = event.input as Record<string, unknown> | undefined;
+      const fp = typeof input?.file_path === "string"
+        ? input.file_path
+        : typeof input?.filepath === "string"
+          ? input.filepath
+          : typeof input?.path === "string"
+            ? input.path
+            : undefined;
+      if (typeof fp === "string" && fp.trim()) {
+        filesRead.push(fp.trim());
+      }
+    } else if (event.type === "tool_use" && WRITE_TOOLS.has(event.name)) {
+      const input = event.input as Record<string, unknown> | undefined;
+      const fp = typeof input?.file_path === "string"
+        ? input.file_path
+        : typeof input?.filepath === "string"
+          ? input.filepath
+          : typeof input?.path === "string"
+            ? input.path
+            : undefined;
+      if (typeof fp === "string" && fp.trim()) {
+        filesWritten.push(fp.trim());
       }
     } else if (event.type === "tool_result" && SHELL_TOOLS.has(event.name)) {
       const command = pendingShellCommands.shift() ?? event.name;
@@ -83,6 +119,8 @@ export async function collectRun(
     assistantText: textParts.join("\n").trim(),
     commands,
     tests,
+    filesRead,
+    filesWritten,
     ...(inputTokens !== undefined || outputTokens !== undefined || costUsd !== undefined
       ? {
           usage: {
