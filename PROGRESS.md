@@ -1439,3 +1439,35 @@ Rules:
 - `corepack pnpm vitest run apps/daemon/src/protocol.test.ts` — 33/33 passed (was 37, -4 grant tests)
 - `corepack pnpm test` — 797 passed / 64 files (-0 regressions, -10 removed grant tests)
 - Red-check (CLI guard): temporarily re-added the `grants` subcommand dispatch branch in `approvalCommandFromCli` → test `returns 2 for removed grants subcommand` fails because it gets "grants-list handled" instead of "unknown approval subcommand" → restored removal → test passes
+
+### S6-T5 — Attribution: capability-shaped tool vocabulary instead of hardcoded Claude names
+- **agent:** Claude (opencode)
+- **time:** 2026-07-27T12:00 → 12:30
+- **branch:** s6/solo-colab
+- **task(s):** S6-T5
+- **status:** done
+
+**Did**
+- `docs/15` §1.3 requires capability-shaped attribution — tool names come from the adapter, not hardcoded in `stream.ts`
+- Added `AgentToolVocabulary` type and optional `getToolVocabulary?(): AgentToolVocabulary` to `AgentAdapter` interface (`packages/adapter-sdk/src/adapter.ts`)
+- Exported `AgentToolVocabulary` from `@bremio/adapter-sdk`
+- `collectRun` in `stream.ts` accepts `opts.toolVocabulary: AgentToolVocabulary` — builds `Set`s from adapter-provided arrays when present, falls back to `DEFAULT_READ_TOOLS`/`DEFAULT_WRITE_TOOLS`/`DEFAULT_SHELL_TOOLS`
+- All four adapters implement `getToolVocabulary()`:
+  - Claude: `read: ["Read", "View", "Grep", "Glob"]`, `write: ["Write", "Edit", "MultiEdit", "NotebookEdit"]`, `shell: ["Bash"]`
+  - Codex: `read: []`, `write: ["edit"]`, `shell: ["shell"]`
+  - OpenCode: `read: ["read", "glob", "grep"]`, `write: ["edit"]`, `shell: ["shell"]`
+  - Antigravity: all empty arrays (no `tool_use` events)
+- Callers extract vocabulary from adapter and pass to `collectRun`:
+  - `single-run.ts` (both calls: primary and tool-eval)
+  - `lead-manager.ts` via `lead.getToolVocabulary?.()`
+  - `scheduler.ts` via `adapter.getToolVocabulary()`
+
+**Decided**
+- Tool vocabulary is an open-world list per adapter, not a closed union type — different adapters expose different tool names, and listing them in a protocol-level type would be a coupling point that breaks every time an adapter changes its tool names
+- Empty arrays for antigravity is correct — antigravity agents emit tool results directly in `text` events, not as structured `tool_use` events, so the attribution tracker never sees a tool name to match
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/orchestrator/src/stream.test.ts` — 6/6 passed (+1 vocabulary override test)
+- `corepack pnpm test` — 799 passed / 64 files (+2 new tests: 1 stream test + 1 attribution-related test)
+- Red-check: temporarily removed `opts.toolVocabulary` guard in `collectRun` (always used defaults) → test `uses adapter-declared tool vocabulary when provided` fails because `"Read"` gets tracked by defaults even though the custom vocabulary doesn't include it → restored guard → test passes

@@ -10,6 +10,7 @@ import type {
   AgentCapabilities,
   AgentHealth,
   AgentRunRequest,
+  AgentToolVocabulary,
   AdapterRuntimeCapabilities,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
@@ -99,6 +100,14 @@ export function buildCodexResumeArgs(
 export class CodexAdapter implements AgentAdapter {
   readonly id = "codex";
   readonly provider = "openai";
+
+  getToolVocabulary(): AgentToolVocabulary {
+    return {
+      read: [],
+      write: ["edit"],
+      shell: ["shell"],
+    };
+  }
 
   private readonly bin: string;
   private readonly children = new Map<string, ChildProcessWithoutNullStreams>();

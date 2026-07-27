@@ -12,6 +12,7 @@ import type {
   AgentCapabilities,
   AgentHealth,
   AgentRunRequest,
+  AgentToolVocabulary,
   AdapterRuntimeCapabilities,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
@@ -44,6 +45,14 @@ type ContentBlock = { type: string } & Record<string, unknown>;
 export class ClaudeAdapter implements AgentAdapter {
   readonly id = "claude";
   readonly provider = "anthropic";
+
+  getToolVocabulary(): AgentToolVocabulary {
+    return {
+      read: ["Read", "View", "Grep", "Glob"],
+      write: ["Write", "Edit", "MultiEdit", "NotebookEdit"],
+      shell: ["Bash"],
+    };
+  }
 
   private readonly defaultModel: string | undefined;
   private readonly controllers = new Map<string, AbortController>();

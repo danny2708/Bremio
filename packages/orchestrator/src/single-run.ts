@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { canBackControlMode, type ControlMode, type WorkspaceStrategy } from "@bremio/policy";
-import type { AdapterRuntimeCapabilities } from "@bremio/adapter-sdk";
+import type { AdapterRuntimeCapabilities, AgentToolVocabulary } from "@bremio/adapter-sdk";
 import type { AgentEvent, Attribution, ChangeType, ReasoningLevel, TaskStatus, TestRun, TurnFileChange, UsageSummary } from "@bremio/protocol";
 import { prepareTurnExecution, type TurnMechanismDecision } from "@bremio/harness";
 import { TaskLog, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
@@ -138,6 +138,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
   if (!capabilities.repositoryRead || !capabilities.repositoryWrite) {
     throw new Error(`agent "${opts.primaryAgentId}" cannot run with workspace-write access`);
   }
+  const toolVocabulary = adapter.getToolVocabulary?.();
 
   const workspaceStrategy = opts.workspaceStrategy ?? "direct-workspace";
   const controlMode = opts.controlMode ?? "autopilot";
@@ -225,6 +226,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
       collected = await collectRun(execution.run(), {
         log,
         ...(opts.hooks?.onEvent ? { onEvent: opts.hooks.onEvent } : {}),
+        ...(toolVocabulary ? { toolVocabulary } : {}),
       });
     } else {
       mechanismDecision = {
@@ -244,7 +246,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
           signal: controller.signal,
           metadata: { executionMode: "single" },
         }),
-        { log, ...(opts.hooks?.onEvent ? { onEvent: opts.hooks.onEvent } : {}) },
+        { log, ...(opts.hooks?.onEvent ? { onEvent: opts.hooks.onEvent } : {}), ...(toolVocabulary ? { toolVocabulary } : {}) },
       );
     }
   } catch (error) {

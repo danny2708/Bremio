@@ -267,6 +267,7 @@ async function runOneTask(
       {
         log,
         ...(opts.hooks?.onEvent ? { onEvent: (e) => opts.hooks?.onEvent?.(task, agentId, e) } : {}),
+        ...(adapter.getToolVocabulary?.() ? { toolVocabulary: adapter.getToolVocabulary() } : {}),
       },
     );
   } finally {
