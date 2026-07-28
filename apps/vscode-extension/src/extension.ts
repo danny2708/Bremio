@@ -260,6 +260,26 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
       case "attachActiveFile":
         attachActiveFile();
         return;
+      case "addContextItem":
+        if (typeof message.sessionId === "string" && typeof message.type === "string" && typeof message.source === "string") {
+          await addContextItem(message.sessionId, message.type, message.source);
+        }
+        return;
+      case "addContextFile":
+        if (typeof message.sessionId === "string") {
+          await addContextFile(message.sessionId);
+        }
+        return;
+      case "removeContextItem":
+        if (typeof message.sessionId === "string" && typeof message.itemId === "string") {
+          await removeContextItem(message.sessionId, message.itemId);
+        }
+        return;
+      case "toggleContextItem":
+        if (typeof message.sessionId === "string" && typeof message.itemId === "string" && typeof message.enabled === "boolean") {
+          await toggleContextItem(message.sessionId, message.itemId, message.enabled);
+        }
+        return;
     }
   } catch (err) {
     post({ type: "error", message: (err as Error).message });
@@ -300,11 +320,7 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
         const detail = await client.run(turn.runId, repoPath);
         events = (detail.events ?? []) as unknown as Array<Record<string, unknown>>;
       } catch {
-        // A turn whose run was pruned still belongs in the transcript; it
-        // simply has no process detail left to show.
       }
-      // Persisted events keep the agent payload under `data`; the answer lives
-      // there, not in the envelope the daemon wraps around it.
       const agentEvents = events.map((event) =>
         typeof event.data === "object" && event.data !== null
           ? { kind: event.kind, ...(event.data as Record<string, unknown>) }
@@ -312,8 +328,6 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
       );
       return {
         ...turn,
-        // `renderEvent` returns its own `kind` (the display category, e.g.
-        // "tool_use"), which is the one the transcript filters on.
         events: agentEvents.map((event) =>
           renderEvent({ type: String(event.kind ?? "log"), ...event } as never),
         ),
@@ -322,7 +336,15 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
     }),
   );
 
-  post({ type: "sessionDetail", session, turns });
+  let contextItems: Array<{ id: string; type: string; source: string; enabled: boolean }> = [];
+  try {
+    const result = await client.contextItems(sessionId);
+    contextItems = result.contextItems;
+  } catch {
+    // context items are optional — session may have none
+  }
+
+  post({ type: "sessionDetail", session, turns, contextItems });
 }
 
 async function sendCapacity(): Promise<void> {
@@ -394,6 +416,41 @@ function describeFile(uri: vscode.Uri): { path: string; label: string } {
   // Show the workspace-relative name; send the absolute path, since the agent
   // resolves it from its own working directory.
   return { path: full, label: repoPath ? path.relative(repoPath, full) || full : full };
+}
+
+async function addContextItem(sessionId: string, type: string, source: string): Promise<void> {
+  if (!source) {
+    // empty source means let user pick a file
+    const uris = await vscode.window.showOpenDialog({ canSelectMany: false, openFiles: true });
+    if (!uris || uris.length === 0) return;
+    const desc = describeFile(uris[0]);
+    await client.createContextItem(sessionId, "file", desc.path);
+  } else {
+    await client.createContextItem(sessionId, type, source);
+  }
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function addContextFile(sessionId: string): Promise<void> {
+  const uris = await vscode.window.showOpenDialog({ canSelectMany: false, openFiles: true });
+  if (!uris || uris.length === 0) return;
+  const desc = describeFile(uris[0]);
+  await client.createContextItem(sessionId, "file", desc.path);
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function removeContextItem(sessionId: string, itemId: string): Promise<void> {
+  await client.deleteContextItem(sessionId, itemId);
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function toggleContextItem(sessionId: string, itemId: string, enabled: boolean): Promise<void> {
+  await client.updateContextItemEnabled(sessionId, itemId, enabled);
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
 }
 
 async function startRun(message: Record<string, unknown>): Promise<void> {

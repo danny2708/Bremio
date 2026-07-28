@@ -1027,7 +1027,17 @@ window.addEventListener("message", (event) => {
     $("tab-sessions").innerHTML = renderSessionList(message.sessions);
   }
   if (message.type === "sessionDetail") {
-    $("tab-sessions").innerHTML = renderTranscript(message.session, message.turns);
+    storedContextItems = message.contextItems || [];
+    currentSessionId = message.session.id;
+    $("tab-sessions").innerHTML = renderTranscript(message.session, message.turns, storedContextItems);
+  }
+  if (message.type === "contextItemsUpdated") {
+    storedContextItems = message.contextItems || [];
+    const transcript = $("tab-sessions").querySelector("#continue-wrap");
+    if (transcript) {
+      const ctxSection = $("tab-sessions").querySelector("#context-items-section");
+      if (ctxSection) ctxSection.replaceWith(renderContextItems(currentSessionId, storedContextItems));
+    }
   }
   if (message.type === "runStarted") {
     activeRunId = message.id;
@@ -1149,6 +1159,33 @@ function renderSessionList(sessions) {
   }).join("");
 }
 
+function renderContextItems(sessionId, items) {
+  const sid = escapeHtml(sessionId);
+  if (!items || items.length === 0) {
+    return '<div id="context-items-section" style="margin-top:16px">'
+      + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items</div>'
+      + '<div class="secondary" style="margin-bottom:8px">No context items for this session.</div>'
+      + '<button class="ghost" data-context-add data-session="' + sid + '">Add File</button>'
+      + '<button class="ghost" data-context-file data-session="' + sid + '">Add Current File</button>'
+      + '</div>';
+  }
+  const chips = items.map(function(item, idx) {
+    return '<span class="chip' + (item.enabled ? '' : ' disabled') + '" title="' + escapeHtml(item.source) + '">'
+      + '<span class="codicon codicon-file"></span>'
+      + '<span class="name">' + escapeHtml(item.source.slice(Math.max(item.source.lastIndexOf("/"), item.source.lastIndexOf("\\\\")) + 1)) + '</span>'
+      + '<button data-context-toggle="' + idx + '" data-item="' + escapeHtml(item.id) + '" data-enabled="' + (item.enabled ? '1' : '0') + '" aria-label="Toggle">' + (item.enabled ? '●' : '○') + '</button>'
+      + '<button data-context-remove="' + idx + '" data-item="' + escapeHtml(item.id) + '" aria-label="Remove">x</button>'
+      + '</span>';
+  }).join("");
+  return '<div id="context-items-section" style="margin-top:16px">'
+    + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items (' + items.length + ')</div>'
+    + '<div>' + chips + '</div>'
+    + '<div style="margin-top:8px">'
+    + '<button class="ghost" data-context-add data-session="' + sid + '">Add File</button>'
+    + '<button class="ghost" data-context-file data-session="' + sid + '">Add Current File</button>'
+    + '</div></div>';
+}
+
 /**
  * A session as a conversation: each turn is the user's prompt, then what the
  * agent did (collapsed), then what it actually said.
@@ -1156,7 +1193,7 @@ function renderSessionList(sessions) {
  * The response is the point. It is rendered undimmed at full width, because a
  * run whose whole value was the reply used to show only "completed · 0 files".
  */
-function renderTranscript(session, turns) {
+function renderTranscript(session, turns, contextItems) {
   let out = '<div class="row" style="margin-bottom:10px">'
     + '<button class="ghost" data-action="back-to-sessions">← Sessions</button>'
     + '<strong style="margin-left:8px">' + escapeHtml(session.title || session.id) + "</strong>"
@@ -1190,6 +1227,8 @@ function renderTranscript(session, turns) {
     out += '<div class="turn-foot">' + escapeHtml(turn.status) + " · run " + escapeHtml(turn.runId) + "</div>";
     out += "</div>";
   }
+
+  out += renderContextItems(session.id, contextItems);
 
   // Continuing a session is the same action as starting a run, aimed at an
   // existing session id — the daemon appends it as the next turn.
@@ -1267,6 +1306,8 @@ function isTerminalStatus(status) {
  * cannot read the format.
  */
 let attachments = [];
+let storedContextItems = [];
+let currentSessionId = null;
 
 function renderAttachments() {
   const host = $("attachments");
@@ -1290,6 +1331,26 @@ document.addEventListener("click", (event) => {
   if (drop) {
     attachments.splice(Number(drop.dataset.drop), 1);
     renderAttachments();
+    return;
+  }
+  const contextAdd = event.target.closest("[data-context-add]");
+  if (contextAdd) {
+    vscode.postMessage({ type: "addContextItem", sessionId: contextAdd.dataset.session, type: "file", source: "" });
+    return;
+  }
+  const contextFile = event.target.closest("[data-context-file]");
+  if (contextFile) {
+    vscode.postMessage({ type: "addContextFile", sessionId: contextFile.dataset.session });
+    return;
+  }
+  const contextToggle = event.target.closest("[data-context-toggle]");
+  if (contextToggle) {
+    vscode.postMessage({ type: "toggleContextItem", sessionId: currentSessionId, itemId: contextToggle.dataset.item, enabled: contextToggle.dataset.enabled !== "1" });
+    return;
+  }
+  const contextRemove = event.target.closest("[data-context-remove]");
+  if (contextRemove) {
+    vscode.postMessage({ type: "removeContextItem", sessionId: currentSessionId, itemId: contextRemove.dataset.item });
     return;
   }
   const sessionRow = event.target.closest("[data-session]:not([data-action])");

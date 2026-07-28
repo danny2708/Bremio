@@ -329,6 +329,32 @@ export class BremioClient {
     return this.#call(`/sessions/${encodeURIComponent(id)}`);
   }
 
+  contextItems(sessionId: string): Promise<{ contextItems: Array<{ id: string; type: string; source: string; addedAt: string; scope: string; tokensEstimated?: number; enabled: boolean }> }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/context-items`);
+  }
+
+  createContextItem(sessionId: string, type: string, source: string): Promise<{ contextItem: { id: string; type: string; source: string; enabled: boolean } }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/context-items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, source }),
+    });
+  }
+
+  deleteContextItem(sessionId: string, itemId: string): Promise<{ removed: boolean }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/context-items/${encodeURIComponent(itemId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  updateContextItemEnabled(sessionId: string, itemId: string, enabled: boolean): Promise<{ contextItem: { id: string; enabled: boolean } }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/context-items/${encodeURIComponent(itemId)}/enabled`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
   startRun(request: StartRunRequest): Promise<{ run: { id: string } }> {
     return this.#call("/runs", {
       method: "POST",

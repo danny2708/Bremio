@@ -1499,7 +1499,7 @@ Rules:
 ### S7-T1 — ContextItem model + persistence
 - **agent:** Claude (opencode)
 - **time:** 2026-07-28T08:00 → 08:30
-- **branch:** s6/solo-colab
+- **branch:** s7/session-and-context-ux
 - **task(s):** S7-T1
 - **status:** done
 
@@ -1524,3 +1524,27 @@ Rules:
 - 4 new daemon HTTP tests (create/list, delete, 404, toggle) in `daemon.test.ts` (45 total)
 - `corepack pnpm test` — 812 passed / 64 files (+11 new tests from storage + daemon + 1 404 test)
 - Red-check: removed the `!removed` guard in the server's DELETE route (was returning `{ removed: true }` unconditionally) → test `returns 404 for deleting a non-existent context item` fails because it gets 200 instead of 404 → restored guard → passes
+
+### S7-T2 — Add/remove context mid-session (panel)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T08:30 → 08:50
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T2
+- **status:** done
+
+**Did**
+- Added `contextItems()`, `createContextItem()`, `deleteContextItem()`, `updateContextItemEnabled()` methods to `BremioClient` (`apps/vscode-extension/src/client.ts`)
+- Modified `sendSessionDetail()` in `extension.ts` to fetch and include context items in the `sessionDetail` message
+- Added message handlers for `addContextItem`, `addContextFile`, `removeContextItem`, `toggleContextItem` — each calls the client API then re-fetches and posts the updated list
+- Added `renderContextItems()` function to `webview.ts` that renders context items as chips with toggle/remove buttons and "Add File"/"Add Current File" buttons
+- Modified `renderTranscript()` to accept `contextItems` parameter and render the context section between the turn history and the continue form
+- Added click handlers for context item actions (add/toggle/remove)
+- Handles `contextItemsUpdated` messages for live re-rendering via `replaceWith` without rebuilding the full transcript
+
+**Decided**
+- Context items are fetched alongside the session detail and re-fetched after every mutation — keeps the panel stateless without local optimistic updates
+- `contextItemsUpdated` message replaces only the context items section via `querySelector("#context-items-section").replaceWith(...)` rather than rebuilding the entire transcript, preserving scroll position and turn state
+
+**Verification**
+- `corepack pnpm test` — 812 passed / 64 files (vscode-extension tests: 63 passed, unchanged)
+
