@@ -270,6 +270,16 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
           await addContextFile(message.sessionId);
         }
         return;
+      case "addContextImage":
+        if (typeof message.sessionId === "string") {
+          await addContextImage(message.sessionId);
+        }
+        return;
+      case "pasteImage":
+        if (typeof message.sessionId === "string" && typeof message.dataUrl === "string" && typeof message.fileName === "string") {
+          await handlePasteImage(message.sessionId, message.dataUrl, message.fileName);
+        }
+        return;
       case "removeContextItem":
         if (typeof message.sessionId === "string" && typeof message.itemId === "string") {
           await removeContextItem(message.sessionId, message.itemId);
@@ -421,8 +431,8 @@ function describeFile(uri: vscode.Uri): { path: string; label: string } {
 async function addContextItem(sessionId: string, type: string, source: string): Promise<void> {
   if (!source) {
     // empty source means let user pick a file
-    const uris = await vscode.window.showOpenDialog({ canSelectMany: false, openFiles: true });
-    if (!uris || uris.length === 0) return;
+    const uris = await vscode.window.showOpenDialog({ canSelectFiles: true });
+    if (!uris || uris.length === 0 || !uris[0]) return;
     const desc = describeFile(uris[0]);
     await client.createContextItem(sessionId, "file", desc.path);
   } else {
@@ -433,10 +443,37 @@ async function addContextItem(sessionId: string, type: string, source: string): 
 }
 
 async function addContextFile(sessionId: string): Promise<void> {
-  const uris = await vscode.window.showOpenDialog({ canSelectMany: false, openFiles: true });
-  if (!uris || uris.length === 0) return;
+  const uris = await vscode.window.showOpenDialog({ canSelectFiles: true });
+  if (!uris || uris.length === 0 || !uris[0]) return;
   const desc = describeFile(uris[0]);
   await client.createContextItem(sessionId, "file", desc.path);
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function addContextImage(sessionId: string): Promise<void> {
+  const uris = await vscode.window.showOpenDialog({
+    canSelectFiles: true,
+    filters: { Images: ["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"] },
+  });
+  if (!uris || uris.length === 0 || !uris[0]) return;
+  const desc = describeFile(uris[0]);
+  await client.createContextItem(sessionId, "image", desc.path);
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function handlePasteImage(sessionId: string, dataUrl: string, fileName: string): Promise<void> {
+  // Save the pasted/dropped image to the workspace's .bremio/context-images/ folder.
+  const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+  const buf = Buffer.from(base64, "base64");
+  const repoPath = currentRepo();
+  if (!repoPath) return;
+  const imagesDir = path.join(repoPath, ".bremio", "context-images");
+  await vscode.workspace.fs.createDirectory(vscode.Uri.file(imagesDir));
+  const target = path.join(imagesDir, fileName);
+  await vscode.workspace.fs.writeFile(vscode.Uri.file(target), new Uint8Array(buf));
+  await client.createContextItem(sessionId, "image", target);
   const result = await client.contextItems(sessionId);
   post({ type: "contextItemsUpdated", contextItems: result.contextItems });
 }
@@ -465,11 +502,31 @@ async function startRun(message: Record<string, unknown>): Promise<void> {
   const attached = Array.isArray(message.attachments)
     ? (message.attachments as string[]).filter((entry) => typeof entry === "string")
     : [];
-  const prompt = attached.length
-    ? [typed, "", "Context files (read these first):", ...attached.map((file) => `- ${file}`)].join(
-        "\n",
-      )
-    : typed;
+
+  // Collect enabled context items of type "image" for vision-gated inclusion
+  const sessionId = typeof message.sessionId === "string" && message.sessionId ? message.sessionId : "";
+  let imageContextPaths: string[] = [];
+  if (sessionId) {
+    try {
+      const { contextItems } = await client.contextItems(sessionId);
+      imageContextPaths = contextItems
+        .filter((item) => item.type === "image" && item.enabled)
+        .map((item) => item.source);
+    } catch {
+      // context items are optional
+    }
+  }
+  const hasImages = imageContextPaths.length > 0;
+  const promptLines = [typed];
+  if (attached.length > 0) {
+    promptLines.push("", "Context files (read these first):");
+    promptLines.push(...attached.map((file) => `- ${file}`));
+  }
+  if (hasImages) {
+    promptLines.push("", "Image context files (attached as file references — this provider does not have vision, so these files will be read as text/referenced by path):");
+    promptLines.push(...imageContextPaths.map((file) => `- ${file}`));
+  }
+  const prompt = promptLines.join("\n");
 
   // An unrecognised mode falls back to Single rather than to whatever the
   // daemon would default to — but `auto` must survive, or the panel would

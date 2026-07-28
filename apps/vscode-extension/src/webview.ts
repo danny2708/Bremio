@@ -1029,14 +1029,14 @@ window.addEventListener("message", (event) => {
   if (message.type === "sessionDetail") {
     storedContextItems = message.contextItems || [];
     currentSessionId = message.session.id;
-    $("tab-sessions").innerHTML = renderTranscript(message.session, message.turns, storedContextItems);
+    $("tab-sessions").innerHTML = renderTranscript(message.session, message.turns, storedContextItems, getVisionNotice());
   }
   if (message.type === "contextItemsUpdated") {
     storedContextItems = message.contextItems || [];
     const transcript = $("tab-sessions").querySelector("#continue-wrap");
     if (transcript) {
       const ctxSection = $("tab-sessions").querySelector("#context-items-section");
-      if (ctxSection) ctxSection.replaceWith(renderContextItems(currentSessionId, storedContextItems));
+      if (ctxSection) ctxSection.replaceWith(renderContextItems(currentSessionId, storedContextItems, getVisionNotice()));
     }
   }
   if (message.type === "runStarted") {
@@ -1159,19 +1159,23 @@ function renderSessionList(sessions) {
   }).join("");
 }
 
-function renderContextItems(sessionId, items) {
+function renderContextItems(sessionId, items, visionNotice) {
   const sid = escapeHtml(sessionId);
+  const notice = visionNotice ? '<div class="banner warn" style="margin-bottom:6px;font-size:12px">' + escapeHtml(visionNotice) + '</div>' : "";
   if (!items || items.length === 0) {
     return '<div id="context-items-section" style="margin-top:16px">'
       + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items</div>'
       + '<div class="secondary" style="margin-bottom:8px">No context items for this session.</div>'
+      + notice
       + '<button class="ghost" data-context-add data-session="' + sid + '">Add File</button>'
+      + '<button class="ghost" data-context-image data-session="' + sid + '">Add Image</button>'
       + '<button class="ghost" data-context-file data-session="' + sid + '">Add Current File</button>'
       + '</div>';
   }
   const chips = items.map(function(item, idx) {
+    const isImage = item.type === "image";
     return '<span class="chip' + (item.enabled ? '' : ' disabled') + '" title="' + escapeHtml(item.source) + '">'
-      + '<span class="codicon codicon-file"></span>'
+      + '<span class="codicon codicon-' + (isImage ? 'file-media' : 'file') + '"></span>'
       + '<span class="name">' + escapeHtml(item.source.slice(Math.max(item.source.lastIndexOf("/"), item.source.lastIndexOf("\\\\")) + 1)) + '</span>'
       + '<button data-context-toggle="' + idx + '" data-item="' + escapeHtml(item.id) + '" data-enabled="' + (item.enabled ? '1' : '0') + '" aria-label="Toggle">' + (item.enabled ? '●' : '○') + '</button>'
       + '<button data-context-remove="' + idx + '" data-item="' + escapeHtml(item.id) + '" aria-label="Remove">x</button>'
@@ -1179,9 +1183,11 @@ function renderContextItems(sessionId, items) {
   }).join("");
   return '<div id="context-items-section" style="margin-top:16px">'
     + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items (' + items.length + ')</div>'
+    + notice
     + '<div>' + chips + '</div>'
     + '<div style="margin-top:8px">'
     + '<button class="ghost" data-context-add data-session="' + sid + '">Add File</button>'
+    + '<button class="ghost" data-context-image data-session="' + sid + '">Add Image</button>'
     + '<button class="ghost" data-context-file data-session="' + sid + '">Add Current File</button>'
     + '</div></div>';
 }
@@ -1193,7 +1199,7 @@ function renderContextItems(sessionId, items) {
  * The response is the point. It is rendered undimmed at full width, because a
  * run whose whole value was the reply used to show only "completed · 0 files".
  */
-function renderTranscript(session, turns, contextItems) {
+function renderTranscript(session, turns, contextItems, visionNotice) {
   let out = '<div class="row" style="margin-bottom:10px">'
     + '<button class="ghost" data-action="back-to-sessions">← Sessions</button>'
     + '<strong style="margin-left:8px">' + escapeHtml(session.title || session.id) + "</strong>"
@@ -1228,7 +1234,7 @@ function renderTranscript(session, turns, contextItems) {
     out += "</div>";
   }
 
-  out += renderContextItems(session.id, contextItems);
+  out += renderContextItems(session.id, contextItems, visionNotice);
 
   // Continuing a session is the same action as starting a run, aimed at an
   // existing session id — the daemon appends it as the next turn.
@@ -1309,6 +1315,12 @@ let attachments = [];
 let storedContextItems = [];
 let currentSessionId = null;
 
+function getVisionNotice() {
+  const hasImageItems = (storedContextItems || []).some((item) => item.type === "image");
+  if (!hasImageItems) return "";
+  return "No installed provider supports vision. Image files will be listed as references, not displayed.";
+}
+
 function renderAttachments() {
   const host = $("attachments");
   host.innerHTML = attachments
@@ -1351,6 +1363,11 @@ document.addEventListener("click", (event) => {
   const contextRemove = event.target.closest("[data-context-remove]");
   if (contextRemove) {
     vscode.postMessage({ type: "removeContextItem", sessionId: currentSessionId, itemId: contextRemove.dataset.item });
+    return;
+  }
+  const contextImage = event.target.closest("[data-context-image]");
+  if (contextImage) {
+    vscode.postMessage({ type: "addContextImage", sessionId: contextImage.dataset.session });
     return;
   }
   const sessionRow = event.target.closest("[data-session]:not([data-action])");
@@ -1402,6 +1419,61 @@ document.addEventListener("click", (event) => {
   const actions = { open: "openRun", retry: "retry", diff: "viewDiff", merge: "merge" };
   const type = actions[button.dataset.action];
   if (type && runId) vscode.postMessage({ type, runId });
+});
+
+// Paste handler for images in the session transcript.
+document.addEventListener("paste", (event) => {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].kind === "file" && items[i].type.startsWith("image/")) {
+      event.preventDefault();
+      const file = items[i].getAsFile();
+      if (!file || !currentSessionId) return;
+      // Read the image as base64 and send to extension for saving
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        vscode.postMessage({
+          type: "pasteImage",
+          sessionId: currentSessionId,
+          dataUrl: e.target.result,
+          fileName: "pasted-" + Date.now() + ".png",
+        });
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+  }
+});
+
+// Drag-and-drop handler for images in the context items section.
+let dragCounter = 0;
+document.addEventListener("dragover", (event) => {
+  const section = event.target.closest("#context-items-section");
+  if (!section) return;
+  const hasImage = Array.from(event.dataTransfer?.files ?? []).some((f) => f.type.startsWith("image/"));
+  if (!hasImage) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+});
+document.addEventListener("drop", (event) => {
+  const section = event.target.closest("#context-items-section");
+  if (!section) return;
+  const files = Array.from(event.dataTransfer?.files ?? []).filter((f) => f.type.startsWith("image/"));
+  if (files.length === 0) return;
+  event.preventDefault();
+  for (const file of files) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      vscode.postMessage({
+        type: "pasteImage",
+        sessionId: currentSessionId,
+        dataUrl: e.target.result,
+        fileName: file.name,
+      });
+    };
+    reader.readAsDataURL(file);
+  }
 });
 
 vscode.postMessage({ type: "ready" });

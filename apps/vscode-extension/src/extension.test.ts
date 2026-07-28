@@ -228,6 +228,28 @@ describe("webview", () => {
     expect(html).toContain('id="attachments"');
   });
 
+  it("offers image context buttons in the session transcript", () => {
+    // Session context items include image picker and paste/drop affordances
+    expect(html).toContain("data-context-image");
+    expect(html).toContain("Add Image");
+    // Paste handler listens for clipboard images
+    expect(html).toContain('"paste"');
+    expect(html).toContain("clipboardData?.items");
+    // Drop handler listens for image files dragged onto the context section
+    expect(html).toContain("dragover");
+    expect(html).toContain("context-items-section");
+  });
+
+  it("displays a vision degradation notice in the context items section", () => {
+    // When image context items exist and no provider has vision, the panel
+    // shows a named degradation rather than silently dropping images.
+    expect(html).toContain("getVisionNotice");
+    expect(html).toContain("visionNotice");
+    expect(html).toContain("supports vision");
+    // The notice is rendered when there are image-type context items
+    expect(html).toContain('"image"');
+  });
+
   it("renders every tab the panel offers", () => {
     for (const tab of ["run", "runs", "capacity", "doctor"]) {
       expect(html).toContain(`data-tab="${tab}"`);

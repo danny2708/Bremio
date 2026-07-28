@@ -1548,3 +1548,15 @@ Rules:
 **Verification**
 - `corepack pnpm test` — 812 passed / 64 files (vscode-extension tests: 63 passed, unchanged)
 
+### S7-T3 — Images: paste, drag-drop, picker
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T08:50 → open
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T3
+- **status:** in-progress
+
+**Did**
+
+**Decided**
+
+**Verification**
