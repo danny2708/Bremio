@@ -13,7 +13,7 @@ import {
   redact,
   truncateTitle,
 } from "./storage";
-import { buildPriorTurnsFromStore } from "./runs";
+import { buildPriorTurnsFromStore, tryAutoCompact } from "./runs";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
@@ -784,6 +784,81 @@ describe("buildPriorTurnsFromStore (S7-T6)", () => {
     expect(turns[0]!.elided).toBeUndefined();
     expect(turns[1]!.elided).toBeUndefined();
     expect(turns[1]!.prompt).toBe("second");
+  });
+});
+
+describe("tryAutoCompact (S7-T7)", () => {
+  async function makeStore(): Promise<RunStore> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-s7t7-"));
+    dirs.push(dir);
+    const store = await RunStore.open(path.join(dir, "bremio.db"));
+    stores.push(store);
+    return store;
+  }
+
+  function run(s: RunStore, id: string, prompt: string, si?: string): string {
+    const r = s.createRun({ id, mode: "single", repositoryPath: "/tmp/repo", prompt, ...(si ? { sessionId: si } : {}) });
+    return r.sessionId!;
+  }
+
+  it("does not auto-compact when session has fewer than 2 turns", async () => {
+    const s = await makeStore();
+    run(s, "r1", "hi");
+    const sid = run(s, "r2", "hi");
+    const res = tryAutoCompact(s, sid);
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain("at least 2");
+  });
+
+  it("does not auto-compact when token usage is below trigger fraction", async () => {
+    const s = await makeStore();
+    const sid = run(s, "r0", "short prompt");
+    for (let i = 1; i < 3; i++) run(s, `r${i}`, "short", sid);
+    const res = tryAutoCompact(s, sid);
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain("below");
+  });
+
+  it("auto-compacts when token usage exceeds trigger fraction", async () => {
+    const s = await makeStore();
+    const longPrompt = "x".repeat(100_000);
+    const sid = run(s, "r0", longPrompt);
+    run(s, "r1", longPrompt, sid);
+    run(s, "r2", longPrompt, sid);
+    const res = tryAutoCompact(s, sid);
+    expect(res.ok).toBe(true);
+    expect(res.reason).toContain("auto-compact");
+    const compacts = s.getSessionCompacts(sid);
+    expect(compacts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not re-auto-compact due to hysteresis", async () => {
+    const s = await makeStore();
+    const longPrompt = "x".repeat(100_000);
+    const sid = run(s, "r0", longPrompt);
+    run(s, "r1", longPrompt, sid);
+    run(s, "r2", longPrompt, sid);
+    run(s, "r3", longPrompt, sid);
+
+    const first = tryAutoCompact(s, sid, 40_000);
+    expect(first.ok).toBe(true);
+
+    // Add more turns so compactableTurns >= 2 (needed to reach guard 4)
+    run(s, "r4", longPrompt, sid);
+    run(s, "r5", longPrompt, sid);
+
+    const second = tryAutoCompact(s, sid, 40_000);
+    expect(second.ok).toBe(false);
+    expect(second.reason).toContain("hysteresis");
+  });
+
+  it("auto-compacts with custom budget", async () => {
+    const s = await makeStore();
+    const sid = run(s, "r0", "x".repeat(110));
+    run(s, "r1", "x".repeat(110), sid);
+    run(s, "r2", "x".repeat(110), sid);
+    const res = tryAutoCompact(s, sid, 100);
+    expect(res.ok).toBe(true);
   });
 });
 
