@@ -13,6 +13,7 @@ import {
   redact,
   truncateTitle,
 } from "./storage";
+import { buildPriorTurnsFromStore } from "./runs";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
@@ -727,6 +728,62 @@ describe("session_compacts (S7-T5)", () => {
     expect(s.getSessionCompacts(sessionId)).toHaveLength(0);
 
     expect(s.deleteSessionCompact("no-such")).toBe(false);
+  });
+});
+
+describe("buildPriorTurnsFromStore (S7-T6)", () => {
+  it("returns empty array for unknown session", async () => {
+    const s = await store();
+    expect(buildPriorTurnsFromStore(s, "no-such")).toEqual([]);
+  });
+
+  it("builds prior turns without compacts", async () => {
+    const s = await store();
+    const r0 = s.createRun({ id: "pt-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "first" });
+    const sid = r0.sessionId!;
+    s.createRun({ id: "pt-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "second", sessionId: sid });
+
+    const turns = buildPriorTurnsFromStore(s, sid);
+    expect(turns).toHaveLength(2);
+    expect(turns[0]!.turnIndex).toBe(0);
+    expect(turns[0]!.prompt).toBe("first");
+    expect(turns[1]!.turnIndex).toBe(1);
+    expect(turns[1]!.prompt).toBe("second");
+  });
+
+  it("replaces compacted turns with a single elided entry using compact summary", async () => {
+    const s = await store();
+    const r0 = s.createRun({ id: "ptc-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "alpha" });
+    const sid = r0.sessionId!;
+    s.createRun({ id: "ptc-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "beta", sessionId: sid });
+    s.createRun({ id: "ptc-2", mode: "single", repositoryPath: "/tmp/repo", prompt: "gamma", sessionId: sid });
+
+    const cmp = s.compactSession(sid); // compacts turns 0-1
+
+    const turns = buildPriorTurnsFromStore(s, sid);
+    // Should have: [elided entry for compact 0-1, verbatim entry for turn 2]
+    expect(turns).toHaveLength(2);
+    expect(turns[0]!.turnIndex).toBe(0);
+    expect(turns[0]!.elided).toBe(true);
+    expect(turns[0]!.summary).toBe(cmp.summary);
+    expect(turns[0]!.prompt).toBe("");
+    expect(turns[1]!.turnIndex).toBe(2);
+    expect(turns[1]!.elided).toBeUndefined();
+    expect(turns[1]!.prompt).toBe("gamma");
+  });
+
+  it("passes non-compacted turns verbatim when no compacts exist", async () => {
+    const s = await store();
+    const r0 = s.createRun({ id: "ptnc-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "only" });
+    const sid = r0.sessionId!;
+    s.createRun({ id: "ptnc-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "second", sessionId: sid });
+
+    // No compact created
+    const turns = buildPriorTurnsFromStore(s, sid);
+    expect(turns).toHaveLength(2);
+    expect(turns[0]!.elided).toBeUndefined();
+    expect(turns[1]!.elided).toBeUndefined();
+    expect(turns[1]!.prompt).toBe("second");
   });
 });
 

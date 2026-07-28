@@ -390,6 +390,23 @@ export class RunRegistry {
   }
 
   /**
+   * Build priorTurns for session continuation, using compact summaries
+   * for any turns covered by a session compact (S7-T6).
+   *
+   * Turns covered by a compact are replaced by a single elided entry with
+   * the compact's summary. Non-compacted turns pass through verbatim with
+   * their prompt.
+   */
+  private buildPriorTurns(sessionId: string): Array<{
+    turnIndex: number;
+    prompt: string;
+    summary?: string;
+    elided?: boolean;
+  }> {
+    return buildPriorTurnsFromStore(this.store, sessionId);
+  }
+
+  /**
    * Evaluate a Solo/Co-lab transition for a session and, if it fires, persist
    * the new collaboration state as a session-config revision.
    *
@@ -827,6 +844,12 @@ export class RunRegistry {
   ): Promise<void> {
     const registry = createRegistry(this.adapters());
 
+    // Build session continuation context when continuing an existing session
+    const turnIndex = input.sessionId
+      ? this.store.getRun(runId)?.turnIndex ?? 0
+      : undefined;
+    const priorTurns = input.sessionId ? this.buildPriorTurns(input.sessionId) : undefined;
+
     try {
       const report: BremioRunReport = input.mode === "single"
         ? await runSingleAgent({
@@ -841,6 +864,9 @@ export class RunRegistry {
             ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
             ...(input.workspaceStrategy ? { workspaceStrategy: input.workspaceStrategy } : {}),
             ...(input.controlMode ? { controlMode: input.controlMode } : {}),
+            ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+            ...(turnIndex !== undefined ? { turnIndex } : {}),
+            ...(priorTurns !== undefined ? { priorTurns } : {}),
             hooks: {
               onStart: (id) =>
                 this.#emit(runId, { kind: "status", message: `${id} started`, agentId: id }),
@@ -861,6 +887,9 @@ export class RunRegistry {
             ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
             ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
             ...(input.controlMode ? { controlMode: input.controlMode } : {}),
+            ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+            ...(turnIndex !== undefined ? { turnIndex } : {}),
+            ...(priorTurns !== undefined ? { priorTurns } : {}),
             hooks: {
               onLeadStart: (id) =>
                 this.#emit(runId, { kind: "lead", message: `lead ${id} planning`, agentId: id }),
@@ -1084,6 +1113,65 @@ export class RunRegistry {
       // artifact bookkeeping is best-effort; it must never fail a finished run
     }
   }
+}
+
+/**
+ * Build priorTurns for session continuation, using compact summaries
+ * for any turns covered by a session compact (S7-T6).
+ *
+ * Turns covered by a compact are replaced by a single elided entry with
+ * the compact's summary. Non-compacted turns pass through verbatim with
+ * their prompt.
+ *
+ * Exported for testing.
+ */
+export function buildPriorTurnsFromStore(
+  store: RunStore,
+  sessionId: string,
+): Array<{
+  turnIndex: number;
+  prompt: string;
+  summary?: string;
+  elided?: boolean;
+}> {
+  const detail = store.sessionDetail(sessionId);
+  if (!detail || detail.turns.length === 0) return [];
+
+  const compacts = store.getSessionCompacts(sessionId);
+  const priorTurns: Array<{
+    turnIndex: number;
+    prompt: string;
+    summary?: string;
+    elided?: boolean;
+  }> = [];
+
+  const compactedTurns = new Set<number>();
+  for (const c of compacts) {
+    for (let i = c.turnRangeStart; i <= c.turnRangeEnd; i++) compactedTurns.add(i);
+  }
+
+  for (const turn of detail.turns) {
+    if (compactedTurns.has(turn.turnIndex)) {
+      const compact = compacts.find(
+        (c) => turn.turnIndex >= c.turnRangeStart && turn.turnIndex <= c.turnRangeEnd,
+      );
+      if (compact && turn.turnIndex === compact.turnRangeStart) {
+        priorTurns.push({
+          turnIndex: compact.turnRangeStart,
+          prompt: "",
+          summary: compact.summary,
+          elided: true,
+        });
+      }
+    } else {
+      priorTurns.push({
+        turnIndex: turn.turnIndex,
+        prompt: turn.prompt,
+      });
+    }
+  }
+
+  return priorTurns;
 }
 
 function summarize(report: BremioRunReport): string {

@@ -1561,6 +1561,33 @@ Rules:
 
 **Verification**
 
+### S7-T6 — Provider-native compact integration
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T12:20 → 13:56
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T6
+- **status:** done
+
+**Did**
+- Added `buildPriorTurnsFromStore()` exported function in `runs.ts` — reads session compacts and builds `priorTurns` array where compacted turns are replaced by a single elided entry with the compact's summary
+- Added private `buildPriorTurns()` method on `RunRegistry` that delegates to the exported function
+- Updated daemon `#execute()` to pass `sessionId`, `turnIndex`, and `priorTurns` to both `runSingleAgent()` and `runBremio()` when continuing an existing session — previously the daemon path had **no** session continuation support
+- Updated CLI `continueSessionCommand` in `session.ts` to read compacts and build compact-aware `priorTurns` instead of the naive per-turn mapping
+
+**Decided**
+- Compacted turns are replaced by a single `elided: true` priorTurn entry per compact at the start of its turn range — avoids repeating the same multi-turn summary for every compacted turn
+- The exported `buildPriorTurnsFromStore()` function makes the compact-aware logic testable without spinning up a full daemon
+- No changes to the adapter SDK or harness: the compact integration is at the store → orchestrator boundary, which is "provider-native" in the sense that the adapter receives compacted context through its existing `startRun`/`resumeRun` path
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- 4 new storage tests in `buildPriorTurnsFromStore (S7-T6)` describe: unknown session returns empty, no-compact build, compact replacement, non-compacted pass-through
+- 62/62 storage tests, 51/51 daemon tests, 25/25 CLI session tests — all pass
+- Red-check: disabled the compactedTurns loop → "replaces compacted turns" test fails with 3 verbatim entries instead of 2 (1 elided + 1 verbatim). Restored.
+
+**Blocked / handed off**
+- None
+
 ### S7-T5 — Compact: summary artifact + manual command
 - **agent:** Claude (opencode)
 - **time:** 2026-07-28T11:35 → 12:15

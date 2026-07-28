@@ -400,12 +400,35 @@ export async function continueSessionCommand(options: {
     return 1;
   }
 
-  const priorTurns = (detail.turns ?? []).map((t: any) => ({
-    turnIndex: t.turnIndex,
-    prompt: t.prompt,
-    finalText: t.summary,
-    summary: t.summary,
-  }));
+  // Build priorTurns with compact summaries (S7-T6)
+  const compacts = store.getSessionCompacts(id);
+  const compactedTurns = new Set<number>();
+  for (const c of compacts) {
+    for (let i = c.turnRangeStart; i <= c.turnRangeEnd; i++) compactedTurns.add(i);
+  }
+  const priorTurns: Array<{ turnIndex: number; prompt: string; finalText?: string; summary?: string; elided?: boolean }> = [];
+  for (const turn of detail.turns) {
+    if (compactedTurns.has(turn.turnIndex)) {
+      const compact = compacts.find(
+        (c) => turn.turnIndex >= c.turnRangeStart && turn.turnIndex <= c.turnRangeEnd,
+      );
+      if (compact && turn.turnIndex === compact.turnRangeStart) {
+        priorTurns.push({
+          turnIndex: compact.turnRangeStart,
+          prompt: "",
+          summary: compact.summary,
+          elided: true,
+        });
+      }
+    } else {
+      priorTurns.push({
+        turnIndex: turn.turnIndex,
+        prompt: turn.prompt,
+        finalText: turn.summary,
+        summary: turn.summary,
+      });
+    }
+  }
 
   const latestTurn = (detail.turns ?? []).at(-1);
   const providerSessionId = latestTurn?.sessionId;
