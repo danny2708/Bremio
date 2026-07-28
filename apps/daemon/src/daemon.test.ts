@@ -919,4 +919,171 @@ describe("multi-client SSE fan-out (S4-T8)", () => {
       expect(body.error).toContain("no config");
     });
   });
+
+  describe("context items", () => {
+    it("creates and lists context items for a session", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run = store.createRun({ id: "ctx-test", mode: "single", repositoryPath: "/tmp/repo", prompt: "ctx" });
+      const sessionId = run.sessionId!;
+
+      const createRes = await call(await daemon(registry), `/sessions/${sessionId}/context-items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "file", source: "/tmp/repo/src/main.ts" }),
+      });
+      expect(createRes.status).toBe(201);
+      const createBody = await createRes.json() as { contextItem: { id: string; type: string; source: string; enabled: boolean; tokensEstimated?: number } };
+      expect(createBody.contextItem.type).toBe("file");
+      expect(createBody.contextItem.source).toBe("/tmp/repo/src/main.ts");
+      expect(createBody.contextItem.enabled).toBe(true);
+      expect(createBody.contextItem.tokensEstimated).toBeGreaterThan(0);
+
+      const listRes = await call(await daemon(registry), `/sessions/${sessionId}/context-items`);
+      expect(listRes.status).toBe(200);
+      const listBody = await listRes.json() as { contextItems: Array<{ id: string }> };
+      expect(listBody.contextItems.length).toBe(1);
+      expect(listBody.contextItems[0]!.id).toBe(createBody.contextItem.id);
+    });
+
+    it("deletes a context item", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run = store.createRun({ id: "ctx-del", mode: "single", repositoryPath: "/tmp/repo", prompt: "ctx" });
+      const sessionId = run.sessionId!;
+
+      const handle = await daemon(registry);
+      const createRes = await call(handle, `/sessions/${sessionId}/context-items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "note", source: "a note" }),
+      });
+      const item = (await createRes.json() as { contextItem: { id: string } }).contextItem;
+
+      const delRes = await call(handle, `/sessions/${sessionId}/context-items/${item.id}`, {
+        method: "DELETE",
+      });
+      expect(delRes.status).toBe(200);
+
+      const listRes = await call(handle, `/sessions/${sessionId}/context-items`);
+      const listBody = await listRes.json() as { contextItems: unknown[] };
+      expect(listBody.contextItems).toHaveLength(0);
+    });
+
+    it("returns 404 for deleting a non-existent context item", async () => {
+      const handle = await daemon();
+      const res = await call(handle, "/sessions/nonexistent-session/context-items/nonexistent-item", {
+        method: "DELETE",
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("toggles enabled state on a context item", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run = store.createRun({ id: "ctx-tog", mode: "single", repositoryPath: "/tmp/repo", prompt: "ctx" });
+      const sessionId = run.sessionId!;
+
+      const handle = await daemon(registry);
+      const createRes = await call(handle, `/sessions/${sessionId}/context-items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "url", source: "https://example.com" }),
+      });
+      const item = (await createRes.json() as { contextItem: { id: string; enabled: boolean } }).contextItem;
+      expect(item.enabled).toBe(true);
+
+      const toggleRes = await call(handle, `/sessions/${sessionId}/context-items/${item.id}/enabled`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(toggleRes.status).toBe(200);
+      const toggled = await toggleRes.json() as { contextItem: { enabled: boolean } };
+      expect(toggled.contextItem.enabled).toBe(false);
+    });
+
+    it("returns context metrics for a session (S7-T4)", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run = store.createRun({ id: "ctx-metrics", mode: "single", repositoryPath: "/tmp/repo", prompt: "ctx" });
+      const sessionId = run.sessionId!;
+
+      const handle = await daemon(registry);
+      store.saveContextItem({ sessionId, type: "file", source: "/a.txt", tokensEstimated: 50 });
+      store.saveContextItem({ sessionId, type: "file", source: "/b.txt", tokensEstimated: 150, enabled: false });
+      store.saveContextItem({ sessionId, type: "image", source: "/img.png", tokensEstimated: 300 });
+
+      const res = await call(handle, `/sessions/${sessionId}/context-metrics`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { metrics: { totalTokens: number; measurementMethod: string; enabledItemCount: number; totalItemCount: number } };
+      expect(body.metrics.totalTokens).toBe(350); // 50 + 300 (disabled excluded)
+      expect(body.metrics.measurementMethod).toBe("estimated");
+      expect(body.metrics.enabledItemCount).toBe(2);
+      expect(body.metrics.totalItemCount).toBe(3);
+    });
+  });
+
+  describe("compact (S7-T5)", () => {
+    it("POST /sessions/:id/compact creates a compact and returns it", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run0 = store.createRun({ id: "cr-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "compact test turn 0" });
+      const sessionId = run0.sessionId!;
+      store.createRun({ id: "cr-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "compact test turn 1", sessionId });
+
+      const handle = await daemon(registry);
+      const res = await call(handle, `/sessions/${sessionId}/compact`, { method: "POST" });
+      expect(res.status).toBe(201);
+      const body = await res.json() as { compact: { id: string; turnRangeStart: number; turnRangeEnd: number; summary: string; tokenCount: number } };
+      expect(body.compact.turnRangeStart).toBe(0);
+      expect(body.compact.turnRangeEnd).toBe(0);
+      expect(body.compact.summary).toContain("Turn 0");
+      expect(body.compact.tokenCount).toBeGreaterThan(0);
+    });
+
+    it("POST /sessions/:id/compact returns 409 for a session with no runs", async () => {
+      const registry = await freshRegistry();
+      const handle = await daemon(registry);
+      const res = await call(handle, "/sessions/nonexistent/compact", { method: "POST" });
+      expect(res.status).toBe(409);
+    });
+
+    it("GET /sessions/:id/compacts lists compacts", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run0 = store.createRun({ id: "cl-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "list compact" });
+      const sessionId = run0.sessionId!;
+      store.createRun({ id: "cl-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "list compact 1", sessionId });
+      store.compactSession(sessionId);
+
+      const handle = await daemon(registry);
+      const res = await call(handle, `/sessions/${sessionId}/compacts`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { compacts: unknown[] };
+      expect(body.compacts).toHaveLength(1);
+    });
+
+    it("DELETE /sessions/:id/compacts/:compactId removes a compact", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run0 = store.createRun({ id: "cd-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "delete compact" });
+      const sessionId = run0.sessionId!;
+      store.createRun({ id: "cd-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "delete compact 1", sessionId });
+      const cmp = store.compactSession(sessionId);
+
+      const handle = await daemon(registry);
+      const res = await call(handle, `/sessions/${sessionId}/compacts/${cmp.id}`, { method: "DELETE" });
+      expect(res.status).toBe(200);
+      const body = await res.json() as { removed: boolean };
+      expect(body.removed).toBe(true);
+    });
+
+    it("DELETE returns 404 for unknown compact id", async () => {
+      const registry = await freshRegistry();
+      const handle = await daemon(registry);
+      const res = await call(handle, "/sessions/some-session/compacts/no-such-compact", { method: "DELETE" });
+      expect(res.status).toBe(404);
+    });
+  });
 });

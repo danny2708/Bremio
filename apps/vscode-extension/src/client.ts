@@ -290,7 +290,16 @@ export class BremioClient {
     return body;
   }
 
-  adapters(): Promise<{ adapters: Array<{ id: string; health: { status: string; detail?: string }; leadEligible: boolean }> }> {
+  adapters(): Promise<{
+    adapters: Array<{
+      id: string;
+      health: { status: string; detail?: string };
+      leadEligible: boolean;
+      /** The daemon has always sent this; the type dropped it, so the panel
+       *  could not gate on `vision` and hard-coded the answer instead. */
+      capabilities?: Record<string, boolean>;
+    }>;
+  }> {
     return this.#call("/adapters");
   }
 
@@ -327,6 +336,38 @@ export class BremioClient {
 
   session(id: string): Promise<{ session: SessionDetail }> {
     return this.#call(`/sessions/${encodeURIComponent(id)}`);
+  }
+
+  contextItems(sessionId: string): Promise<{ contextItems: Array<{ id: string; type: string; source: string; addedAt: string; scope: string; tokensEstimated?: number; enabled: boolean }> }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/context-items`);
+  }
+
+  createContextItem(sessionId: string, type: string, source: string): Promise<{ contextItem: { id: string; type: string; source: string; enabled: boolean } }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/context-items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, source }),
+    });
+  }
+
+  deleteContextItem(sessionId: string, itemId: string): Promise<{ removed: boolean }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/context-items/${encodeURIComponent(itemId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  compactSession(sessionId: string): Promise<{ compact: { id: string; summary: string; tokenCount: number } }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/compact`, {
+      method: "POST",
+    });
+  }
+
+  updateContextItemEnabled(sessionId: string, itemId: string, enabled: boolean): Promise<{ contextItem: { id: string; enabled: boolean } }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/context-items/${encodeURIComponent(itemId)}/enabled`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
   }
 
   startRun(request: StartRunRequest): Promise<{ run: { id: string } }> {

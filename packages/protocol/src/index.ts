@@ -72,6 +72,15 @@ export {
 } from "./session-context";
 
 export {
+  ContextItemSchema,
+  ContextItemTypeSchema,
+  ContextItemScopeSchema,
+  type ContextItem,
+  type ContextItemType,
+  type ContextItemScope,
+} from "./context-item";
+
+export {
   MINIMUM_CLIENT_PROTOCOL,
   PROTOCOL_VERSION,
   checkProtocolCompatibility,

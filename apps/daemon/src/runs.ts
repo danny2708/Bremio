@@ -25,6 +25,9 @@ import {
   evaluateTransition,
   effectiveMode,
   defaultHysteresisFloor,
+  shouldAutoCompact,
+  DEFAULT_TRIGGER_FRACTION,
+  type AutoCompactDecision,
   type CollaborationState,
   type TransitionApproval,
   type TransitionEvent,
@@ -33,8 +36,12 @@ import {
 import {
   isTerminal,
   type AuditEvent,
+  type ContextItemType,
+  type CreateContextItemInput,
   type CreateSessionConfigInput,
   type PersistedApprovalRequest,
+  type PersistedContextItem,
+  type PersistedSessionCompact,
   type PersistedRun,
   type PersistedRunEvent,
   type PersistedSession,
@@ -307,6 +314,123 @@ export class RunRegistry {
       data: { configRevision: config.revision },
     });
     return config;
+  }
+
+  listContextItems(sessionId: string): PersistedContextItem[] {
+    return this.store.listContextItems(sessionId);
+  }
+
+  getContextItem(id: string): PersistedContextItem | undefined {
+    return this.store.getContextItem(id);
+  }
+
+  createContextItem(input: CreateContextItemInput): PersistedContextItem {
+    const item = this.store.saveContextItem(input);
+    this.#publishSession(input.sessionId, {
+      kind: "session-updated",
+      sessionId: input.sessionId,
+      data: { contextItemAdded: item.id },
+    });
+    return item;
+  }
+
+  deleteContextItem(id: string): boolean {
+    const item = this.store.getContextItem(id);
+    if (!item) return false;
+    const removed = this.store.deleteContextItem(id);
+    if (removed) {
+      this.#publishSession(item.sessionId, {
+        kind: "session-updated",
+        sessionId: item.sessionId,
+        data: { contextItemRemoved: id },
+      });
+    }
+    return removed;
+  }
+
+  updateContextItemEnabled(id: string, enabled: boolean): PersistedContextItem | undefined {
+    const item = this.store.updateContextItemEnabled(id, enabled);
+    if (item) {
+      this.#publishSession(item.sessionId, {
+        kind: "session-updated",
+        sessionId: item.sessionId,
+        data: { contextItemUpdated: id, enabled },
+      });
+    }
+    return item;
+  }
+
+  getSessionContextMetrics(sessionId: string): { totalTokens: number; measurementMethod: string; enabledItemCount: number; totalItemCount: number } {
+    return this.store.getSessionContextMetrics(sessionId);
+  }
+
+  compactSession(sessionId: string): PersistedSessionCompact {
+    const compact = this.store.compactSession(sessionId);
+    this.#publishSession(sessionId, {
+      kind: "session-updated",
+      sessionId,
+      data: { compactId: compact.id, turnRange: [compact.turnRangeStart, compact.turnRangeEnd] },
+    });
+    return compact;
+  }
+
+  getSessionCompacts(sessionId: string): PersistedSessionCompact[] {
+    return this.store.getSessionCompacts(sessionId);
+  }
+
+  deleteSessionCompact(id: string): boolean {
+    const compact = this.store.getSessionCompact(id);
+    if (!compact) return false;
+    const removed = this.store.deleteSessionCompact(id);
+    if (removed) {
+      this.#publishSession(compact.sessionId, {
+        kind: "session-updated",
+        sessionId: compact.sessionId,
+        data: { compactRemoved: id },
+      });
+    }
+    return removed;
+  }
+
+  /**
+   * Auto-compact the session if thresholds are met, before a continuation
+   * builds its prior turns.
+   *
+   * Delegates to the same `tryAutoCompact` the tests drive. This class used to
+   * carry its own copy — four private helpers plus a second `shouldAutoCompact`
+   * call with its own hard-coded budget — described in `tryAutoCompact`'s doc
+   * comment as "mirrors the logic in `RunRegistry.#autoCompactIfNeeded`". Two
+   * copies of a decision, only one of them tested, is how the reset-fraction
+   * contradiction reached production without a failing test.
+   */
+  #autoCompactIfNeeded(sessionId: string): void {
+    const decision = tryAutoCompact(this.store, sessionId, { createdBy: "auto" });
+    if (!decision.ok) return;
+    this.#publishSession(sessionId, {
+      kind: "session-updated",
+      sessionId,
+      data: { autoCompacted: true, reason: decision.reason },
+    });
+  }
+
+  /**
+   * Build priorTurns for session continuation, using compact summaries
+   * for any turns covered by a session compact (S7-T6).
+   *
+   * Before building, auto-compacts if thresholds are met (S7-T7).
+   *
+   * Turns covered by a compact are replaced by a single elided entry with
+   * the compact's summary. Non-compacted turns pass through verbatim with
+   * their prompt.
+   */
+  private buildPriorTurns(sessionId: string): Array<{
+    turnIndex: number;
+    prompt: string;
+    summary?: string;
+    elided?: boolean;
+  }> {
+    this.#autoCompactIfNeeded(sessionId);
+    return buildPriorTurnsFromStore(this.store, sessionId);
   }
 
   /**
@@ -747,6 +871,12 @@ export class RunRegistry {
   ): Promise<void> {
     const registry = createRegistry(this.adapters());
 
+    // Build session continuation context when continuing an existing session
+    const turnIndex = input.sessionId
+      ? this.store.getRun(runId)?.turnIndex ?? 0
+      : undefined;
+    const priorTurns = input.sessionId ? this.buildPriorTurns(input.sessionId) : undefined;
+
     try {
       const report: BremioRunReport = input.mode === "single"
         ? await runSingleAgent({
@@ -761,6 +891,9 @@ export class RunRegistry {
             ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
             ...(input.workspaceStrategy ? { workspaceStrategy: input.workspaceStrategy } : {}),
             ...(input.controlMode ? { controlMode: input.controlMode } : {}),
+            ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+            ...(turnIndex !== undefined ? { turnIndex } : {}),
+            ...(priorTurns !== undefined ? { priorTurns } : {}),
             hooks: {
               onStart: (id) =>
                 this.#emit(runId, { kind: "status", message: `${id} started`, agentId: id }),
@@ -781,6 +914,9 @@ export class RunRegistry {
             ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
             ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
             ...(input.controlMode ? { controlMode: input.controlMode } : {}),
+            ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+            ...(turnIndex !== undefined ? { turnIndex } : {}),
+            ...(priorTurns !== undefined ? { priorTurns } : {}),
             hooks: {
               onLeadStart: (id) =>
                 this.#emit(runId, { kind: "lead", message: `lead ${id} planning`, agentId: id }),
@@ -1004,6 +1140,120 @@ export class RunRegistry {
       // artifact bookkeeping is best-effort; it must never fail a finished run
     }
   }
+}
+
+/**
+ * Build priorTurns for session continuation, using compact summaries
+ * for any turns covered by a session compact (S7-T6).
+ *
+ * Turns covered by a compact are replaced by a single elided entry with
+ * the compact's summary. Non-compacted turns pass through verbatim with
+ * their prompt.
+ *
+ * Exported for testing.
+ */
+export function buildPriorTurnsFromStore(
+  store: RunStore,
+  sessionId: string,
+): Array<{
+  turnIndex: number;
+  prompt: string;
+  summary?: string;
+  elided?: boolean;
+}> {
+  const detail = store.sessionDetail(sessionId);
+  if (!detail || detail.turns.length === 0) return [];
+
+  const compacts = store.getSessionCompacts(sessionId);
+  const priorTurns: Array<{
+    turnIndex: number;
+    prompt: string;
+    summary?: string;
+    elided?: boolean;
+  }> = [];
+
+  const compactedTurns = new Set<number>();
+  for (const c of compacts) {
+    for (let i = c.turnRangeStart; i <= c.turnRangeEnd; i++) compactedTurns.add(i);
+  }
+
+  for (const turn of detail.turns) {
+    if (compactedTurns.has(turn.turnIndex)) {
+      const compact = compacts.find(
+        (c) => turn.turnIndex >= c.turnRangeStart && turn.turnIndex <= c.turnRangeEnd,
+      );
+      if (compact && turn.turnIndex === compact.turnRangeStart) {
+        priorTurns.push({
+          turnIndex: compact.turnRangeStart,
+          prompt: "",
+          summary: compact.summary,
+          elided: true,
+        });
+      }
+    } else {
+      priorTurns.push({
+        turnIndex: turn.turnIndex,
+        prompt: turn.prompt,
+      });
+    }
+  }
+
+  return priorTurns;
+}
+
+/**
+ * Evaluate and optionally trigger auto-compaction for a session.
+ *
+ * The single implementation: `RunRegistry.#autoCompactIfNeeded` calls this
+ * rather than keeping a parallel copy.
+ */
+export function tryAutoCompact(
+  store: RunStore,
+  sessionId: string,
+  options: { budgetTokens?: number; createdBy?: "manual" | "auto" } = {},
+): AutoCompactDecision {
+  const budgetTokens = options.budgetTokens ?? 100_000;
+  const detail = store.sessionDetail(sessionId);
+  if (!detail || detail.turns.length === 0) {
+    return { ok: false, reason: "session has no turns" };
+  }
+
+  const compacts = store.getSessionCompacts(sessionId);
+  const compactedTurns = new Set<number>();
+  let compactTokenSum = 0;
+  for (const c of compacts) {
+    for (let i = c.turnRangeStart; i <= c.turnRangeEnd; i++) compactedTurns.add(i);
+    compactTokenSum += c.tokenCount;
+  }
+
+  let nonCompactedTokens = 0;
+  for (const turn of detail.turns) {
+    if (!compactedTurns.has(turn.turnIndex)) {
+      nonCompactedTokens += Math.ceil(turn.prompt.length / 4);
+    }
+  }
+  const totalTokens = compactTokenSum + nonCompactedTokens;
+  const measurementMethod: "estimated" | "measured" = "estimated";
+
+  const runsCount = store.countSessionRuns(sessionId);
+  const latestTurnIndex = runsCount - 1;
+  let compactableTurns = 0;
+  for (let i = 0; i < latestTurnIndex; i++) {
+    if (!compactedTurns.has(i)) compactableTurns++;
+  }
+
+  const decision = shouldAutoCompact({
+    usedTokens: totalTokens,
+    budgetTokens,
+    measurementMethod,
+    compactableTurns,
+  });
+
+  if (decision.ok) {
+    store.compactSession(sessionId, options.createdBy ?? "auto");
+  }
+
+  return decision;
 }
 
 function summarize(report: BremioRunReport): string {

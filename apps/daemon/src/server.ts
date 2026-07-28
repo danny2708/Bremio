@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 import {
   CreateApprovalRequestSchema,
@@ -15,7 +16,7 @@ import {
 } from "@bremio/quota";
 import { MergeManager } from "@bremio/workspace";
 import { RunRegistry, defaultAdapters, type SessionEvent } from "./runs";
-import { isTerminal } from "./storage";
+import { isTerminal, type CreateContextItemInput, type PersistedContextItem } from "./storage";
 import { mergeRun } from "./merge";
 import { applyRunPatch, revertRunPatch } from "./apply";
 import { loadReportByRunId } from "@bremio/orchestrator";
@@ -162,6 +163,7 @@ async function handle(
         approvals: true,
         apply: true,
         revert: true,
+        compact: true,
         // No adapter exposes a safe mid-run resume, so this stays false rather
         // than offering a button that would silently start over.
         resume: false,
@@ -294,6 +296,99 @@ async function handle(
     } catch (err) {
       return sendJson(res, 400, { error: (err as Error).message });
     }
+  }
+
+  const contextItemsList = /^\/sessions\/([^/]+)\/context-items$/.exec(route);
+  if (method === "GET" && contextItemsList) {
+    const id = decodeURIComponent(contextItemsList[1] ?? "");
+    const items = registry.listContextItems(id);
+    return sendJson(res, 200, { contextItems: items });
+  }
+
+  const contextItemCreate = /^\/sessions\/([^/]+)\/context-items$/.exec(route);
+  if (method === "POST" && contextItemCreate) {
+    const id = decodeURIComponent(contextItemCreate[1] ?? "");
+    try {
+      const body = (await readJsonBody(req)) as Record<string, unknown>;
+      const input: CreateContextItemInput = { sessionId: id, type: String(body.type ?? "") as CreateContextItemInput["type"], source: String(body.source ?? ""), scope: body.scope as CreateContextItemInput["scope"], tokensEstimated: body.tokensEstimated as number | undefined, measurementMethod: body.measurementMethod as CreateContextItemInput["measurementMethod"], enabled: body.enabled as boolean | undefined };
+      if (input.tokensEstimated === undefined) {
+        let text = input.source;
+        if (input.type === "file" || input.type === "image") {
+          try {
+            text = readFileSync(input.source, "utf-8");
+          } catch {
+            text = input.source;
+          }
+        }
+        input.tokensEstimated = Math.ceil(text.length / 4);
+        input.measurementMethod = "estimated";
+      }
+      const item = registry.createContextItem(input);
+      return sendJson(res, 201, { contextItem: item });
+    } catch (err) {
+      return sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
+  const contextItemDetail = /^\/sessions\/([^/]+)\/context-items\/([^/]+)$/.exec(route);
+  if (method === "GET" && contextItemDetail) {
+    const itemId = decodeURIComponent(contextItemDetail[2] ?? "");
+    const item = registry.getContextItem(itemId);
+    if (!item) return sendJson(res, 404, { error: `unknown context item: ${itemId}` });
+    return sendJson(res, 200, { contextItem: item });
+  }
+
+  const contextItemDelete = /^\/sessions\/([^/]+)\/context-items\/([^/]+)$/.exec(route);
+  if (method === "DELETE" && contextItemDelete) {
+    const itemId = decodeURIComponent(contextItemDelete[2] ?? "");
+    const removed = registry.deleteContextItem(itemId);
+    if (!removed) return sendJson(res, 404, { error: `unknown context item: ${itemId}` });
+    return sendJson(res, 200, { removed: true });
+  }
+
+  const contextItemToggle = /^\/sessions\/([^/]+)\/context-items\/([^/]+)\/enabled$/.exec(route);
+  if (method === "PATCH" && contextItemToggle) {
+    const itemId = decodeURIComponent(contextItemToggle[2] ?? "");
+    try {
+      const body = (await readJsonBody(req)) as { enabled: boolean };
+      const item = registry.updateContextItemEnabled(itemId, body.enabled);
+      if (!item) return sendJson(res, 404, { error: `unknown context item: ${itemId}` });
+      return sendJson(res, 200, { contextItem: item });
+    } catch (err) {
+      return sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
+  const contextMetrics = /^\/sessions\/([^/]+)\/context-metrics$/.exec(route);
+  if (method === "GET" && contextMetrics) {
+    const id = decodeURIComponent(contextMetrics[1] ?? "");
+    const metrics = registry.getSessionContextMetrics(id);
+    return sendJson(res, 200, { metrics });
+  }
+
+  const sessionCompact = /^\/sessions\/([^/]+)\/compact$/.exec(route);
+  if (method === "POST" && sessionCompact) {
+    const id = decodeURIComponent(sessionCompact[1] ?? "");
+    try {
+      const compact = registry.compactSession(id);
+      return sendJson(res, 201, { compact });
+    } catch (err) {
+      return sendJson(res, 409, { error: (err as Error).message });
+    }
+  }
+
+  const sessionCompactsList = /^\/sessions\/([^/]+)\/compacts$/.exec(route);
+  if (method === "GET" && sessionCompactsList) {
+    const id = decodeURIComponent(sessionCompactsList[1] ?? "");
+    return sendJson(res, 200, { compacts: registry.getSessionCompacts(id) });
+  }
+
+  const sessionCompactDelete = /^\/sessions\/([^/]+)\/compacts\/([^/]+)$/.exec(route);
+  if (method === "DELETE" && sessionCompactDelete) {
+    const compactId = decodeURIComponent(sessionCompactDelete[2] ?? "");
+    const removed = registry.deleteSessionCompact(compactId);
+    if (!removed) return sendJson(res, 404, { error: `unknown compact: ${compactId}` });
+    return sendJson(res, 200, { removed: true });
   }
 
   const runDetail = /^\/runs\/([^/]+)$/.exec(route);

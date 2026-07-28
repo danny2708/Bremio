@@ -228,6 +228,36 @@ describe("webview", () => {
     expect(html).toContain('id="attachments"');
   });
 
+  it("offers image context buttons in the session transcript", () => {
+    // Session context items include image picker and paste/drop affordances
+    expect(html).toContain("data-context-image");
+    expect(html).toContain("Add Image");
+    // Paste handler listens for clipboard images
+    expect(html).toContain('"paste"');
+    expect(html).toContain("clipboardData?.items");
+    // Drop handler listens for image files dragged onto the context section
+    expect(html).toContain("dragover");
+    expect(html).toContain("context-items-section");
+  });
+
+  it("displays a vision degradation notice in the context items section", () => {
+    // When image context items exist and no provider has vision, the panel
+    // shows a named degradation rather than silently dropping images.
+    expect(html).toContain("getVisionNotice");
+    expect(html).toContain("visionNotice");
+    expect(html).toContain("supports vision");
+    // The notice is rendered when there are image-type context items
+    expect(html).toContain('"image"');
+  });
+
+  it("derives the vision notice from reported capabilities, not a constant", () => {
+    // It returned the "no provider supports vision" string whenever an image
+    // item existed — true of every adapter shipped today and a false claim the
+    // moment one reports vision. S7-T3 asked for a gate, so there has to be a
+    // capability read in the decision.
+    expect(html).toMatch(/a\.capabilities\s*&&\s*a\.capabilities\.vision/);
+  });
+
   it("renders every tab the panel offers", () => {
     for (const tab of ["run", "runs", "capacity", "doctor"]) {
       expect(html).toContain(`data-tab="${tab}"`);
@@ -240,6 +270,16 @@ describe("webview", () => {
     // exactly what this task removed. Brand hexes are allowed only in the
     // :root token definitions, never as a `background:` value.
     expect(html).not.toMatch(/background:\s*#[0-9a-fA-F]{3,8}/);
+  });
+
+  it("provides resize: vertical on scrollable containers", () => {
+    // S7-T8: every section that overflows should be user-resizable so the
+    // panel adapts to the content rather than bounding it to a fixed max-height.
+    // Each rule is asserted separately so a red-check can target one at a time.
+    expect(html).toContain("pre.log {");
+    expect(html).toContain("resize: vertical;");
+    expect(html).toMatch(/\.process[^}]*resize:\s*vertical;/);
+    expect(html).toMatch(/\.diff-patch[^}]*resize:\s*vertical;/);
   });
 });
 

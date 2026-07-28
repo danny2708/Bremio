@@ -260,6 +260,41 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
       case "attachActiveFile":
         attachActiveFile();
         return;
+      case "addContextItem":
+        if (typeof message.sessionId === "string" && typeof message.type === "string" && typeof message.source === "string") {
+          await addContextItem(message.sessionId, message.type, message.source);
+        }
+        return;
+      case "addContextFile":
+        if (typeof message.sessionId === "string") {
+          await addContextFile(message.sessionId);
+        }
+        return;
+      case "addContextImage":
+        if (typeof message.sessionId === "string") {
+          await addContextImage(message.sessionId);
+        }
+        return;
+      case "pasteImage":
+        if (typeof message.sessionId === "string" && typeof message.dataUrl === "string" && typeof message.fileName === "string") {
+          await handlePasteImage(message.sessionId, message.dataUrl, message.fileName);
+        }
+        return;
+      case "removeContextItem":
+        if (typeof message.sessionId === "string" && typeof message.itemId === "string") {
+          await removeContextItem(message.sessionId, message.itemId);
+        }
+        return;
+      case "toggleContextItem":
+        if (typeof message.sessionId === "string" && typeof message.itemId === "string" && typeof message.enabled === "boolean") {
+          await toggleContextItem(message.sessionId, message.itemId, message.enabled);
+        }
+        return;
+      case "compactSession":
+        if (typeof message.sessionId === "string") {
+          await compactSession(message.sessionId);
+        }
+        return;
     }
   } catch (err) {
     post({ type: "error", message: (err as Error).message });
@@ -300,11 +335,7 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
         const detail = await client.run(turn.runId, repoPath);
         events = (detail.events ?? []) as unknown as Array<Record<string, unknown>>;
       } catch {
-        // A turn whose run was pruned still belongs in the transcript; it
-        // simply has no process detail left to show.
       }
-      // Persisted events keep the agent payload under `data`; the answer lives
-      // there, not in the envelope the daemon wraps around it.
       const agentEvents = events.map((event) =>
         typeof event.data === "object" && event.data !== null
           ? { kind: event.kind, ...(event.data as Record<string, unknown>) }
@@ -312,8 +343,6 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
       );
       return {
         ...turn,
-        // `renderEvent` returns its own `kind` (the display category, e.g.
-        // "tool_use"), which is the one the transcript filters on.
         events: agentEvents.map((event) =>
           renderEvent({ type: String(event.kind ?? "log"), ...event } as never),
         ),
@@ -322,7 +351,15 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
     }),
   );
 
-  post({ type: "sessionDetail", session, turns });
+  let contextItems: Array<{ id: string; type: string; source: string; enabled: boolean }> = [];
+  try {
+    const result = await client.contextItems(sessionId);
+    contextItems = result.contextItems;
+  } catch {
+    // context items are optional — session may have none
+  }
+
+  post({ type: "sessionDetail", session, turns, contextItems });
 }
 
 async function sendCapacity(): Promise<void> {
@@ -396,6 +433,74 @@ function describeFile(uri: vscode.Uri): { path: string; label: string } {
   return { path: full, label: repoPath ? path.relative(repoPath, full) || full : full };
 }
 
+async function addContextItem(sessionId: string, type: string, source: string): Promise<void> {
+  if (!source) {
+    // empty source means let user pick a file
+    const uris = await vscode.window.showOpenDialog({ canSelectFiles: true });
+    if (!uris || uris.length === 0 || !uris[0]) return;
+    const desc = describeFile(uris[0]);
+    await client.createContextItem(sessionId, "file", desc.path);
+  } else {
+    await client.createContextItem(sessionId, type, source);
+  }
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function addContextFile(sessionId: string): Promise<void> {
+  const uris = await vscode.window.showOpenDialog({ canSelectFiles: true });
+  if (!uris || uris.length === 0 || !uris[0]) return;
+  const desc = describeFile(uris[0]);
+  await client.createContextItem(sessionId, "file", desc.path);
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function addContextImage(sessionId: string): Promise<void> {
+  const uris = await vscode.window.showOpenDialog({
+    canSelectFiles: true,
+    filters: { Images: ["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"] },
+  });
+  if (!uris || uris.length === 0 || !uris[0]) return;
+  const desc = describeFile(uris[0]);
+  await client.createContextItem(sessionId, "image", desc.path);
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function handlePasteImage(sessionId: string, dataUrl: string, fileName: string): Promise<void> {
+  // Save the pasted/dropped image to the workspace's .bremio/context-images/ folder.
+  const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+  const buf = Buffer.from(base64, "base64");
+  const repoPath = currentRepo();
+  if (!repoPath) return;
+  const imagesDir = path.join(repoPath, ".bremio", "context-images");
+  await vscode.workspace.fs.createDirectory(vscode.Uri.file(imagesDir));
+  const target = path.join(imagesDir, fileName);
+  await vscode.workspace.fs.writeFile(vscode.Uri.file(target), new Uint8Array(buf));
+  await client.createContextItem(sessionId, "image", target);
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function removeContextItem(sessionId: string, itemId: string): Promise<void> {
+  await client.deleteContextItem(sessionId, itemId);
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function toggleContextItem(sessionId: string, itemId: string, enabled: boolean): Promise<void> {
+  await client.updateContextItemEnabled(sessionId, itemId, enabled);
+  const result = await client.contextItems(sessionId);
+  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function compactSession(sessionId: string): Promise<void> {
+  await client.compactSession(sessionId);
+  // Refresh the session detail to update context items / compacts
+  await sendSessionDetail(sessionId);
+}
+
 async function startRun(message: Record<string, unknown>): Promise<void> {
   const repoPath = String(message.repoPath ?? "").trim() || currentRepo();
   const typed = String(message.prompt ?? "").trim();
@@ -408,11 +513,50 @@ async function startRun(message: Record<string, unknown>): Promise<void> {
   const attached = Array.isArray(message.attachments)
     ? (message.attachments as string[]).filter((entry) => typeof entry === "string")
     : [];
-  const prompt = attached.length
-    ? [typed, "", "Context files (read these first):", ...attached.map((file) => `- ${file}`)].join(
-        "\n",
-      )
-    : typed;
+
+  // Collect enabled context items of type "image" for vision-gated inclusion
+  const sessionId = typeof message.sessionId === "string" && message.sessionId ? message.sessionId : "";
+  let imageContextPaths: string[] = [];
+  if (sessionId) {
+    try {
+      const { contextItems } = await client.contextItems(sessionId);
+      imageContextPaths = contextItems
+        .filter((item) => item.type === "image" && item.enabled)
+        .map((item) => item.source);
+    } catch {
+      // context items are optional
+    }
+  }
+  const hasImages = imageContextPaths.length > 0;
+  const agentId = String(message.agentId ?? "claude");
+  // Ask what this agent can actually do. The note below used to assert "this
+  // provider does not have vision" unconditionally — true of every adapter
+  // shipped today, and a lie the first time one reports otherwise. S7-T3 asked
+  // for a vision *gate*; a constant is not one.
+  let agentHasVision = false;
+  if (hasImages) {
+    try {
+      const { adapters } = await client.adapters();
+      agentHasVision = Boolean(adapters.find((a) => a.id === agentId)?.capabilities?.vision);
+    } catch {
+      // Unknown capability is not evidence of vision — keep the degraded path.
+    }
+  }
+  const promptLines = [typed];
+  if (attached.length > 0) {
+    promptLines.push("", "Context files (read these first):");
+    promptLines.push(...attached.map((file) => `- ${file}`));
+  }
+  if (hasImages) {
+    promptLines.push(
+      "",
+      agentHasVision
+        ? "Image context files:"
+        : "Image context files (attached as file references — this provider does not have vision, so these files will be read as text/referenced by path):",
+    );
+    promptLines.push(...imageContextPaths.map((file) => `- ${file}`));
+  }
+  const prompt = promptLines.join("\n");
 
   // An unrecognised mode falls back to Single rather than to whatever the
   // daemon would default to — but `auto` must survive, or the panel would
@@ -424,7 +568,7 @@ async function startRun(message: Record<string, unknown>): Promise<void> {
     mode,
     repoPath,
     prompt,
-    agentId: String(message.agentId ?? "claude"),
+    agentId,
     ...(message.workerId ? { workerId: String(message.workerId) } : {}),
     ...(typeof message.maxConcurrency === "number"
       ? { maxConcurrency: message.maxConcurrency }

@@ -30,3 +30,10 @@ export {
   type ResolveApprovalInput,
   type EvaluateTransitionInput,
 } from "./transition";
+
+export {
+  shouldAutoCompact,
+  DEFAULT_TRIGGER_FRACTION,
+  type AutoCompactDecision,
+  type AutoCompactInput,
+} from "./compact";

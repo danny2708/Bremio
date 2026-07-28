@@ -741,7 +741,7 @@ button.ghost:hover { border-color: var(--bremio-primary); color: var(--text); ba
 pre.log {
   background: var(--vscode-textCodeBlock-background, var(--surface-raised));
   border: 1px solid var(--border); border-radius: 6px;
-  padding: 10px; max-height: 320px; overflow: auto; font-size: 11px;
+  padding: 10px; max-height: 320px; overflow: auto; resize: vertical; font-size: 11px;
   font-family: var(--vscode-editor-font-family, monospace); white-space: pre-wrap; margin: 0;
 }
 .log-line { display: block; }
@@ -772,7 +772,7 @@ pre.log {
 .bubble.response { font-size: 13px; line-height: 1.5; }
 /* The process log is reference material, not the answer: dimmed, monospaced
  * and scrollable so a thousand tool calls cannot push the reply off screen. */
-.process { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; color: var(--muted); max-height: 260px; overflow: auto; margin-bottom: 8px; }
+.process { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; color: var(--muted); max-height: 260px; overflow: auto; resize: vertical; min-height: 48px; margin-bottom: 8px; }
 .process summary { cursor: pointer; }
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
@@ -781,7 +781,7 @@ pre.log {
 .diff-viewer { margin-bottom: 10px; }
 .diff-header { margin-bottom: 8px; }
 .diff-stat { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; padding: 6px 8px; background: var(--surface-raised); border-radius: 4px; }
-.diff-patch { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.6; background: var(--vscode-textCodeBlock-background, var(--surface-raised)); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 480px; overflow: auto; white-space: pre; margin: 0 0 10px; }
+.diff-patch { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.6; background: var(--vscode-textCodeBlock-background, var(--surface-raised)); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 480px; overflow: auto; resize: vertical; white-space: pre; margin: 0 0 10px; }
 .diff-patch div { min-height: 1em; }
 .diff-add { background: rgba(55, 200, 55, 0.12); color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950); }
 .diff-remove { background: rgba(200, 55, 55, 0.12); color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149); }
@@ -1027,7 +1027,17 @@ window.addEventListener("message", (event) => {
     $("tab-sessions").innerHTML = renderSessionList(message.sessions);
   }
   if (message.type === "sessionDetail") {
-    $("tab-sessions").innerHTML = renderTranscript(message.session, message.turns);
+    storedContextItems = message.contextItems || [];
+    currentSessionId = message.session.id;
+    $("tab-sessions").innerHTML = renderTranscript(message.session, message.turns, storedContextItems, getVisionNotice());
+  }
+  if (message.type === "contextItemsUpdated") {
+    storedContextItems = message.contextItems || [];
+    const transcript = $("tab-sessions").querySelector("#continue-wrap");
+    if (transcript) {
+      const ctxSection = $("tab-sessions").querySelector("#context-items-section");
+      if (ctxSection) ctxSection.replaceWith(renderContextItems(currentSessionId, storedContextItems, getVisionNotice()));
+    }
   }
   if (message.type === "runStarted") {
     activeRunId = message.id;
@@ -1149,6 +1159,52 @@ function renderSessionList(sessions) {
   }).join("");
 }
 
+function renderContextItems(sessionId, items, visionNotice) {
+  const sid = escapeHtml(sessionId);
+  const notice = visionNotice ? '<div class="banner warn" style="margin-bottom:6px;font-size:12px">' + escapeHtml(visionNotice) + '</div>' : "";
+  const hasTokens = items && items.some((i) => i.tokensEstimated !== undefined);
+  const totalTokens = hasTokens
+    ? items.filter((i) => i.enabled).reduce((s, i) => s + (i.tokensEstimated ?? 0), 0)
+    : 0;
+  const tokenSummary = hasTokens
+    ? '<span class="muted" style="font-size:11px">' + totalTokens + 't · estimated</span>'
+    : "";
+  if (!items || items.length === 0) {
+    return '<div id="context-items-section" style="margin-top:16px">'
+      + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items</div>'
+      + '<div class="secondary" style="margin-bottom:8px">No context items for this session.</div>'
+      + notice
+      + '<button class="ghost" data-context-add data-session="' + sid + '">Add File</button>'
+      + '<button class="ghost" data-context-image data-session="' + sid + '">Add Image</button>'
+      + '<button class="ghost" data-context-file data-session="' + sid + '">Add Current File</button>'
+      + '<button class="ghost" data-compact-session="' + sid + '" style="margin-left:4px">Compact</button>'
+      + '</div>';
+  }
+  const chips = items.map(function(item, idx) {
+    const isImage = item.type === "image";
+    const tokenLabel = item.tokensEstimated !== undefined
+      ? '<span class="muted" style="font-size:10px;margin-left:4px">' + item.tokensEstimated + 't</span>'
+      : "";
+    return '<span class="chip' + (item.enabled ? '' : ' disabled') + '" title="' + escapeHtml(item.source) + '">'
+      + '<span class="codicon codicon-' + (isImage ? 'file-media' : 'file') + '"></span>'
+      + '<span class="name">' + escapeHtml(item.source.slice(Math.max(item.source.lastIndexOf("/"), item.source.lastIndexOf("\\\\")) + 1)) + '</span>'
+      + tokenLabel
+      + '<button data-context-toggle="' + idx + '" data-item="' + escapeHtml(item.id) + '" data-enabled="' + (item.enabled ? '1' : '0') + '" aria-label="Toggle">' + (item.enabled ? '●' : '○') + '</button>'
+      + '<button data-context-remove="' + idx + '" data-item="' + escapeHtml(item.id) + '" aria-label="Remove">x</button>'
+      + '</span>';
+  }).join("");
+  return '<div id="context-items-section" style="margin-top:16px">'
+    + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items (' + items.length + ')' + tokenSummary + '</div>'
+    + notice
+    + '<div>' + chips + '</div>'
+    + '<div style="margin-top:8px">'
+    + '<button class="ghost" data-context-add data-session="' + sid + '">Add File</button>'
+    + '<button class="ghost" data-context-image data-session="' + sid + '">Add Image</button>'
+    + '<button class="ghost" data-context-file data-session="' + sid + '">Add Current File</button>'
+    + '<button class="ghost" data-compact-session="' + sid + '" style="margin-left:4px">Compact</button>'
+    + '</div></div>';
+}
+
 /**
  * A session as a conversation: each turn is the user's prompt, then what the
  * agent did (collapsed), then what it actually said.
@@ -1156,7 +1212,7 @@ function renderSessionList(sessions) {
  * The response is the point. It is rendered undimmed at full width, because a
  * run whose whole value was the reply used to show only "completed · 0 files".
  */
-function renderTranscript(session, turns) {
+function renderTranscript(session, turns, contextItems, visionNotice) {
   let out = '<div class="row" style="margin-bottom:10px">'
     + '<button class="ghost" data-action="back-to-sessions">← Sessions</button>'
     + '<strong style="margin-left:8px">' + escapeHtml(session.title || session.id) + "</strong>"
@@ -1190,6 +1246,8 @@ function renderTranscript(session, turns) {
     out += '<div class="turn-foot">' + escapeHtml(turn.status) + " · run " + escapeHtml(turn.runId) + "</div>";
     out += "</div>";
   }
+
+  out += renderContextItems(session.id, contextItems, visionNotice);
 
   // Continuing a session is the same action as starting a run, aimed at an
   // existing session id — the daemon appends it as the next turn.
@@ -1267,6 +1325,21 @@ function isTerminalStatus(status) {
  * cannot read the format.
  */
 let attachments = [];
+let storedContextItems = [];
+let currentSessionId = null;
+
+function getVisionNotice() {
+  const hasImageItems = (storedContextItems || []).some((item) => item.type === "image");
+  if (!hasImageItems) return "";
+  // Derived from the capabilities the daemon reports, not asserted. This
+  // returned the "no provider supports vision" string unconditionally, which
+  // happens to be true of every adapter today and becomes a false claim the
+  // moment one is not.
+  if (!adapters || adapters.length === 0) return "";
+  const visionCapable = adapters.filter((a) => a.capabilities && a.capabilities.vision);
+  if (visionCapable.length > 0) return "";
+  return "No installed provider supports vision. Image files will be listed as references, not displayed.";
+}
 
 function renderAttachments() {
   const host = $("attachments");
@@ -1290,6 +1363,36 @@ document.addEventListener("click", (event) => {
   if (drop) {
     attachments.splice(Number(drop.dataset.drop), 1);
     renderAttachments();
+    return;
+  }
+  const contextAdd = event.target.closest("[data-context-add]");
+  if (contextAdd) {
+    vscode.postMessage({ type: "addContextItem", sessionId: contextAdd.dataset.session, type: "file", source: "" });
+    return;
+  }
+  const contextFile = event.target.closest("[data-context-file]");
+  if (contextFile) {
+    vscode.postMessage({ type: "addContextFile", sessionId: contextFile.dataset.session });
+    return;
+  }
+  const contextToggle = event.target.closest("[data-context-toggle]");
+  if (contextToggle) {
+    vscode.postMessage({ type: "toggleContextItem", sessionId: currentSessionId, itemId: contextToggle.dataset.item, enabled: contextToggle.dataset.enabled !== "1" });
+    return;
+  }
+  const contextRemove = event.target.closest("[data-context-remove]");
+  if (contextRemove) {
+    vscode.postMessage({ type: "removeContextItem", sessionId: currentSessionId, itemId: contextRemove.dataset.item });
+    return;
+  }
+  const contextImage = event.target.closest("[data-context-image]");
+  if (contextImage) {
+    vscode.postMessage({ type: "addContextImage", sessionId: contextImage.dataset.session });
+    return;
+  }
+  const compactBtn = event.target.closest("[data-compact-session]");
+  if (compactBtn) {
+    vscode.postMessage({ type: "compactSession", sessionId: compactBtn.dataset.session });
     return;
   }
   const sessionRow = event.target.closest("[data-session]:not([data-action])");
@@ -1341,6 +1444,61 @@ document.addEventListener("click", (event) => {
   const actions = { open: "openRun", retry: "retry", diff: "viewDiff", merge: "merge" };
   const type = actions[button.dataset.action];
   if (type && runId) vscode.postMessage({ type, runId });
+});
+
+// Paste handler for images in the session transcript.
+document.addEventListener("paste", (event) => {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].kind === "file" && items[i].type.startsWith("image/")) {
+      event.preventDefault();
+      const file = items[i].getAsFile();
+      if (!file || !currentSessionId) return;
+      // Read the image as base64 and send to extension for saving
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        vscode.postMessage({
+          type: "pasteImage",
+          sessionId: currentSessionId,
+          dataUrl: e.target.result,
+          fileName: "pasted-" + Date.now() + ".png",
+        });
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+  }
+});
+
+// Drag-and-drop handler for images in the context items section.
+let dragCounter = 0;
+document.addEventListener("dragover", (event) => {
+  const section = event.target.closest("#context-items-section");
+  if (!section) return;
+  const hasImage = Array.from(event.dataTransfer?.files ?? []).some((f) => f.type.startsWith("image/"));
+  if (!hasImage) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+});
+document.addEventListener("drop", (event) => {
+  const section = event.target.closest("#context-items-section");
+  if (!section) return;
+  const files = Array.from(event.dataTransfer?.files ?? []).filter((f) => f.type.startsWith("image/"));
+  if (files.length === 0) return;
+  event.preventDefault();
+  for (const file of files) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      vscode.postMessage({
+        type: "pasteImage",
+        sessionId: currentSessionId,
+        dataUrl: e.target.result,
+        fileName: file.name,
+      });
+    };
+    reader.readAsDataURL(file);
+  }
 });
 
 vscode.postMessage({ type: "ready" });

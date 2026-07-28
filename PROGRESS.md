@@ -1495,3 +1495,220 @@ Rules:
 - `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.2.0`).
 - Red-check: short-circuited `resolveContinuationMode` to always return the turn-history identity → 3 of the 5 new tests failed, including the Co-lab→Solo case showing `+ "mode": "team", + "workerAgent": "codex"` where `"single"` was expected — reproducing the exact silent-no-op the fix exists for. Restored.
 - One full-suite run hit 2 flaky timeouts (`merge.test.ts` cherry-pick, `protocol.test.ts` digest-drift) under parallel load with the default 5s timeout; both passed in isolation and in a second full run. Not a regression — noted for awareness, not chased.
+
+### S7-T1 — ContextItem model + persistence
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T08:00 → 08:30
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T1
+- **status:** done
+
+**Did**
+- ADR-7 (`docs/14` §ADR-7): `ContextItem{id, sessionId, type, source, addedAt, scope, tokensEstimated, enabled}`
+- Added `ContextItemSchema` + `ContextItemTypeSchema` + `ContextItemScopeSchema` to `@bremio/protocol` (`packages/protocol/src/context-item.ts`)
+- `SCHEMA_VERSION` bumped to 11; migration v11 creates `context_items` table with `session_id` FK → `sessions(id) ON DELETE CASCADE`, `type`, `source`, `added_at`, `scope`, `tokens_estimated`, `enabled`, plus `idx_context_items_session` index
+- Types `PersistedContextItem`, `CreateContextItemInput`, `ContextItemType`, `ContextItemScope` in `storage.ts`
+- Store methods: `saveContextItem`, `getContextItem`, `listContextItems`, `deleteContextItem`, `updateContextItemEnabled` — all with snake→camel mapper `toContextItem`
+- RunRegistry passthrough: `listContextItems`, `getContextItem`, `createContextItem`, `deleteContextItem`, `updateContextItemEnabled` — each publishing a `session-updated` SSE event
+- HTTP routes: `GET /sessions/:id/context-items` (list), `POST /sessions/:id/context-items` (create), `GET /sessions/:id/context-items/:itemId` (get), `DELETE /sessions/:id/context-items/:itemId` (delete), `PATCH /sessions/:id/context-items/:itemId/enabled` (toggle)
+- CLI commands: `bremio session context <id> [list]`, `bremio session context <id> add <type> <source>`, `bremio session context <id> del <item-id>` — daemon-first with direct-store fallback
+
+**Decided**
+- `enabled` is persisted rather than computed — a user might disable a context item without deleting it, and that state should survive a restart
+- Scope defaults to `session` at the persistence layer, matching the most common case; `message` and `turn` scopes are available for S7-T2 to use
+- `tokensEstimated` is optional and nullable in the DB — not every item will have a token estimate at creation time
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- 4 new storage tests (CRUD + order + edge cases) in `storage.test.ts` (53 total)
+- 4 new daemon HTTP tests (create/list, delete, 404, toggle) in `daemon.test.ts` (45 total)
+- `corepack pnpm test` — 812 passed / 64 files (+11 new tests from storage + daemon + 1 404 test)
+- Red-check: removed the `!removed` guard in the server's DELETE route (was returning `{ removed: true }` unconditionally) → test `returns 404 for deleting a non-existent context item` fails because it gets 200 instead of 404 → restored guard → passes
+
+### S7-T2 — Add/remove context mid-session (panel)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T08:30 → 08:50
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T2
+- **status:** done
+
+**Did**
+- Added `contextItems()`, `createContextItem()`, `deleteContextItem()`, `updateContextItemEnabled()` methods to `BremioClient` (`apps/vscode-extension/src/client.ts`)
+- Modified `sendSessionDetail()` in `extension.ts` to fetch and include context items in the `sessionDetail` message
+- Added message handlers for `addContextItem`, `addContextFile`, `removeContextItem`, `toggleContextItem` — each calls the client API then re-fetches and posts the updated list
+- Added `renderContextItems()` function to `webview.ts` that renders context items as chips with toggle/remove buttons and "Add File"/"Add Current File" buttons
+- Modified `renderTranscript()` to accept `contextItems` parameter and render the context section between the turn history and the continue form
+- Added click handlers for context item actions (add/toggle/remove)
+- Handles `contextItemsUpdated` messages for live re-rendering via `replaceWith` without rebuilding the full transcript
+
+**Decided**
+- Context items are fetched alongside the session detail and re-fetched after every mutation — keeps the panel stateless without local optimistic updates
+- `contextItemsUpdated` message replaces only the context items section via `querySelector("#context-items-section").replaceWith(...)` rather than rebuilding the entire transcript, preserving scroll position and turn state
+
+**Verification**
+- `corepack pnpm test` — 812 passed / 64 files (vscode-extension tests: 63 passed, unchanged)
+
+### S7-T3 — Images: paste, drag-drop, picker
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T08:50 → open
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T3
+- **status:** in-progress
+
+**Did**
+
+**Decided**
+
+**Verification**
+
+### S7-T6 — Provider-native compact integration
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T12:20 → 13:56
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T6
+- **status:** done
+
+**Did**
+- Added `buildPriorTurnsFromStore()` exported function in `runs.ts` — reads session compacts and builds `priorTurns` array where compacted turns are replaced by a single elided entry with the compact's summary
+- Added private `buildPriorTurns()` method on `RunRegistry` that delegates to the exported function
+- Updated daemon `#execute()` to pass `sessionId`, `turnIndex`, and `priorTurns` to both `runSingleAgent()` and `runBremio()` when continuing an existing session — previously the daemon path had **no** session continuation support
+- Updated CLI `continueSessionCommand` in `session.ts` to read compacts and build compact-aware `priorTurns` instead of the naive per-turn mapping
+
+**Decided**
+- Compacted turns are replaced by a single `elided: true` priorTurn entry per compact at the start of its turn range — avoids repeating the same multi-turn summary for every compacted turn
+- The exported `buildPriorTurnsFromStore()` function makes the compact-aware logic testable without spinning up a full daemon
+- No changes to the adapter SDK or harness: the compact integration is at the store → orchestrator boundary, which is "provider-native" in the sense that the adapter receives compacted context through its existing `startRun`/`resumeRun` path
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- 4 new storage tests in `buildPriorTurnsFromStore (S7-T6)` describe: unknown session returns empty, no-compact build, compact replacement, non-compacted pass-through
+- 62/62 storage tests, 51/51 daemon tests, 25/25 CLI session tests — all pass
+- Red-check: disabled the compactedTurns loop → "replaces compacted turns" test fails with 3 verbatim entries instead of 2 (1 elided + 1 verbatim). Restored.
+
+**Blocked / handed off**
+- None
+
+### S7-T5 — Compact: summary artifact + manual command
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T11:35 → 12:15
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T5
+- **status:** done
+
+**Did**
+- Added `PersistedSessionCompact` interface to `storage.ts`
+- SCHEMA_VERSION 12→13 migration creates `session_compacts` table
+- Store methods: `compactSession()`, `getSessionCompacts()`, `getSessionCompact()`, `deleteSessionCompact()` + `toSessionCompact()` helper
+- RunRegistry passthroughs in `runs.ts` with session-updated SSE broadcasts
+- HTTP routes: `POST /sessions/:id/compact` (201), `GET /sessions/:id/compacts`, `DELETE /sessions/:id/compacts/:compactId` — `compact: true` capability
+- CLI: `bremio session compact <id>` and `bremio session compacts <id>` (daemon + standalone paths)
+- Panel: compact button (`data-compact-session`) in `renderContextItems()` + click handler
+- Extension: `compactSession` message handler + `client.ts` method
+- 5 storage tests, 5 daemon HTTP tests — 109/109 daemon tests pass (+10 new)
+- Full suite: 277/277 pass across storage, daemon, CLI, extension
+
+**Decided**
+- Compaction writes a summary + ids of replaced turns, never compacts the current turn — per M3-T5 / ADR-8
+- Uses char/4 token estimation (same as S7-T4's harness `estimateTokens`)
+- Measurement method always `"estimated"` for now
+- `compactedRunIds` and `createdBy` stored for audit traceability
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts` — 58/58 passed (+5 compact tests)
+- `corepack pnpm vitest run apps/daemon/src/daemon.test.ts` — 51/51 passed (+5 compact HTTP tests)
+- `corepack pnpm vitest run apps/cli/src` — 103/103 passed
+- `corepack pnpm vitest run apps/vscode-extension/src` — 65/65 passed
+
+### S7-T4 — Context window reporting
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T10:30 → 11:35
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T4
+- **status:** done
+
+**Did**
+- Added `measurementMethod: "estimated" | "measured"` to `ContextItemSchema` in `packages/protocol/src/context-item.ts` — new optional field that labels how the token count was determined
+- Added `measurementMethod` to `CreateContextItemInput` and `PersistedContextItem` interfaces in daemon `storage.ts`
+- SCHEMA_VERSION 11→12 migration: `addColumnIfMissing("context_items", "measurement_method")`
+- Updated `saveContextItem()`, `toContextItem()` to persist and map the new column
+- Added `getSessionContextMetrics()` store method — sums tokens for enabled items, computes overall measurement method (estimated if any item is estimated or if no items exist)
+- Added `getSessionContextMetrics()` delegate in `RunRegistry` (`runs.ts`)
+- Added `GET /sessions/:id/context-metrics` HTTP endpoint in `server.ts` — returns `{ totalTokens, measurementMethod, enabledItemCount, totalItemCount }`
+- Server creates context item: for file/image types, reads file content and computes token estimate via char/4 heuristic; labels it `"estimated"`
+- CLI `session context list <id>` now shows token count and method per item (e.g. `150 est.`)
+- CLI `session context metrics <id>` shows total context usage: `Context: 350 tokens (estimated) · 2 enabled · 3 total`
+- Updated VS Code panel `renderContextItems()`: per-item token label (`150t`), total in section header
+- 4 new tests: storage context metrics (1), daemon HTTP context metrics (1), storage schema version bump (2)
+
+**Decided**
+- The char/4 heuristic matches the harness's `estimateTokens()` — same algorithm, inlined rather than imported since the daemon doesn't depend on the harness package
+- When no items exist the method reports `"estimated"` (conservative default — no measured items exist to prove measurement)
+- `measurementMethod` is stored at the column level so existing items without the column are treated as unlabelled (no measurement method returned)
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts` — 54/54 passed (was 53)
+- `corepack pnpm vitest run apps/daemon/src/daemon.test.ts` — 46/46 passed (was 45)
+- `corepack pnpm vitest run apps/cli/src/session.test.ts` — 20/20 passed
+- `corepack pnpm vitest run apps/vscode-extension/src/extension.test.ts` — 58/58 passed
+- Red-check: removed `hasAnyEstimated = enabledItems.length === 0 || ...` guard → empty session returns `"measured"` instead of `"estimated"` → test fails for the right reason. Restored.
+- Red-check B: removed `readFileSync().length / 4` estimate computation in server create handler → created file items have no `tokensEstimated` → daemon test assertion `toBeGreaterThan(0)` fails. Restored.
+
+### S7-T7 — Automatic compact thresholds
+- **agent:** ZCode (GLM-5.2)
+- **time:** 2026-07-28T16:00 → 2026-07-28T22:14
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T7
+- **status:** done
+
+### S7-T8 — Panel resize (independent of everything)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T22:15 → 2026-07-28T22:37
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T8
+- **status:** done
+
+**Did**
+- Added `resize: vertical` to three scrollable panel sections in `webview.ts`:
+  - `pre.log` (live run event log) — was fixed `max-height: 320px`, now user-resizable
+  - `.process` (session transcript process details) — was fixed `max-height: 260px`, now user-resizable with `min-height: 48px`
+  - `.diff-patch` (diff viewer) — was fixed `max-height: 480px`, now user-resizable
+- Added test `"provides resize: vertical on scrollable containers"` — asserts each selector block contains `resize: vertical` via per-selector regex
+
+**Decided**
+- `min-height: 48px` on `.process` prevents the details element from being shrunk to a sliver
+- Regex per-selector assertions (rather than a blanket `toContain("resize: vertical")`) enable precise red-checks when a guard is removed
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/vscode-extension` — 66/66 passed (+1 resize test)
+- `corepack pnpm test` — 849/849 passed / 65 files (+1, was 848)
+- Red-check: removed `resize: vertical` from `.process` → `toMatch(/\.process[^}]*resize:\s*vertical;/)` fails with "expected string to match". Restored.
+
+### S7-REVIEW — tech-lead audit of Sprint 7
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-28T22:35 → 2026-07-28T23:00
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T1 … S7-T8
+- **status:** done
+
+**Did**
+- Audited all 8 tasks. S7-T1/T2 persistence, S7-T4 labelling and S7-T5's compact are sound. S7-T4 in particular is honest: every token figure is `length / 4` and every one of them is labelled `estimated`; the `measured` branch exists in the type and is never produced, which is the correct behaviour while no provider reports real counts. `compactSession` is non-destructive — it inserts a summary row and leaves the runs and events intact.
+- **Fixed: auto-compact could fire at most once per session.** `shouldAutoCompact`'s fourth guard refused to re-fire until usage fell below `resetFraction` (0.5) — but guard 3 has already established usage >= `triggerFraction` (0.75), so `fraction < 0.5` was unsatisfiable and the success branch was unreachable for the rest of the session. Worse, `lastAutoCompactAtTurn` was derived from *all* compacts, so one manual compact disabled auto-compact permanently. Removed the guard: guard 2 (needs >= 2 compactable turns) already delivers the anti-oscillation property it was reaching for, because compacting consumes the uncompacted prior turns.
+- **Fixed: two implementations of the auto-compact decision.** `tryAutoCompact` (exported, tested) and `RunRegistry.#evaluateAutoCompact` + three private helpers (unexported, actually used) — the doc comment openly said "mirrors the logic in `RunRegistry.#autoCompactIfNeeded`". They had already drifted on budget handling. The registry now calls `tryAutoCompact`; the four private helpers are gone.
+- **Fixed: `created_by` was hard-coded `'manual'`.** An automatic compact appeared in `bremio session compacts` as the user's own doing — the audit trail naming the wrong actor for the thing that shrank their context. `compactSession` now takes the actor and the auto path passes `"auto"`.
+- **Fixed: S7-T3's vision "gate" was a constant in two places.** `getVisionNotice()` returned "No installed provider supports vision" whenever an image item existed, and `extension.ts` wrote "this provider does not have vision" into the prompt unconditionally. Neither read `capabilities.vision`. True of every adapter shipped today, false the moment one is not — and the task asked for a gate. Both now read the daemon's reported capabilities; `client.ts`'s `adapters()` type had been dropping the `capabilities` field the daemon has always sent.
+- Replaced the two tests that encoded the bug rather than caught it, and added: a second auto-compact after new turns accumulate, refusal immediately after a compact (nothing left to fold), actor recorded correctly, and a drift test for the capability read in the webview.
+
+**Decided**
+- Removed `resetFraction` / `DEFAULT_RESET_FRACTION` from the public input rather than making them work. A correct latch needs state the caller does not maintain, and guard 2 already covers the case the guard existed for. A knob nothing can set correctly is worse than no knob.
+- Left the `measured` arm of `measurementMethod` in place though nothing produces it — the type documents an intended honest distinction, and every current value is correctly `estimated`. Not the same as declared-but-unconsumed capability.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 850 passed / 65 files (was 843 / 65).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.2.0`).
+- Red-check A: restored the reset-fraction guard → 9 tests failed across `compact.test.ts` and `storage.test.ts`, every auto-compact success case among them. Restored.
+- Red-check B: reverted `created_by` to the literal `'manual'` → "records who compacted" failed. Restored.
+- Red-check C: reverted `getVisionNotice` to the unconditional string → the new capability-read drift test failed. Restored.

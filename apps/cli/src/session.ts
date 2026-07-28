@@ -4,7 +4,7 @@ import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
 import { OpenCodeAdapter } from "@bremio/adapter-opencode";
-import { daemonStatus, defaultDatabasePath, RunStore } from "@bremio/daemon";
+import { daemonStatus, defaultDatabasePath, RunStore, type ContextItemType, type PersistedContextItem } from "@bremio/daemon";
 import { extractResponse, renderEvent } from "@bremio/event-view";
 import { createRegistry, runBremio, runSingleAgent } from "@bremio/orchestrator";
 import { effectiveMode, type CollaborationState } from "@bremio/policy";
@@ -400,12 +400,35 @@ export async function continueSessionCommand(options: {
     return 1;
   }
 
-  const priorTurns = (detail.turns ?? []).map((t: any) => ({
-    turnIndex: t.turnIndex,
-    prompt: t.prompt,
-    finalText: t.summary,
-    summary: t.summary,
-  }));
+  // Build priorTurns with compact summaries (S7-T6)
+  const compacts = store.getSessionCompacts(id);
+  const compactedTurns = new Set<number>();
+  for (const c of compacts) {
+    for (let i = c.turnRangeStart; i <= c.turnRangeEnd; i++) compactedTurns.add(i);
+  }
+  const priorTurns: Array<{ turnIndex: number; prompt: string; finalText?: string; summary?: string; elided?: boolean }> = [];
+  for (const turn of detail.turns) {
+    if (compactedTurns.has(turn.turnIndex)) {
+      const compact = compacts.find(
+        (c) => turn.turnIndex >= c.turnRangeStart && turn.turnIndex <= c.turnRangeEnd,
+      );
+      if (compact && turn.turnIndex === compact.turnRangeStart) {
+        priorTurns.push({
+          turnIndex: compact.turnRangeStart,
+          prompt: "",
+          summary: compact.summary,
+          elided: true,
+        });
+      }
+    } else {
+      priorTurns.push({
+        turnIndex: turn.turnIndex,
+        prompt: turn.prompt,
+        finalText: turn.summary,
+        summary: turn.summary,
+      });
+    }
+  }
 
   const latestTurn = (detail.turns ?? []).at(-1);
   const providerSessionId = latestTurn?.sessionId;
@@ -736,8 +759,311 @@ export async function sessionCommandFromCli(
       ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}),
     });
   }
+  if (subCommand === "context") {
+    const id = positionals[2];
+    if (!id) {
+      console.error(c.red("error: session id is required for 'bremio session context <id>'"));
+      return 2;
+    }
+    const ctxCommand = positionals[3];
+    if (ctxCommand === "list") {
+      return listContextItemsCommand({ id, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+    }
+    if (ctxCommand === "add") {
+      const type = positionals[4];
+      const source = positionals[5];
+      if (!type || !source) {
+        console.error(c.red("error: 'bremio session context <id> add <type> <source>' requires type and source"));
+        return 2;
+      }
+      return addContextItemCommand({ id, type, source, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+    }
+    if (ctxCommand === "del" || ctxCommand === "delete") {
+      const itemId = positionals[4];
+      if (!itemId) {
+        console.error(c.red("error: 'bremio session context <id> del <item-id>' requires item id"));
+        return 2;
+      }
+      return deleteContextItemCommand({ id, itemId, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+    }
+    if (ctxCommand === "metrics") {
+      return contextMetricsCommand({ id, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+    }
+    if (!ctxCommand) {
+      return listContextItemsCommand({ id, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+    }
+    console.error(
+      c.red(`error: unknown context subcommand '${ctxCommand}'; expected 'list', 'add', 'del', or 'metrics'`),
+    );
+    return 2;
+  }
+  if (subCommand === "compact") {
+    const id = positionals[2];
+    if (!id) {
+      console.error(c.red("error: session id is required for 'bremio session compact <id>'"));
+      return 2;
+    }
+    return compactSessionCommand({ id, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+  }
+  if (subCommand === "compacts") {
+    const id = positionals[2];
+    if (!id) {
+      console.error(c.red("error: session id is required for 'bremio session compacts <id>'"));
+      return 2;
+    }
+    return listCompactsCommand({ id, json: values.json === true, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+  }
   console.error(
-    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', 'continue', or 'config-set'`),
+    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', 'continue', 'config-set', or 'context'`),
   );
   return 2;
+}
+
+export interface ListContextItemsOptions {
+  id: string;
+  json?: boolean;
+  databasePath?: string;
+}
+
+export interface AddContextItemOptions {
+  id: string;
+  type: string;
+  source: string;
+  databasePath?: string;
+}
+
+export interface DeleteContextItemOptions {
+  id: string;
+  itemId: string;
+  databasePath?: string;
+}
+
+async function listContextItemsCommand(opts: ListContextItemsOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/context-items`,
+      { headers: { "x-bremio-token": status.endpoint.token } },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { contextItems: PersistedContextItem[] };
+      for (const item of data.contextItems) {
+        const tokens = item.tokensEstimated !== undefined ? `${item.tokensEstimated} ${item.measurementMethod ?? "est."}` : "?";
+        console.log(`${item.id}  ${c.green(item.type)}  ${c.dim(tokens)}  ${item.enabled ? "" : c.dim("(disabled) ")}${item.source}`);
+      }
+      return 0;
+    }
+    if (res.status === 404) {
+      console.error(c.red(`error: session '${opts.id}' not found`));
+      return 1;
+    }
+    console.error(c.red(`error: daemon returned ${res.status}`));
+    return 1;
+  }
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const items = store.listContextItems(opts.id);
+    for (const item of items) {
+      const tokens = item.tokensEstimated !== undefined ? `${item.tokensEstimated} ${item.measurementMethod ?? "est."}` : "?";
+      console.log(`${item.id}  ${c.green(item.type)}  ${c.dim(tokens)}  ${item.enabled ? "" : c.dim("(disabled) ")}${item.source}`);
+    }
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+async function addContextItemCommand(opts: AddContextItemOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/context-items`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-bremio-token": status.endpoint.token,
+        },
+        body: JSON.stringify({ type: opts.type, source: opts.source }),
+      },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { contextItem: PersistedContextItem };
+      console.log(`added ${c.green(data.contextItem.type)} context item: ${data.contextItem.id}`);
+      return 0;
+    }
+    if (res.status === 404) {
+      console.error(c.red(`error: session '${opts.id}' not found`));
+      return 1;
+    }
+    console.error(c.red(`error: daemon returned ${res.status}`));
+    return 1;
+  }
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const item = store.saveContextItem({
+      sessionId: opts.id,
+      type: opts.type as ContextItemType,
+      source: opts.source,
+    });
+    console.log(`added ${c.green(item.type)} context item: ${item.id}`);
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+async function deleteContextItemCommand(opts: DeleteContextItemOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/context-items/${encodeURIComponent(opts.itemId)}`,
+      { method: "DELETE", headers: { "x-bremio-token": status.endpoint.token } },
+    );
+    if (res.ok) {
+      console.log(`removed context item: ${opts.itemId}`);
+      return 0;
+    }
+    if (res.status === 404) {
+      console.error(c.red(`error: context item '${opts.itemId}' not found`));
+      return 1;
+    }
+    console.error(c.red(`error: daemon returned ${res.status}`));
+    return 1;
+  }
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const ok = store.deleteContextItem(opts.itemId);
+    if (!ok) {
+      console.error(c.red(`error: context item '${opts.itemId}' not found`));
+      return 1;
+    }
+    console.log(`removed context item: ${opts.itemId}`);
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+interface ContextMetricsOptions {
+  id: string;
+  databasePath?: string;
+}
+
+async function contextMetricsCommand(opts: ContextMetricsOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/context-metrics`,
+      { headers: { "x-bremio-token": status.endpoint.token } },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { metrics: { totalTokens: number; measurementMethod: string; enabledItemCount: number; totalItemCount: number } };
+      console.log(`Context: ${c.bold(String(data.metrics.totalTokens))} tokens (${data.metrics.measurementMethod}) · ${data.metrics.enabledItemCount} enabled · ${data.metrics.totalItemCount} total`);
+      return 0;
+    }
+    if (res.status === 404) {
+      console.error(c.red(`error: session '${opts.id}' not found`));
+      return 1;
+    }
+    console.error(c.red(`error: daemon returned ${res.status}`));
+    return 1;
+  }
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const metrics = store.getSessionContextMetrics(opts.id);
+    console.log(`Context: ${c.bold(String(metrics.totalTokens))} tokens (${metrics.measurementMethod}) · ${metrics.enabledItemCount} enabled · ${metrics.totalItemCount} total`);
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+interface CompactSessionOptions {
+  id: string;
+  databasePath?: string;
+}
+
+async function compactSessionCommand(opts: CompactSessionOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/compact`,
+      { method: "POST", headers: { "x-bremio-token": status.endpoint.token } },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { compact: { id: string; turnRangeStart: number; turnRangeEnd: number; summary: string; tokenCount: number } };
+      console.log(`Compacted turns ${data.compact.turnRangeStart}–${data.compact.turnRangeEnd} (${c.bold(String(data.compact.tokenCount))} tokens): ${data.compact.summary.slice(0, 200)}`);
+      return 0;
+    }
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    console.error(c.red(`error: ${body.error ?? res.statusText}`));
+    return 1;
+  }
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const compact = store.compactSession(opts.id);
+    console.log(`Compacted turns ${compact.turnRangeStart}–${compact.turnRangeEnd} (${c.bold(String(compact.tokenCount))} tokens): ${compact.summary.slice(0, 200)}`);
+    return 0;
+  } catch (err) {
+    console.error(c.red(`error: ${(err as Error).message}`));
+    return 1;
+  } finally {
+    store.close();
+  }
+}
+
+interface ListCompactsOptions {
+  id: string;
+  json?: boolean;
+  databasePath?: string;
+}
+
+async function listCompactsCommand(opts: ListCompactsOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/compacts`,
+      { headers: { "x-bremio-token": status.endpoint.token } },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { compacts: Array<{ id: string; turnRangeStart: number; turnRangeEnd: number; tokenCount: number; measurementMethod: string; createdAt: string; createdBy: string }> };
+      if (opts.json) {
+        console.log(JSON.stringify(data.compacts, null, 2));
+        return 0;
+      }
+      if (data.compacts.length === 0) {
+        console.log("No compacts for this session");
+        return 0;
+      }
+      for (const c of data.compacts) {
+        console.log(`  ${c.id}: turns ${c.turnRangeStart}–${c.turnRangeEnd} (${c.tokenCount} tokens, ${c.measurementMethod}, ${c.createdBy})`);
+      }
+      return 0;
+    }
+    if (res.status === 404) {
+      console.error(c.red(`error: session '${opts.id}' not found`));
+      return 1;
+    }
+    console.error(c.red(`error: daemon returned ${res.status}`));
+    return 1;
+  }
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const compacts = store.getSessionCompacts(opts.id);
+    if (opts.json) {
+      console.log(JSON.stringify(compacts, null, 2));
+      return 0;
+    }
+    if (compacts.length === 0) {
+      console.log("No compacts for this session");
+      return 0;
+    }
+    for (const c of compacts) {
+      console.log(`  ${c.id}: turns ${c.turnRangeStart}–${c.turnRangeEnd} (${c.tokenCount} tokens, ${c.measurementMethod}, ${c.createdBy})`);
+    }
+    return 0;
+  } finally {
+    store.close();
+  }
 }

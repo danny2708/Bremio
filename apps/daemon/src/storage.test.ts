@@ -13,6 +13,7 @@ import {
   redact,
   truncateTitle,
 } from "./storage";
+import { buildPriorTurnsFromStore, tryAutoCompact } from "./runs";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
@@ -679,6 +680,212 @@ describe("session_context (B1)", () => {
   });
 });
 
+describe("session_compacts (S7-T5)", () => {
+  it("creates a compact from session runs, skips the latest turn", async () => {
+    const s = await store();
+    const run0 = s.createRun({ id: "run-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "first turn" });
+    const sessionId = run0.sessionId!;
+    s.createRun({ id: "run-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "second turn", sessionId });
+    s.createRun({ id: "run-2", mode: "single", repositoryPath: "/tmp/repo", prompt: "third turn", sessionId });
+
+    const cmp = s.compactSession(sessionId);
+    expect(cmp.sessionId).toBe(sessionId);
+    expect(cmp.turnRangeStart).toBe(0);
+    expect(cmp.turnRangeEnd).toBe(1);
+    expect(cmp.summary).toContain("Turn 0");
+    expect(cmp.summary).toContain("Turn 1");
+    expect(cmp.summary).not.toContain("Turn 2");
+    expect(cmp.tokenCount).toBeGreaterThan(0);
+    expect(cmp.measurementMethod).toBe("estimated");
+    expect(cmp.createdBy).toBe("manual");
+    expect(cmp.compactedRunIds).toEqual(["run-0", "run-1"]);
+  });
+
+  it("rejects compaction when session has no runs", async () => {
+    const s = await store();
+    expect(() => s.compactSession("no-such-session")).toThrow("has no runs to compact");
+  });
+
+  it("rejects compaction when session has only one turn (current)", async () => {
+    const s = await store();
+    const run = s.createRun({ id: "run-only", mode: "single", repositoryPath: "/tmp/repo", prompt: "only turn" });
+    expect(() => s.compactSession(run.sessionId!)).toThrow("nothing to compact");
+  });
+
+  it("lists and deletes compacts", async () => {
+    const s = await store();
+    const run0 = s.createRun({ id: "run-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "turn 0" });
+    const sessionId = run0.sessionId!;
+    s.createRun({ id: "run-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "turn 1", sessionId });
+
+    const cmp = s.compactSession(sessionId);
+    const list = s.getSessionCompacts(sessionId);
+    expect(list).toHaveLength(1);
+    expect(list[0]!.id).toBe(cmp.id);
+
+    const removed = s.deleteSessionCompact(cmp.id);
+    expect(removed).toBe(true);
+    expect(s.getSessionCompacts(sessionId)).toHaveLength(0);
+
+    expect(s.deleteSessionCompact("no-such")).toBe(false);
+  });
+});
+
+describe("buildPriorTurnsFromStore (S7-T6)", () => {
+  it("returns empty array for unknown session", async () => {
+    const s = await store();
+    expect(buildPriorTurnsFromStore(s, "no-such")).toEqual([]);
+  });
+
+  it("builds prior turns without compacts", async () => {
+    const s = await store();
+    const r0 = s.createRun({ id: "pt-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "first" });
+    const sid = r0.sessionId!;
+    s.createRun({ id: "pt-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "second", sessionId: sid });
+
+    const turns = buildPriorTurnsFromStore(s, sid);
+    expect(turns).toHaveLength(2);
+    expect(turns[0]!.turnIndex).toBe(0);
+    expect(turns[0]!.prompt).toBe("first");
+    expect(turns[1]!.turnIndex).toBe(1);
+    expect(turns[1]!.prompt).toBe("second");
+  });
+
+  it("replaces compacted turns with a single elided entry using compact summary", async () => {
+    const s = await store();
+    const r0 = s.createRun({ id: "ptc-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "alpha" });
+    const sid = r0.sessionId!;
+    s.createRun({ id: "ptc-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "beta", sessionId: sid });
+    s.createRun({ id: "ptc-2", mode: "single", repositoryPath: "/tmp/repo", prompt: "gamma", sessionId: sid });
+
+    const cmp = s.compactSession(sid); // compacts turns 0-1
+
+    const turns = buildPriorTurnsFromStore(s, sid);
+    // Should have: [elided entry for compact 0-1, verbatim entry for turn 2]
+    expect(turns).toHaveLength(2);
+    expect(turns[0]!.turnIndex).toBe(0);
+    expect(turns[0]!.elided).toBe(true);
+    expect(turns[0]!.summary).toBe(cmp.summary);
+    expect(turns[0]!.prompt).toBe("");
+    expect(turns[1]!.turnIndex).toBe(2);
+    expect(turns[1]!.elided).toBeUndefined();
+    expect(turns[1]!.prompt).toBe("gamma");
+  });
+
+  it("passes non-compacted turns verbatim when no compacts exist", async () => {
+    const s = await store();
+    const r0 = s.createRun({ id: "ptnc-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "only" });
+    const sid = r0.sessionId!;
+    s.createRun({ id: "ptnc-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "second", sessionId: sid });
+
+    // No compact created
+    const turns = buildPriorTurnsFromStore(s, sid);
+    expect(turns).toHaveLength(2);
+    expect(turns[0]!.elided).toBeUndefined();
+    expect(turns[1]!.elided).toBeUndefined();
+    expect(turns[1]!.prompt).toBe("second");
+  });
+});
+
+describe("tryAutoCompact (S7-T7)", () => {
+  async function makeStore(): Promise<RunStore> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-s7t7-"));
+    dirs.push(dir);
+    const store = await RunStore.open(path.join(dir, "bremio.db"));
+    stores.push(store);
+    return store;
+  }
+
+  function run(s: RunStore, id: string, prompt: string, si?: string): string {
+    const r = s.createRun({ id, mode: "single", repositoryPath: "/tmp/repo", prompt, ...(si ? { sessionId: si } : {}) });
+    return r.sessionId!;
+  }
+
+  it("does not auto-compact when session has fewer than 2 turns", async () => {
+    const s = await makeStore();
+    run(s, "r1", "hi");
+    const sid = run(s, "r2", "hi");
+    const res = tryAutoCompact(s, sid);
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain("at least 2");
+  });
+
+  it("does not auto-compact when token usage is below trigger fraction", async () => {
+    const s = await makeStore();
+    const sid = run(s, "r0", "short prompt");
+    for (let i = 1; i < 3; i++) run(s, `r${i}`, "short", sid);
+    const res = tryAutoCompact(s, sid);
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain("below");
+  });
+
+  it("auto-compacts when token usage exceeds trigger fraction", async () => {
+    const s = await makeStore();
+    const longPrompt = "x".repeat(100_000);
+    const sid = run(s, "r0", longPrompt);
+    run(s, "r1", longPrompt, sid);
+    run(s, "r2", longPrompt, sid);
+    const res = tryAutoCompact(s, sid);
+    expect(res.ok).toBe(true);
+    expect(res.reason).toContain("auto-compact");
+    const compacts = s.getSessionCompacts(sid);
+    expect(compacts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("compacts again once the session has grown back over budget", async () => {
+    // This asserted the opposite — that the second compact was refused by
+    // hysteresis — which is what the removed reset-fraction guard did. A long
+    // session got exactly one auto-compact and then grew unbounded.
+    const s = await makeStore();
+    const longPrompt = "x".repeat(100_000);
+    const sid = run(s, "r0", longPrompt);
+    run(s, "r1", longPrompt, sid);
+    run(s, "r2", longPrompt, sid);
+    run(s, "r3", longPrompt, sid);
+
+    const first = tryAutoCompact(s, sid, { budgetTokens: 40_000 });
+    expect(first.ok).toBe(true);
+
+    // Nothing left to fold until new turns arrive.
+    const immediate = tryAutoCompact(s, sid, { budgetTokens: 40_000 });
+    expect(immediate.ok).toBe(false);
+    expect(immediate.reason).toContain("at least 2");
+
+    run(s, "r4", longPrompt, sid);
+    run(s, "r5", longPrompt, sid);
+
+    const second = tryAutoCompact(s, sid, { budgetTokens: 40_000 });
+    expect(second.ok).toBe(true);
+    expect(s.getSessionCompacts(sid)).toHaveLength(2);
+  });
+
+  it("records who compacted, so an automatic one is not filed as the user's", async () => {
+    const s = await makeStore();
+    const longPrompt = "x".repeat(100_000);
+    const sid = run(s, "r0", longPrompt);
+    run(s, "r1", longPrompt, sid);
+    run(s, "r2", longPrompt, sid);
+
+    expect(tryAutoCompact(s, sid).ok).toBe(true);
+    expect(s.getSessionCompacts(sid)[0]?.createdBy).toBe("auto");
+
+    // An explicit compact is still the user's.
+    run(s, "r3", longPrompt, sid);
+    run(s, "r4", longPrompt, sid);
+    s.compactSession(sid);
+    expect(s.getSessionCompacts(sid).find((c) => c.createdBy === "manual")).toBeDefined();
+  });
+
+  it("auto-compacts with custom budget", async () => {
+    const s = await makeStore();
+    const sid = run(s, "r0", "x".repeat(110));
+    run(s, "r1", "x".repeat(110), sid);
+    run(s, "r2", "x".repeat(110), sid);
+    const res = tryAutoCompact(s, sid, { budgetTokens: 100 });
+    expect(res.ok).toBe(true);
+  });
+});
+
 async function createV3Fixture(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-v3-"));
   dirs.push(dir);
@@ -800,12 +1007,19 @@ describe("session_config (S1-T1/T2)", () => {
     expect(s.listSessions("/tmp/repo")).toHaveLength(1);
   });
 
-  it("pristine and migrated stores both report user_version = 10", async () => {
+  it("pristine and migrated stores both report user_version = 13", async () => {
     const fresh = await store();
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(10);
+    expect(freshVer).toBe(13);
+
+    // Fresh store has session_compacts table
+    const freshCols = fresh["db"].prepare("PRAGMA table_info(session_compacts)").all() as Array<{ name: string }>;
+    const freshNames = freshCols.map((c) => c.name).sort();
+    expect(freshNames).toContain("session_id");
+    expect(freshNames).toContain("turn_range_start");
+    expect(freshNames).toContain("summary");
 
     const file = await createV3Fixture();
     const migrated = await RunStore.open(file);
@@ -813,7 +1027,11 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(10);
+    expect(migratedVer).toBe(13);
+
+    // Migrated store also has session_compacts table
+    const migratedCols = migrated["db"].prepare("PRAGMA table_info(session_compacts)").all() as Array<{ name: string }>;
+    expect(migratedCols.length).toBeGreaterThan(0);
   });
 
   it("re-running migration on v5 is a no-op", async () => {
@@ -1027,5 +1245,111 @@ describe("ProviderSessionBinding (S1-T4)", () => {
     expect(bindings.length).toBeGreaterThanOrEqual(1);
     expect(bindings[0]?.agentId).toBe("claude");
     expect(bindings[0]?.status).toBe("active");
+  });
+
+  describe("context items (S7-T1)", () => {
+    it("creates, gets, lists, and deletes context items", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run = s.createRun({ id: "ci-run", mode: "single", repositoryPath: "/tmp/repo", prompt: "ci" });
+      const sessionId = run.sessionId!;
+
+      const item = s.saveContextItem({ sessionId, type: "file", source: "/tmp/repo/readme.md" });
+      expect(item.type).toBe("file");
+      expect(item.source).toBe("/tmp/repo/readme.md");
+      expect(item.enabled).toBe(true);
+      expect(item.scope).toBe("session");
+      expect(item.id).toBeTruthy();
+
+      const got = s.getContextItem(item.id);
+      expect(got).toBeDefined();
+      expect(got!.type).toBe("file");
+
+      const items = s.listContextItems(sessionId);
+      expect(items).toHaveLength(1);
+      expect(items[0]!.id).toBe(item.id);
+
+      const deleted = s.deleteContextItem(item.id);
+      expect(deleted).toBe(true);
+      expect(s.listContextItems(sessionId)).toHaveLength(0);
+    });
+
+    it("creates context items with explicit fields", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run = s.createRun({ id: "ci-explicit", mode: "single", repositoryPath: "/tmp/repo", prompt: "ci" });
+      const sessionId = run.sessionId!;
+
+      const item = s.saveContextItem({
+        id: "my-custom-id",
+        sessionId,
+        type: "image",
+        source: "/tmp/repo/screenshot.png",
+        scope: "turn",
+        tokensEstimated: 150,
+        enabled: false,
+      });
+
+      expect(item.id).toBe("my-custom-id");
+      expect(item.type).toBe("image");
+      expect(item.scope).toBe("turn");
+      expect(item.tokensEstimated).toBe(150);
+      expect(item.enabled).toBe(false);
+
+      s.updateContextItemEnabled(item.id, true);
+      const updated = s.getContextItem(item.id);
+      expect(updated?.enabled).toBe(true);
+    });
+
+    it("returns undefined for non-existent context item", async () => {
+      const s = await store();
+      stores.push(s);
+      expect(s.getContextItem("non-existent")).toBeUndefined();
+      expect(s.deleteContextItem("non-existent")).toBe(false);
+    });
+
+    it("lists context items in added_at order", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run = s.createRun({ id: "ci-order", mode: "single", repositoryPath: "/tmp/repo", prompt: "ci" });
+      const sessionId = run.sessionId!;
+
+      s.saveContextItem({ sessionId, type: "note", source: "first" });
+      // Small delay to ensure different timestamps
+      await new Promise((r) => setTimeout(r, 2));
+      s.saveContextItem({ sessionId, type: "note", source: "second" });
+
+      const items = s.listContextItems(sessionId);
+      expect(items).toHaveLength(2);
+      expect(items[0]!.source).toBe("first");
+      expect(items[1]!.source).toBe("second");
+    });
+
+    it("computes context metrics for a session (S7-T4)", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run = s.createRun({ id: "ci-metrics", mode: "single", repositoryPath: "/tmp/repo", prompt: "ci" });
+      const sessionId = run.sessionId!;
+
+      // No items → zero metrics
+      const empty = s.getSessionContextMetrics(sessionId);
+      expect(empty.totalTokens).toBe(0);
+      expect(empty.measurementMethod).toBe("estimated");
+      expect(empty.enabledItemCount).toBe(0);
+      expect(empty.totalItemCount).toBe(0);
+
+      s.saveContextItem({ sessionId, type: "file", source: "/a.txt", tokensEstimated: 100, measurementMethod: "estimated" });
+      s.saveContextItem({ sessionId, type: "file", source: "/b.txt", tokensEstimated: 200, measurementMethod: "estimated", enabled: false });
+
+      const metrics = s.getSessionContextMetrics(sessionId);
+      expect(metrics.totalTokens).toBe(100);
+      expect(metrics.measurementMethod).toBe("estimated");
+      expect(metrics.enabledItemCount).toBe(1);
+      expect(metrics.totalItemCount).toBe(2);
+    });
   });
 });
