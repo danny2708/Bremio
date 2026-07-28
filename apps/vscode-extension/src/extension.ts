@@ -528,13 +528,32 @@ async function startRun(message: Record<string, unknown>): Promise<void> {
     }
   }
   const hasImages = imageContextPaths.length > 0;
+  const agentId = String(message.agentId ?? "claude");
+  // Ask what this agent can actually do. The note below used to assert "this
+  // provider does not have vision" unconditionally — true of every adapter
+  // shipped today, and a lie the first time one reports otherwise. S7-T3 asked
+  // for a vision *gate*; a constant is not one.
+  let agentHasVision = false;
+  if (hasImages) {
+    try {
+      const { adapters } = await client.adapters();
+      agentHasVision = Boolean(adapters.find((a) => a.id === agentId)?.capabilities?.vision);
+    } catch {
+      // Unknown capability is not evidence of vision — keep the degraded path.
+    }
+  }
   const promptLines = [typed];
   if (attached.length > 0) {
     promptLines.push("", "Context files (read these first):");
     promptLines.push(...attached.map((file) => `- ${file}`));
   }
   if (hasImages) {
-    promptLines.push("", "Image context files (attached as file references — this provider does not have vision, so these files will be read as text/referenced by path):");
+    promptLines.push(
+      "",
+      agentHasVision
+        ? "Image context files:"
+        : "Image context files (attached as file references — this provider does not have vision, so these files will be read as text/referenced by path):",
+    );
     promptLines.push(...imageContextPaths.map((file) => `- ${file}`));
   }
   const prompt = promptLines.join("\n");
@@ -549,7 +568,7 @@ async function startRun(message: Record<string, unknown>): Promise<void> {
     mode,
     repoPath,
     prompt,
-    agentId: String(message.agentId ?? "claude"),
+    agentId,
     ...(message.workerId ? { workerId: String(message.workerId) } : {}),
     ...(typeof message.maxConcurrency === "number"
       ? { maxConcurrency: message.maxConcurrency }

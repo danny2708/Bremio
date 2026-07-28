@@ -1685,3 +1685,30 @@ Rules:
 - `corepack pnpm vitest run apps/vscode-extension` — 66/66 passed (+1 resize test)
 - `corepack pnpm test` — 849/849 passed / 65 files (+1, was 848)
 - Red-check: removed `resize: vertical` from `.process` → `toMatch(/\.process[^}]*resize:\s*vertical;/)` fails with "expected string to match". Restored.
+
+### S7-REVIEW — tech-lead audit of Sprint 7
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-28T22:35 → 2026-07-28T23:00
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T1 … S7-T8
+- **status:** done
+
+**Did**
+- Audited all 8 tasks. S7-T1/T2 persistence, S7-T4 labelling and S7-T5's compact are sound. S7-T4 in particular is honest: every token figure is `length / 4` and every one of them is labelled `estimated`; the `measured` branch exists in the type and is never produced, which is the correct behaviour while no provider reports real counts. `compactSession` is non-destructive — it inserts a summary row and leaves the runs and events intact.
+- **Fixed: auto-compact could fire at most once per session.** `shouldAutoCompact`'s fourth guard refused to re-fire until usage fell below `resetFraction` (0.5) — but guard 3 has already established usage >= `triggerFraction` (0.75), so `fraction < 0.5` was unsatisfiable and the success branch was unreachable for the rest of the session. Worse, `lastAutoCompactAtTurn` was derived from *all* compacts, so one manual compact disabled auto-compact permanently. Removed the guard: guard 2 (needs >= 2 compactable turns) already delivers the anti-oscillation property it was reaching for, because compacting consumes the uncompacted prior turns.
+- **Fixed: two implementations of the auto-compact decision.** `tryAutoCompact` (exported, tested) and `RunRegistry.#evaluateAutoCompact` + three private helpers (unexported, actually used) — the doc comment openly said "mirrors the logic in `RunRegistry.#autoCompactIfNeeded`". They had already drifted on budget handling. The registry now calls `tryAutoCompact`; the four private helpers are gone.
+- **Fixed: `created_by` was hard-coded `'manual'`.** An automatic compact appeared in `bremio session compacts` as the user's own doing — the audit trail naming the wrong actor for the thing that shrank their context. `compactSession` now takes the actor and the auto path passes `"auto"`.
+- **Fixed: S7-T3's vision "gate" was a constant in two places.** `getVisionNotice()` returned "No installed provider supports vision" whenever an image item existed, and `extension.ts` wrote "this provider does not have vision" into the prompt unconditionally. Neither read `capabilities.vision`. True of every adapter shipped today, false the moment one is not — and the task asked for a gate. Both now read the daemon's reported capabilities; `client.ts`'s `adapters()` type had been dropping the `capabilities` field the daemon has always sent.
+- Replaced the two tests that encoded the bug rather than caught it, and added: a second auto-compact after new turns accumulate, refusal immediately after a compact (nothing left to fold), actor recorded correctly, and a drift test for the capability read in the webview.
+
+**Decided**
+- Removed `resetFraction` / `DEFAULT_RESET_FRACTION` from the public input rather than making them work. A correct latch needs state the caller does not maintain, and guard 2 already covers the case the guard existed for. A knob nothing can set correctly is worse than no knob.
+- Left the `measured` arm of `measurementMethod` in place though nothing produces it — the type documents an intended honest distinction, and every current value is correctly `estimated`. Not the same as declared-but-unconsumed capability.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 850 passed / 65 files (was 843 / 65).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.2.0`).
+- Red-check A: restored the reset-fraction guard → 9 tests failed across `compact.test.ts` and `storage.test.ts`, every auto-compact success case among them. Restored.
+- Red-check B: reverted `created_by` to the literal `'manual'` → "records who compacted" failed. Restored.
+- Red-check C: reverted `getVisionNotice` to the unconditional string → the new capability-read drift test failed. Restored.

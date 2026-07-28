@@ -1331,6 +1331,13 @@ let currentSessionId = null;
 function getVisionNotice() {
   const hasImageItems = (storedContextItems || []).some((item) => item.type === "image");
   if (!hasImageItems) return "";
+  // Derived from the capabilities the daemon reports, not asserted. This
+  // returned the "no provider supports vision" string unconditionally, which
+  // happens to be true of every adapter today and becomes a false claim the
+  // moment one is not.
+  if (!adapters || adapters.length === 0) return "";
+  const visionCapable = adapters.filter((a) => a.capabilities && a.capabilities.vision);
+  if (visionCapable.length > 0) return "";
   return "No installed provider supports vision. Image files will be listed as references, not displayed.";
 }
 

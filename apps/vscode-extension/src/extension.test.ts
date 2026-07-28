@@ -250,6 +250,14 @@ describe("webview", () => {
     expect(html).toContain('"image"');
   });
 
+  it("derives the vision notice from reported capabilities, not a constant", () => {
+    // It returned the "no provider supports vision" string whenever an image
+    // item existed — true of every adapter shipped today and a false claim the
+    // moment one reports vision. S7-T3 asked for a gate, so there has to be a
+    // capability read in the decision.
+    expect(html).toMatch(/a\.capabilities\s*&&\s*a\.capabilities\.vision/);
+  });
+
   it("renders every tab the panel offers", () => {
     for (const tab of ["run", "runs", "capacity", "doctor"]) {
       expect(html).toContain(`data-tab="${tab}"`);

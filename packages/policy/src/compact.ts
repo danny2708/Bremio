@@ -5,13 +5,21 @@
  * token usage, a budget, and hysteresis state. No storage or provider
  * dependency — unit-testable in isolation, like the transition machine.
  *
- * Guards (each is red-checked):
+ * Guards:
  *   1. Budget must be known — no ratio without a denominator.
  *   2. Not enough compactable turns — the existing `compactSession` throws
- *      on sessions with fewer than 2 turns, so don't ask it to.
+ *      on sessions with fewer than 2 turns, so don't ask it to. This is also
+ *      what stops per-turn oscillation: compacting consumes the uncompacted
+ *      prior turns, so nothing can re-fire until at least two new ones exist.
  *   3. Usage must exceed the trigger fraction of the budget.
- *   4. Hysteresis — after an auto-compact, don't re-trigger until usage has
- *      dropped below the reset fraction (prevents per-turn oscillation).
+ *
+ * There was a fourth guard: after any compact, refuse until usage fell below
+ * a `resetFraction` (0.5) that had to be lower than `triggerFraction` (0.75).
+ * Since guard 3 has already established usage >= 0.75, "usage < 0.5" could
+ * never hold, so the success branch was unreachable for the rest of the
+ * session — one auto-compact per session, and none at all if the user had ever
+ * compacted manually. Guard 2 provides the property guard 4 was reaching for,
+ * without the contradiction.
  *
  * The measurement method (`estimated` | `measured`) is recorded in the
  * decision reason for audit but does not gate the decision — ADR-8 requires
@@ -42,12 +50,6 @@ export interface AutoCompactInput {
    */
   measurementMethod: "estimated" | "measured";
   /**
-   * The turn index of the most recent auto-compact, or `null` if none has
-   * fired yet this session. Used for hysteresis to prevent per-turn
-   * oscillation.
-   */
-  lastAutoCompactAtTurn: number | null;
-  /**
    * How many turns could be compacted (everything before the current turn
    * that isn't already compacted). The caller computes this from session
    * state; this function rejects < 2 to match `compactSession`'s guard.
@@ -57,18 +59,10 @@ export interface AutoCompactInput {
    * Fraction of budget at which auto-compact triggers. Default 0.75.
    */
   triggerFraction?: number;
-  /**
-   * Fraction of budget below which the hysteresis latch resets, allowing
-   * a future trigger. Must be < triggerFraction. Default 0.5.
-   */
-  resetFraction?: number;
 }
 
 /** Default trigger: compact when usage reaches 75% of budget. */
 export const DEFAULT_TRIGGER_FRACTION = 0.75;
-
-/** Default reset: hysteresis latch clears below 50% of budget. */
-export const DEFAULT_RESET_FRACTION = 0.5;
 
 /**
  * Evaluate whether auto-compaction should fire for this session/turn.
@@ -81,12 +75,10 @@ export function shouldAutoCompact(input: AutoCompactInput): AutoCompactDecision 
     usedTokens,
     budgetTokens,
     measurementMethod,
-    lastAutoCompactAtTurn,
     compactableTurns,
   } = input;
 
   const triggerFraction = input.triggerFraction ?? DEFAULT_TRIGGER_FRACTION;
-  const resetFraction = input.resetFraction ?? DEFAULT_RESET_FRACTION;
 
   // Guard 1: budget must be known and positive.
   if (budgetTokens <= 0) {
@@ -115,20 +107,6 @@ export function shouldAutoCompact(input: AutoCompactInput): AutoCompactDecision 
       ok: false,
       reason: `usage at ${Math.round(fraction * 100)}% of budget (${measurementMethod}), below ${Math.round(triggerFraction * 100)}% trigger`,
     };
-  }
-
-  // Guard 4: hysteresis. After an auto-compact fires at turn N, don't re-fire
-  // until usage has dropped below the reset fraction. This prevents
-  // per-turn oscillation: without it, every subsequent turn that stays above
-  // trigger would fire another compact (which would be a no-op or throw
-  // because the turns are already compacted).
-  if (lastAutoCompactAtTurn !== null) {
-    if (fraction >= resetFraction) {
-      return {
-        ok: false,
-        reason: `hysteresis: last auto-compact at turn ${lastAutoCompactAtTurn}; usage at ${Math.round(fraction * 100)}% has not fallen below ${Math.round(resetFraction * 100)}% reset`,
-      };
-    }
   }
 
   return {

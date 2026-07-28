@@ -933,7 +933,18 @@ export class RunStore {
     return row ? toSessionContext(row) : undefined;
   }
 
-  compactSession(sessionId: string): PersistedSessionCompact {
+  /**
+   * Fold every turn before the latest into one summary row.
+   *
+   * `createdBy` records who asked. It was hard-coded to `'manual'`, so an
+   * automatic compact appeared in `bremio session compacts` as the user's own
+   * doing — the audit trail naming the wrong actor for the thing that shrank
+   * their context.
+   */
+  compactSession(
+    sessionId: string,
+    createdBy: "manual" | "auto" = "manual",
+  ): PersistedSessionCompact {
     const runs = this.db
       .prepare("SELECT * FROM runs WHERE session_id = ? ORDER BY turn_index ASC")
       .all(sessionId) as Array<Record<string, unknown>>;
@@ -991,9 +1002,9 @@ export class RunStore {
     this.db
       .prepare(
         `INSERT INTO session_compacts (id, session_id, turn_range_start, turn_range_end, summary, token_count, compacted_run_ids, created_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual')`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, sessionId, turnRangeStart, turnRangeEnd, summary, totalTokens, runIdsJson, now);
+      .run(id, sessionId, turnRangeStart, turnRangeEnd, summary, totalTokens, runIdsJson, now, createdBy);
 
     return this.getSessionCompact(id)!;
   }

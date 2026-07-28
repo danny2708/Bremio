@@ -832,7 +832,10 @@ describe("tryAutoCompact (S7-T7)", () => {
     expect(compacts.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("does not re-auto-compact due to hysteresis", async () => {
+  it("compacts again once the session has grown back over budget", async () => {
+    // This asserted the opposite — that the second compact was refused by
+    // hysteresis — which is what the removed reset-fraction guard did. A long
+    // session got exactly one auto-compact and then grew unbounded.
     const s = await makeStore();
     const longPrompt = "x".repeat(100_000);
     const sid = run(s, "r0", longPrompt);
@@ -840,16 +843,37 @@ describe("tryAutoCompact (S7-T7)", () => {
     run(s, "r2", longPrompt, sid);
     run(s, "r3", longPrompt, sid);
 
-    const first = tryAutoCompact(s, sid, 40_000);
+    const first = tryAutoCompact(s, sid, { budgetTokens: 40_000 });
     expect(first.ok).toBe(true);
 
-    // Add more turns so compactableTurns >= 2 (needed to reach guard 4)
+    // Nothing left to fold until new turns arrive.
+    const immediate = tryAutoCompact(s, sid, { budgetTokens: 40_000 });
+    expect(immediate.ok).toBe(false);
+    expect(immediate.reason).toContain("at least 2");
+
     run(s, "r4", longPrompt, sid);
     run(s, "r5", longPrompt, sid);
 
-    const second = tryAutoCompact(s, sid, 40_000);
-    expect(second.ok).toBe(false);
-    expect(second.reason).toContain("hysteresis");
+    const second = tryAutoCompact(s, sid, { budgetTokens: 40_000 });
+    expect(second.ok).toBe(true);
+    expect(s.getSessionCompacts(sid)).toHaveLength(2);
+  });
+
+  it("records who compacted, so an automatic one is not filed as the user's", async () => {
+    const s = await makeStore();
+    const longPrompt = "x".repeat(100_000);
+    const sid = run(s, "r0", longPrompt);
+    run(s, "r1", longPrompt, sid);
+    run(s, "r2", longPrompt, sid);
+
+    expect(tryAutoCompact(s, sid).ok).toBe(true);
+    expect(s.getSessionCompacts(sid)[0]?.createdBy).toBe("auto");
+
+    // An explicit compact is still the user's.
+    run(s, "r3", longPrompt, sid);
+    run(s, "r4", longPrompt, sid);
+    s.compactSession(sid);
+    expect(s.getSessionCompacts(sid).find((c) => c.createdBy === "manual")).toBeDefined();
   });
 
   it("auto-compacts with custom budget", async () => {
@@ -857,7 +881,7 @@ describe("tryAutoCompact (S7-T7)", () => {
     const sid = run(s, "r0", "x".repeat(110));
     run(s, "r1", "x".repeat(110), sid);
     run(s, "r2", "x".repeat(110), sid);
-    const res = tryAutoCompact(s, sid, 100);
+    const res = tryAutoCompact(s, sid, { budgetTokens: 100 });
     expect(res.ok).toBe(true);
   });
 });

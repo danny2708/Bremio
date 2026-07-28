@@ -290,7 +290,16 @@ export class BremioClient {
     return body;
   }
 
-  adapters(): Promise<{ adapters: Array<{ id: string; health: { status: string; detail?: string }; leadEligible: boolean }> }> {
+  adapters(): Promise<{
+    adapters: Array<{
+      id: string;
+      health: { status: string; detail?: string };
+      leadEligible: boolean;
+      /** The daemon has always sent this; the type dropped it, so the panel
+       *  could not gate on `vision` and hard-coded the answer instead. */
+      capabilities?: Record<string, boolean>;
+    }>;
+  }> {
     return this.#call("/adapters");
   }
 

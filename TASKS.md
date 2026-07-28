@@ -141,7 +141,7 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 
 ---
 
-## Sprint 7 — Session and context UX
+## Sprint 7 — Session and context UX ✅ COMPLETE
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|

@@ -1,15 +1,10 @@
 import { describe, it, expect } from "vitest";
-import {
-  shouldAutoCompact,
-  DEFAULT_TRIGGER_FRACTION,
-  DEFAULT_RESET_FRACTION,
-} from "./compact";
+import { shouldAutoCompact, DEFAULT_TRIGGER_FRACTION } from "./compact";
 
 const FULL_POSITIVE_INPUT = {
   usedTokens: 80_000,
   budgetTokens: 100_000,
   measurementMethod: "estimated" as const,
-  lastAutoCompactAtTurn: null,
   compactableTurns: 5,
 };
 
@@ -67,41 +62,25 @@ describe("shouldAutoCompact (S7-T7)", () => {
     expect(res.reason).toContain("75%");
   });
 
-  // ── Guard 4: hysteresis ────────────────────────────────────────────
+  // ── A session may compact more than once ───────────────────────────
 
-  it("rejects when usage has not dropped below reset fraction since last auto-compact", () => {
-    // Last auto-compact fired at turn 5; we're now at turn 10 with 80% usage.
-    // 80% >= 50% reset → blocked by hysteresis.
-    const res = shouldAutoCompact({
-      ...FULL_POSITIVE_INPUT,
-      usedTokens: 80_000,
-      budgetTokens: 100_000,
-      lastAutoCompactAtTurn: 5,
-
-    });
-    expect(res.ok).toBe(false);
-    expect(res.reason).toContain("hysteresis");
-    expect(res.reason).toContain("80%");
-    expect(res.reason).toContain("50%");
+  it("fires again on a later turn once new turns have accumulated", () => {
+    // The property the removed reset-fraction guard destroyed. It required
+    // usage < 0.5 to re-fire while guard 3 had already established usage >=
+    // 0.75, so after the first compact the success branch was unreachable for
+    // the rest of the session. Its own test only "passed" by inverting the
+    // fractions (trigger 0.33 below reset 0.5), a configuration the input
+    // documentation forbids.
+    const res = shouldAutoCompact({ ...FULL_POSITIVE_INPUT, compactableTurns: 2 });
+    expect(res.ok).toBe(true);
   });
 
-  it("allows auto-compact again when usage drops below reset fraction", () => {
-    // Last auto-compact at turn 5; now at 85% usage. With trigger=0.33
-    // and reset=0.5: 85% >= 33% trigger (passes Guard 3) AND
-    // 85% >= 50% reset... that would still block. We need usage
-    // BETWEEN trigger and reset: e.g. 44% >= 33% trigger AND 44% < 50% reset.
-    const res = shouldAutoCompact({
-      ...FULL_POSITIVE_INPUT,
-      usedTokens: 44_000,
-      budgetTokens: 100_000,
-      lastAutoCompactAtTurn: 5,
-
-      triggerFraction: 0.33,
-      resetFraction: 0.5,
-    });
-    expect(res.ok).toBe(true);
-    expect(res.reason).toContain("auto-compact");
-    expect(res.reason).toContain("44%");
+  it("stops re-firing by running out of compactable turns, not by latching", () => {
+    // Compacting consumes the uncompacted prior turns, so the very next turn
+    // has nothing left to fold. This is what prevents per-turn oscillation.
+    const justCompacted = shouldAutoCompact({ ...FULL_POSITIVE_INPUT, compactableTurns: 0 });
+    expect(justCompacted.ok).toBe(false);
+    expect(justCompacted.reason).toContain("at least 2");
   });
 
   // ── Happy paths ────────────────────────────────────────────────────
@@ -136,42 +115,28 @@ describe("shouldAutoCompact (S7-T7)", () => {
     expect(res.reason).toContain("75%");
   });
 
-  it("uses custom trigger and reset fractions when provided", () => {
+  it("uses a custom trigger fraction when provided", () => {
     // 60% >= 50% trigger → should fire
     const res = shouldAutoCompact({
       ...FULL_POSITIVE_INPUT,
       usedTokens: 60_000,
       budgetTokens: 100_000,
       triggerFraction: 0.5,
-      resetFraction: 0.25,
     });
     expect(res.ok).toBe(true);
     expect(res.reason).toContain("60%");
-    // Hysteresis: 55% >= 50% trigger (passes G3) AND 55% >= 25% reset (blocks G4)
-    const hysteresis = shouldAutoCompact({
+    // 40% < 50% trigger → should not.
+    const below = shouldAutoCompact({
       ...FULL_POSITIVE_INPUT,
-      usedTokens: 55_000,
+      usedTokens: 40_000,
       budgetTokens: 100_000,
-      lastAutoCompactAtTurn: 9,
       triggerFraction: 0.5,
-      resetFraction: 0.25,
     });
-    expect(hysteresis.ok).toBe(false);
-    expect(hysteresis.reason).toContain("hysteresis");
+    expect(below.ok).toBe(false);
+    expect(below.reason).toContain("below");
   });
 
-  it("uses default fractions when not specified", () => {
+  it("uses the default trigger fraction when not specified", () => {
     expect(DEFAULT_TRIGGER_FRACTION).toBe(0.75);
-    expect(DEFAULT_RESET_FRACTION).toBe(0.5);
-  });
-
-  // ── First-time fire (no prior auto-compact) ────────────────────────
-
-  it("fires on first trigger even with no prior auto-compact", () => {
-    const res = shouldAutoCompact({
-      ...FULL_POSITIVE_INPUT,
-      lastAutoCompactAtTurn: null,
-    });
-    expect(res.ok).toBe(true);
   });
 });

@@ -393,89 +393,24 @@ export class RunRegistry {
   }
 
   /**
-   * Estimate token count of all prior turns for a session.
-   * Uses existing compact tokenCounts (estimated at compact-creation time)
-   * plus char/4 heuristic for non-compacted turns.
-   */
-  #estimatePriorTurnTokens(sessionId: string): { totalTokens: number; measurementMethod: "estimated" | "measured" } {
-    const detail = this.store.sessionDetail(sessionId);
-    if (!detail || detail.turns.length === 0) return { totalTokens: 0, measurementMethod: "estimated" };
-
-    const compacts = this.store.getSessionCompacts(sessionId);
-    const compactedTurns = new Set<number>();
-    let compactTokenSum = 0;
-    for (const c of compacts) {
-      for (let i = c.turnRangeStart; i <= c.turnRangeEnd; i++) compactedTurns.add(i);
-      compactTokenSum += c.tokenCount;
-    }
-
-    let nonCompactedTokens = 0;
-    for (const turn of detail.turns) {
-      if (!compactedTurns.has(turn.turnIndex)) {
-        nonCompactedTokens += Math.ceil(turn.prompt.length / 4);
-      }
-    }
-
-    return { totalTokens: compactTokenSum + nonCompactedTokens, measurementMethod: "estimated" };
-  }
-
-  /**
-   * Compute the turn index of the most recent compact (highest turnRangeEnd).
-   * Returns null if no compacts exist.
-   */
-  #getLastAutoCompactTurn(sessionId: string): number | null {
-    const compacts = this.store.getSessionCompacts(sessionId);
-    if (compacts.length === 0) return null;
-    return Math.max(...compacts.map((c) => c.turnRangeEnd));
-  }
-
-  /**
-   * Count non-compacted, non-latest turns — i.e. turns that could be
-   * included in an auto-compact.
-   */
-  #countCompactableTurns(sessionId: string): number {
-    const runsCount = this.store.countSessionRuns(sessionId);
-    if (runsCount < 2) return 0;
-    const latestTurnIndex = runsCount - 1;
-    const compacts = this.store.getSessionCompacts(sessionId);
-    const compactedTurns = new Set<number>();
-    for (const c of compacts) {
-      for (let i = c.turnRangeStart; i <= c.turnRangeEnd; i++) compactedTurns.add(i);
-    }
-    let count = 0;
-    for (let i = 0; i < latestTurnIndex; i++) {
-      if (!compactedTurns.has(i)) count++;
-    }
-    return count;
-  }
-
-  /**
-   * Evaluate whether auto-compact should fire for this session.
-   * Uses the pure `shouldAutoCompact` decision from @bremio/policy.
-   */
-  #evaluateAutoCompact(sessionId: string): AutoCompactDecision {
-    const { totalTokens, measurementMethod } = this.#estimatePriorTurnTokens(sessionId);
-    const lastAutoCompactAtTurn = this.#getLastAutoCompactTurn(sessionId);
-    const compactableTurns = this.#countCompactableTurns(sessionId);
-
-    return shouldAutoCompact({
-      usedTokens: totalTokens,
-      budgetTokens: 100_000,
-      measurementMethod,
-      lastAutoCompactAtTurn,
-      compactableTurns,
-    });
-  }
-
-  /**
-   * Auto-compact the session if thresholds are met.
-   * Called before building prior turns for session continuation.
+   * Auto-compact the session if thresholds are met, before a continuation
+   * builds its prior turns.
+   *
+   * Delegates to the same `tryAutoCompact` the tests drive. This class used to
+   * carry its own copy — four private helpers plus a second `shouldAutoCompact`
+   * call with its own hard-coded budget — described in `tryAutoCompact`'s doc
+   * comment as "mirrors the logic in `RunRegistry.#autoCompactIfNeeded`". Two
+   * copies of a decision, only one of them tested, is how the reset-fraction
+   * contradiction reached production without a failing test.
    */
   #autoCompactIfNeeded(sessionId: string): void {
-    const decision = this.#evaluateAutoCompact(sessionId);
-    if (decision.ok) {
-      this.compactSession(sessionId);
-    }
+    const decision = tryAutoCompact(this.store, sessionId, { createdBy: "auto" });
+    if (!decision.ok) return;
+    this.#publishSession(sessionId, {
+      kind: "session-updated",
+      sessionId,
+      data: { autoCompacted: true, reason: decision.reason },
+    });
   }
 
   /**
@@ -1269,14 +1204,15 @@ export function buildPriorTurnsFromStore(
 /**
  * Evaluate and optionally trigger auto-compaction for a session.
  *
- * Exported for testing. Mirrors the logic in `RunRegistry.#autoCompactIfNeeded`.
- * Returns the decision reason so callers can verify the outcome.
+ * The single implementation: `RunRegistry.#autoCompactIfNeeded` calls this
+ * rather than keeping a parallel copy.
  */
 export function tryAutoCompact(
   store: RunStore,
   sessionId: string,
-  budgetTokens = 100_000,
+  options: { budgetTokens?: number; createdBy?: "manual" | "auto" } = {},
 ): AutoCompactDecision {
+  const budgetTokens = options.budgetTokens ?? 100_000;
   const detail = store.sessionDetail(sessionId);
   if (!detail || detail.turns.length === 0) {
     return { ok: false, reason: "session has no turns" };
@@ -1299,10 +1235,6 @@ export function tryAutoCompact(
   const totalTokens = compactTokenSum + nonCompactedTokens;
   const measurementMethod: "estimated" | "measured" = "estimated";
 
-  const lastAutoCompactAtTurn = compacts.length > 0
-    ? Math.max(...compacts.map((c) => c.turnRangeEnd))
-    : null;
-
   const runsCount = store.countSessionRuns(sessionId);
   const latestTurnIndex = runsCount - 1;
   let compactableTurns = 0;
@@ -1314,12 +1246,11 @@ export function tryAutoCompact(
     usedTokens: totalTokens,
     budgetTokens,
     measurementMethod,
-    lastAutoCompactAtTurn,
     compactableTurns,
   });
 
   if (decision.ok) {
-    store.compactSession(sessionId);
+    store.compactSession(sessionId, options.createdBy ?? "auto");
   }
 
   return decision;
