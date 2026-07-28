@@ -933,10 +933,11 @@ describe("multi-client SSE fan-out (S4-T8)", () => {
         body: JSON.stringify({ type: "file", source: "/tmp/repo/src/main.ts" }),
       });
       expect(createRes.status).toBe(201);
-      const createBody = await createRes.json() as { contextItem: { id: string; type: string; source: string; enabled: boolean } };
+      const createBody = await createRes.json() as { contextItem: { id: string; type: string; source: string; enabled: boolean; tokensEstimated?: number } };
       expect(createBody.contextItem.type).toBe("file");
       expect(createBody.contextItem.source).toBe("/tmp/repo/src/main.ts");
       expect(createBody.contextItem.enabled).toBe(true);
+      expect(createBody.contextItem.tokensEstimated).toBeGreaterThan(0);
 
       const listRes = await call(await daemon(registry), `/sessions/${sessionId}/context-items`);
       expect(listRes.status).toBe(200);
@@ -1000,6 +1001,26 @@ describe("multi-client SSE fan-out (S4-T8)", () => {
       expect(toggleRes.status).toBe(200);
       const toggled = await toggleRes.json() as { contextItem: { enabled: boolean } };
       expect(toggled.contextItem.enabled).toBe(false);
+    });
+
+    it("returns context metrics for a session (S7-T4)", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run = store.createRun({ id: "ctx-metrics", mode: "single", repositoryPath: "/tmp/repo", prompt: "ctx" });
+      const sessionId = run.sessionId!;
+
+      const handle = await daemon(registry);
+      store.saveContextItem({ sessionId, type: "file", source: "/a.txt", tokensEstimated: 50 });
+      store.saveContextItem({ sessionId, type: "file", source: "/b.txt", tokensEstimated: 150, enabled: false });
+      store.saveContextItem({ sessionId, type: "image", source: "/img.png", tokensEstimated: 300 });
+
+      const res = await call(handle, `/sessions/${sessionId}/context-metrics`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { metrics: { totalTokens: number; measurementMethod: string; enabledItemCount: number; totalItemCount: number } };
+      expect(body.metrics.totalTokens).toBe(350); // 50 + 300 (disabled excluded)
+      expect(body.metrics.measurementMethod).toBe("estimated");
+      expect(body.metrics.enabledItemCount).toBe(2);
+      expect(body.metrics.totalItemCount).toBe(3);
     });
   });
 });

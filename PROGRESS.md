@@ -1560,3 +1560,38 @@ Rules:
 **Decided**
 
 **Verification**
+
+### S7-T4 — Context window reporting
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T10:30 → 11:35
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T4
+- **status:** done
+
+**Did**
+- Added `measurementMethod: "estimated" | "measured"` to `ContextItemSchema` in `packages/protocol/src/context-item.ts` — new optional field that labels how the token count was determined
+- Added `measurementMethod` to `CreateContextItemInput` and `PersistedContextItem` interfaces in daemon `storage.ts`
+- SCHEMA_VERSION 11→12 migration: `addColumnIfMissing("context_items", "measurement_method")`
+- Updated `saveContextItem()`, `toContextItem()` to persist and map the new column
+- Added `getSessionContextMetrics()` store method — sums tokens for enabled items, computes overall measurement method (estimated if any item is estimated or if no items exist)
+- Added `getSessionContextMetrics()` delegate in `RunRegistry` (`runs.ts`)
+- Added `GET /sessions/:id/context-metrics` HTTP endpoint in `server.ts` — returns `{ totalTokens, measurementMethod, enabledItemCount, totalItemCount }`
+- Server creates context item: for file/image types, reads file content and computes token estimate via char/4 heuristic; labels it `"estimated"`
+- CLI `session context list <id>` now shows token count and method per item (e.g. `150 est.`)
+- CLI `session context metrics <id>` shows total context usage: `Context: 350 tokens (estimated) · 2 enabled · 3 total`
+- Updated VS Code panel `renderContextItems()`: per-item token label (`150t`), total in section header
+- 4 new tests: storage context metrics (1), daemon HTTP context metrics (1), storage schema version bump (2)
+
+**Decided**
+- The char/4 heuristic matches the harness's `estimateTokens()` — same algorithm, inlined rather than imported since the daemon doesn't depend on the harness package
+- When no items exist the method reports `"estimated"` (conservative default — no measured items exist to prove measurement)
+- `measurementMethod` is stored at the column level so existing items without the column are treated as unlabelled (no measurement method returned)
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts` — 54/54 passed (was 53)
+- `corepack pnpm vitest run apps/daemon/src/daemon.test.ts` — 46/46 passed (was 45)
+- `corepack pnpm vitest run apps/cli/src/session.test.ts` — 20/20 passed
+- `corepack pnpm vitest run apps/vscode-extension/src/extension.test.ts` — 58/58 passed
+- Red-check: removed `hasAnyEstimated = enabledItems.length === 0 || ...` guard → empty session returns `"measured"` instead of `"estimated"` → test fails for the right reason. Restored.
+- Red-check B: removed `readFileSync().length / 4` estimate computation in server create handler → created file items have no `tokensEstimated` → daemon test assertion `toBeGreaterThan(0)` fails. Restored.

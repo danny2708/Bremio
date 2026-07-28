@@ -1162,6 +1162,13 @@ function renderSessionList(sessions) {
 function renderContextItems(sessionId, items, visionNotice) {
   const sid = escapeHtml(sessionId);
   const notice = visionNotice ? '<div class="banner warn" style="margin-bottom:6px;font-size:12px">' + escapeHtml(visionNotice) + '</div>' : "";
+  const hasTokens = items && items.some((i) => i.tokensEstimated !== undefined);
+  const totalTokens = hasTokens
+    ? items.filter((i) => i.enabled).reduce((s, i) => s + (i.tokensEstimated ?? 0), 0)
+    : 0;
+  const tokenSummary = hasTokens
+    ? '<span class="muted" style="font-size:11px">' + totalTokens + 't · estimated</span>'
+    : "";
   if (!items || items.length === 0) {
     return '<div id="context-items-section" style="margin-top:16px">'
       + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items</div>'
@@ -1174,15 +1181,19 @@ function renderContextItems(sessionId, items, visionNotice) {
   }
   const chips = items.map(function(item, idx) {
     const isImage = item.type === "image";
+    const tokenLabel = item.tokensEstimated !== undefined
+      ? '<span class="muted" style="font-size:10px;margin-left:4px">' + item.tokensEstimated + 't</span>'
+      : "";
     return '<span class="chip' + (item.enabled ? '' : ' disabled') + '" title="' + escapeHtml(item.source) + '">'
       + '<span class="codicon codicon-' + (isImage ? 'file-media' : 'file') + '"></span>'
       + '<span class="name">' + escapeHtml(item.source.slice(Math.max(item.source.lastIndexOf("/"), item.source.lastIndexOf("\\\\")) + 1)) + '</span>'
+      + tokenLabel
       + '<button data-context-toggle="' + idx + '" data-item="' + escapeHtml(item.id) + '" data-enabled="' + (item.enabled ? '1' : '0') + '" aria-label="Toggle">' + (item.enabled ? '●' : '○') + '</button>'
       + '<button data-context-remove="' + idx + '" data-item="' + escapeHtml(item.id) + '" aria-label="Remove">x</button>'
       + '</span>';
   }).join("");
   return '<div id="context-items-section" style="margin-top:16px">'
-    + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items (' + items.length + ')</div>'
+    + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items (' + items.length + ')' + tokenSummary + '</div>'
     + notice
     + '<div>' + chips + '</div>'
     + '<div style="margin-top:8px">'

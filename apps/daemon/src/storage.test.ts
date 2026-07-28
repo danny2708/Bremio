@@ -800,12 +800,12 @@ describe("session_config (S1-T1/T2)", () => {
     expect(s.listSessions("/tmp/repo")).toHaveLength(1);
   });
 
-  it("pristine and migrated stores both report user_version = 11", async () => {
+  it("pristine and migrated stores both report user_version = 12", async () => {
     const fresh = await store();
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(11);
+    expect(freshVer).toBe(12);
 
     const file = await createV3Fixture();
     const migrated = await RunStore.open(file);
@@ -813,7 +813,7 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(11);
+    expect(migratedVer).toBe(12);
   });
 
   it("re-running migration on v5 is a no-op", async () => {
@@ -1108,6 +1108,30 @@ describe("ProviderSessionBinding (S1-T4)", () => {
       expect(items).toHaveLength(2);
       expect(items[0]!.source).toBe("first");
       expect(items[1]!.source).toBe("second");
+    });
+
+    it("computes context metrics for a session (S7-T4)", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run = s.createRun({ id: "ci-metrics", mode: "single", repositoryPath: "/tmp/repo", prompt: "ci" });
+      const sessionId = run.sessionId!;
+
+      // No items → zero metrics
+      const empty = s.getSessionContextMetrics(sessionId);
+      expect(empty.totalTokens).toBe(0);
+      expect(empty.measurementMethod).toBe("estimated");
+      expect(empty.enabledItemCount).toBe(0);
+      expect(empty.totalItemCount).toBe(0);
+
+      s.saveContextItem({ sessionId, type: "file", source: "/a.txt", tokensEstimated: 100, measurementMethod: "estimated" });
+      s.saveContextItem({ sessionId, type: "file", source: "/b.txt", tokensEstimated: 200, measurementMethod: "estimated", enabled: false });
+
+      const metrics = s.getSessionContextMetrics(sessionId);
+      expect(metrics.totalTokens).toBe(100);
+      expect(metrics.measurementMethod).toBe("estimated");
+      expect(metrics.enabledItemCount).toBe(1);
+      expect(metrics.totalItemCount).toBe(2);
     });
   });
 });

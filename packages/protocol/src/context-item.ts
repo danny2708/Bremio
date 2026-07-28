@@ -21,6 +21,7 @@ export const ContextItemSchema = z.object({
   addedAt: z.string(),
   scope: ContextItemScopeSchema,
   tokensEstimated: z.number().int().nonnegative().optional(),
+  measurementMethod: z.enum(["estimated", "measured"]).optional(),
   enabled: z.boolean(),
 });
 

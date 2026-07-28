@@ -24,7 +24,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -290,6 +290,7 @@ export interface PersistedContextItem {
   addedAt: string;
   scope: ContextItemScope;
   tokensEstimated?: number;
+  measurementMethod?: "estimated" | "measured";
   enabled: boolean;
 }
 
@@ -300,6 +301,7 @@ export interface CreateContextItemInput {
   source: string;
   scope?: ContextItemScope;
   tokensEstimated?: number;
+  measurementMethod?: "estimated" | "measured";
   enabled?: boolean;
 }
 
@@ -926,8 +928,8 @@ export class RunStore {
 
     this.db
       .prepare(
-        `INSERT INTO context_items (id, session_id, type, source, added_at, scope, tokens_estimated, enabled)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO context_items (id, session_id, type, source, added_at, scope, tokens_estimated, measurement_method, enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -937,6 +939,7 @@ export class RunStore {
         now,
         scope,
         input.tokensEstimated ?? null,
+        input.measurementMethod ?? null,
         enabled ? 1 : 0,
       );
 
@@ -965,6 +968,24 @@ export class RunStore {
   updateContextItemEnabled(id: string, enabled: boolean): PersistedContextItem | undefined {
     this.db.prepare("UPDATE context_items SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
     return this.getContextItem(id);
+  }
+
+  getSessionContextMetrics(sessionId: string): { totalTokens: number; measurementMethod: string; enabledItemCount: number; totalItemCount: number } {
+    const all = this.db
+      .prepare("SELECT tokens_estimated, measurement_method, enabled FROM context_items WHERE session_id = ? ORDER BY added_at ASC")
+      .all(sessionId) as Array<Record<string, unknown>>;
+    const enabledItems = all.filter((r) => Boolean(r.enabled));
+    const totalTokens = enabledItems.reduce((sum, r) => {
+      const t = r.tokens_estimated;
+      return sum + (t !== null && t !== undefined ? Number(t) : 0);
+    }, 0);
+    const hasAnyEstimated = enabledItems.length === 0 || enabledItems.some((r) => r.measurement_method !== "measured");
+    return {
+      totalTokens,
+      measurementMethod: hasAnyEstimated ? "estimated" : "measured",
+      enabledItemCount: enabledItems.length,
+      totalItemCount: all.length,
+    };
   }
 
   createSessionConfig(input: CreateSessionConfigInput): SessionConfig {
@@ -1592,6 +1613,10 @@ function migrate(db: Database): void {
       `);
     }
 
+    if (Number(current) < 12) {
+      addColumnIfMissing(db, "context_items", "measurement_method", "TEXT DEFAULT 'estimated'");
+    }
+
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -1641,6 +1666,9 @@ function toContextItem(row: Record<string, unknown>): PersistedContextItem {
     scope: String(row.scope) as ContextItemScope,
     ...(row.tokens_estimated !== null && row.tokens_estimated !== undefined
       ? { tokensEstimated: Number(row.tokens_estimated) }
+      : {}),
+    ...(row.measurement_method !== null && row.measurement_method !== undefined
+      ? { measurementMethod: String(row.measurement_method) as "estimated" | "measured" }
       : {}),
     enabled: Boolean(row.enabled),
   };

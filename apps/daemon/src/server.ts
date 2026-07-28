@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 import {
   CreateApprovalRequestSchema,
@@ -15,7 +16,7 @@ import {
 } from "@bremio/quota";
 import { MergeManager } from "@bremio/workspace";
 import { RunRegistry, defaultAdapters, type SessionEvent } from "./runs";
-import { isTerminal, type CreateContextItemInput } from "./storage";
+import { isTerminal, type CreateContextItemInput, type PersistedContextItem } from "./storage";
 import { mergeRun } from "./merge";
 import { applyRunPatch, revertRunPatch } from "./apply";
 import { loadReportByRunId } from "@bremio/orchestrator";
@@ -308,7 +309,20 @@ async function handle(
     const id = decodeURIComponent(contextItemCreate[1] ?? "");
     try {
       const body = (await readJsonBody(req)) as Record<string, unknown>;
-      const item = registry.createContextItem({ sessionId: id, ...body } as CreateContextItemInput);
+      const input: CreateContextItemInput = { sessionId: id, type: String(body.type ?? "") as CreateContextItemInput["type"], source: String(body.source ?? ""), scope: body.scope as CreateContextItemInput["scope"], tokensEstimated: body.tokensEstimated as number | undefined, measurementMethod: body.measurementMethod as CreateContextItemInput["measurementMethod"], enabled: body.enabled as boolean | undefined };
+      if (input.tokensEstimated === undefined) {
+        let text = input.source;
+        if (input.type === "file" || input.type === "image") {
+          try {
+            text = readFileSync(input.source, "utf-8");
+          } catch {
+            text = input.source;
+          }
+        }
+        input.tokensEstimated = Math.ceil(text.length / 4);
+        input.measurementMethod = "estimated";
+      }
+      const item = registry.createContextItem(input);
       return sendJson(res, 201, { contextItem: item });
     } catch (err) {
       return sendJson(res, 400, { error: (err as Error).message });
@@ -342,6 +356,13 @@ async function handle(
     } catch (err) {
       return sendJson(res, 400, { error: (err as Error).message });
     }
+  }
+
+  const contextMetrics = /^\/sessions\/([^/]+)\/context-metrics$/.exec(route);
+  if (method === "GET" && contextMetrics) {
+    const id = decodeURIComponent(contextMetrics[1] ?? "");
+    const metrics = registry.getSessionContextMetrics(id);
+    return sendJson(res, 200, { metrics });
   }
 
   const runDetail = /^\/runs\/([^/]+)$/.exec(route);

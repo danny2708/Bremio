@@ -356,6 +356,10 @@ export class RunRegistry {
     return item;
   }
 
+  getSessionContextMetrics(sessionId: string): { totalTokens: number; measurementMethod: string; enabledItemCount: number; totalItemCount: number } {
+    return this.store.getSessionContextMetrics(sessionId);
+  }
+
   /**
    * Evaluate a Solo/Co-lab transition for a session and, if it fires, persist
    * the new collaboration state as a session-config revision.

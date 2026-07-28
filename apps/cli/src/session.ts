@@ -763,11 +763,14 @@ export async function sessionCommandFromCli(
       }
       return deleteContextItemCommand({ id, itemId, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
     }
+    if (ctxCommand === "metrics") {
+      return contextMetricsCommand({ id, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+    }
     if (!ctxCommand) {
       return listContextItemsCommand({ id, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
     }
     console.error(
-      c.red(`error: unknown context subcommand '${ctxCommand}'; expected 'list', 'add', or 'del'`),
+      c.red(`error: unknown context subcommand '${ctxCommand}'; expected 'list', 'add', 'del', or 'metrics'`),
     );
     return 2;
   }
@@ -806,7 +809,8 @@ async function listContextItemsCommand(opts: ListContextItemsOptions): Promise<n
     if (res.ok) {
       const data = (await res.json()) as { contextItems: PersistedContextItem[] };
       for (const item of data.contextItems) {
-        console.log(`${item.id}  ${c.green(item.type)}  ${item.enabled ? "" : c.dim("(disabled) ")}${item.source}`);
+        const tokens = item.tokensEstimated !== undefined ? `${item.tokensEstimated} ${item.measurementMethod ?? "est."}` : "?";
+        console.log(`${item.id}  ${c.green(item.type)}  ${c.dim(tokens)}  ${item.enabled ? "" : c.dim("(disabled) ")}${item.source}`);
       }
       return 0;
     }
@@ -821,7 +825,8 @@ async function listContextItemsCommand(opts: ListContextItemsOptions): Promise<n
   try {
     const items = store.listContextItems(opts.id);
     for (const item of items) {
-      console.log(`${item.id}  ${c.green(item.type)}  ${item.enabled ? "" : c.dim("(disabled) ")}${item.source}`);
+      const tokens = item.tokensEstimated !== undefined ? `${item.tokensEstimated} ${item.measurementMethod ?? "est."}` : "?";
+      console.log(`${item.id}  ${c.green(item.type)}  ${c.dim(tokens)}  ${item.enabled ? "" : c.dim("(disabled) ")}${item.source}`);
     }
     return 0;
   } finally {
@@ -895,6 +900,40 @@ async function deleteContextItemCommand(opts: DeleteContextItemOptions): Promise
       return 1;
     }
     console.log(`removed context item: ${opts.itemId}`);
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+interface ContextMetricsOptions {
+  id: string;
+  databasePath?: string;
+}
+
+async function contextMetricsCommand(opts: ContextMetricsOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/context-metrics`,
+      { headers: { "x-bremio-token": status.endpoint.token } },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { metrics: { totalTokens: number; measurementMethod: string; enabledItemCount: number; totalItemCount: number } };
+      console.log(`Context: ${c.bold(String(data.metrics.totalTokens))} tokens (${data.metrics.measurementMethod}) · ${data.metrics.enabledItemCount} enabled · ${data.metrics.totalItemCount} total`);
+      return 0;
+    }
+    if (res.status === 404) {
+      console.error(c.red(`error: session '${opts.id}' not found`));
+      return 1;
+    }
+    console.error(c.red(`error: daemon returned ${res.status}`));
+    return 1;
+  }
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const metrics = store.getSessionContextMetrics(opts.id);
+    console.log(`Context: ${c.bold(String(metrics.totalTokens))} tokens (${metrics.measurementMethod}) · ${metrics.enabledItemCount} enabled · ${metrics.totalItemCount} total`);
     return 0;
   } finally {
     store.close();
