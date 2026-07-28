@@ -1654,3 +1654,10 @@ Rules:
 - `corepack pnpm vitest run apps/vscode-extension/src/extension.test.ts` — 58/58 passed
 - Red-check: removed `hasAnyEstimated = enabledItems.length === 0 || ...` guard → empty session returns `"measured"` instead of `"estimated"` → test fails for the right reason. Restored.
 - Red-check B: removed `readFileSync().length / 4` estimate computation in server create handler → created file items have no `tokensEstimated` → daemon test assertion `toBeGreaterThan(0)` fails. Restored.
+
+### S7-T7 — Automatic compact thresholds
+- **agent:** ZCode (GLM-5.2)
+- **time:** 2026-07-28T16:00 → open
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T7
+- **status:** in-progress
