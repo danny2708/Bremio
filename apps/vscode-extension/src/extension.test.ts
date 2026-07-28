@@ -263,6 +263,16 @@ describe("webview", () => {
     // :root token definitions, never as a `background:` value.
     expect(html).not.toMatch(/background:\s*#[0-9a-fA-F]{3,8}/);
   });
+
+  it("provides resize: vertical on scrollable containers", () => {
+    // S7-T8: every section that overflows should be user-resizable so the
+    // panel adapts to the content rather than bounding it to a fixed max-height.
+    // Each rule is asserted separately so a red-check can target one at a time.
+    expect(html).toContain("pre.log {");
+    expect(html).toContain("resize: vertical;");
+    expect(html).toMatch(/\.process[^}]*resize:\s*vertical;/);
+    expect(html).toMatch(/\.diff-patch[^}]*resize:\s*vertical;/);
+  });
 });
 
 describe("the panel's event renderer does not drift from the canonical one", () => {

@@ -1657,7 +1657,31 @@ Rules:
 
 ### S7-T7 — Automatic compact thresholds
 - **agent:** ZCode (GLM-5.2)
-- **time:** 2026-07-28T16:00 → open
+- **time:** 2026-07-28T16:00 → 2026-07-28T22:14
 - **branch:** s7/session-and-context-ux
 - **task(s):** S7-T7
-- **status:** in-progress
+- **status:** done
+
+### S7-T8 — Panel resize (independent of everything)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T22:15 → 2026-07-28T22:37
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T8
+- **status:** done
+
+**Did**
+- Added `resize: vertical` to three scrollable panel sections in `webview.ts`:
+  - `pre.log` (live run event log) — was fixed `max-height: 320px`, now user-resizable
+  - `.process` (session transcript process details) — was fixed `max-height: 260px`, now user-resizable with `min-height: 48px`
+  - `.diff-patch` (diff viewer) — was fixed `max-height: 480px`, now user-resizable
+- Added test `"provides resize: vertical on scrollable containers"` — asserts each selector block contains `resize: vertical` via per-selector regex
+
+**Decided**
+- `min-height: 48px` on `.process` prevents the details element from being shrunk to a sliver
+- Regex per-selector assertions (rather than a blanket `toContain("resize: vertical")`) enable precise red-checks when a guard is removed
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/vscode-extension` — 66/66 passed (+1 resize test)
+- `corepack pnpm test` — 849/849 passed / 65 files (+1, was 848)
+- Red-check: removed `resize: vertical` from `.process` → `toMatch(/\.process[^}]*resize:\s*vertical;/)` fails with "expected string to match". Restored.

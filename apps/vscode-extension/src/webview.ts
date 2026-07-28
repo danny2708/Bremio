@@ -741,7 +741,7 @@ button.ghost:hover { border-color: var(--bremio-primary); color: var(--text); ba
 pre.log {
   background: var(--vscode-textCodeBlock-background, var(--surface-raised));
   border: 1px solid var(--border); border-radius: 6px;
-  padding: 10px; max-height: 320px; overflow: auto; font-size: 11px;
+  padding: 10px; max-height: 320px; overflow: auto; resize: vertical; font-size: 11px;
   font-family: var(--vscode-editor-font-family, monospace); white-space: pre-wrap; margin: 0;
 }
 .log-line { display: block; }
@@ -772,7 +772,7 @@ pre.log {
 .bubble.response { font-size: 13px; line-height: 1.5; }
 /* The process log is reference material, not the answer: dimmed, monospaced
  * and scrollable so a thousand tool calls cannot push the reply off screen. */
-.process { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; color: var(--muted); max-height: 260px; overflow: auto; margin-bottom: 8px; }
+.process { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; color: var(--muted); max-height: 260px; overflow: auto; resize: vertical; min-height: 48px; margin-bottom: 8px; }
 .process summary { cursor: pointer; }
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
@@ -781,7 +781,7 @@ pre.log {
 .diff-viewer { margin-bottom: 10px; }
 .diff-header { margin-bottom: 8px; }
 .diff-stat { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; padding: 6px 8px; background: var(--surface-raised); border-radius: 4px; }
-.diff-patch { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.6; background: var(--vscode-textCodeBlock-background, var(--surface-raised)); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 480px; overflow: auto; white-space: pre; margin: 0 0 10px; }
+.diff-patch { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.6; background: var(--vscode-textCodeBlock-background, var(--surface-raised)); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 480px; overflow: auto; resize: vertical; white-space: pre; margin: 0 0 10px; }
 .diff-patch div { min-height: 1em; }
 .diff-add { background: rgba(55, 200, 55, 0.12); color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950); }
 .diff-remove { background: rgba(200, 55, 55, 0.12); color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149); }
