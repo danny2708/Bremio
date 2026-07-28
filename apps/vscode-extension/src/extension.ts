@@ -290,6 +290,11 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
           await toggleContextItem(message.sessionId, message.itemId, message.enabled);
         }
         return;
+      case "compactSession":
+        if (typeof message.sessionId === "string") {
+          await compactSession(message.sessionId);
+        }
+        return;
     }
   } catch (err) {
     post({ type: "error", message: (err as Error).message });
@@ -488,6 +493,12 @@ async function toggleContextItem(sessionId: string, itemId: string, enabled: boo
   await client.updateContextItemEnabled(sessionId, itemId, enabled);
   const result = await client.contextItems(sessionId);
   post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+}
+
+async function compactSession(sessionId: string): Promise<void> {
+  await client.compactSession(sessionId);
+  // Refresh the session detail to update context items / compacts
+  await sendSessionDetail(sessionId);
 }
 
 async function startRun(message: Record<string, unknown>): Promise<void> {

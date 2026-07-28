@@ -1023,4 +1023,67 @@ describe("multi-client SSE fan-out (S4-T8)", () => {
       expect(body.metrics.totalItemCount).toBe(3);
     });
   });
+
+  describe("compact (S7-T5)", () => {
+    it("POST /sessions/:id/compact creates a compact and returns it", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run0 = store.createRun({ id: "cr-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "compact test turn 0" });
+      const sessionId = run0.sessionId!;
+      store.createRun({ id: "cr-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "compact test turn 1", sessionId });
+
+      const handle = await daemon(registry);
+      const res = await call(handle, `/sessions/${sessionId}/compact`, { method: "POST" });
+      expect(res.status).toBe(201);
+      const body = await res.json() as { compact: { id: string; turnRangeStart: number; turnRangeEnd: number; summary: string; tokenCount: number } };
+      expect(body.compact.turnRangeStart).toBe(0);
+      expect(body.compact.turnRangeEnd).toBe(0);
+      expect(body.compact.summary).toContain("Turn 0");
+      expect(body.compact.tokenCount).toBeGreaterThan(0);
+    });
+
+    it("POST /sessions/:id/compact returns 409 for a session with no runs", async () => {
+      const registry = await freshRegistry();
+      const handle = await daemon(registry);
+      const res = await call(handle, "/sessions/nonexistent/compact", { method: "POST" });
+      expect(res.status).toBe(409);
+    });
+
+    it("GET /sessions/:id/compacts lists compacts", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run0 = store.createRun({ id: "cl-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "list compact" });
+      const sessionId = run0.sessionId!;
+      store.createRun({ id: "cl-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "list compact 1", sessionId });
+      store.compactSession(sessionId);
+
+      const handle = await daemon(registry);
+      const res = await call(handle, `/sessions/${sessionId}/compacts`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { compacts: unknown[] };
+      expect(body.compacts).toHaveLength(1);
+    });
+
+    it("DELETE /sessions/:id/compacts/:compactId removes a compact", async () => {
+      const registry = await freshRegistry();
+      const store = (registry as unknown as { store: RunStore }).store;
+      const run0 = store.createRun({ id: "cd-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "delete compact" });
+      const sessionId = run0.sessionId!;
+      store.createRun({ id: "cd-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "delete compact 1", sessionId });
+      const cmp = store.compactSession(sessionId);
+
+      const handle = await daemon(registry);
+      const res = await call(handle, `/sessions/${sessionId}/compacts/${cmp.id}`, { method: "DELETE" });
+      expect(res.status).toBe(200);
+      const body = await res.json() as { removed: boolean };
+      expect(body.removed).toBe(true);
+    });
+
+    it("DELETE returns 404 for unknown compact id", async () => {
+      const registry = await freshRegistry();
+      const handle = await daemon(registry);
+      const res = await call(handle, "/sessions/some-session/compacts/no-such-compact", { method: "DELETE" });
+      expect(res.status).toBe(404);
+    });
+  });
 });

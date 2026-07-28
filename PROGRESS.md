@@ -1561,6 +1561,38 @@ Rules:
 
 **Verification**
 
+### S7-T5 — Compact: summary artifact + manual command
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T11:35 → 12:15
+- **branch:** s7/session-and-context-ux
+- **task(s):** S7-T5
+- **status:** done
+
+**Did**
+- Added `PersistedSessionCompact` interface to `storage.ts`
+- SCHEMA_VERSION 12→13 migration creates `session_compacts` table
+- Store methods: `compactSession()`, `getSessionCompacts()`, `getSessionCompact()`, `deleteSessionCompact()` + `toSessionCompact()` helper
+- RunRegistry passthroughs in `runs.ts` with session-updated SSE broadcasts
+- HTTP routes: `POST /sessions/:id/compact` (201), `GET /sessions/:id/compacts`, `DELETE /sessions/:id/compacts/:compactId` — `compact: true` capability
+- CLI: `bremio session compact <id>` and `bremio session compacts <id>` (daemon + standalone paths)
+- Panel: compact button (`data-compact-session`) in `renderContextItems()` + click handler
+- Extension: `compactSession` message handler + `client.ts` method
+- 5 storage tests, 5 daemon HTTP tests — 109/109 daemon tests pass (+10 new)
+- Full suite: 277/277 pass across storage, daemon, CLI, extension
+
+**Decided**
+- Compaction writes a summary + ids of replaced turns, never compacts the current turn — per M3-T5 / ADR-8
+- Uses char/4 token estimation (same as S7-T4's harness `estimateTokens`)
+- Measurement method always `"estimated"` for now
+- `compactedRunIds` and `createdBy` stored for audit traceability
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts` — 58/58 passed (+5 compact tests)
+- `corepack pnpm vitest run apps/daemon/src/daemon.test.ts` — 51/51 passed (+5 compact HTTP tests)
+- `corepack pnpm vitest run apps/cli/src` — 103/103 passed
+- `corepack pnpm vitest run apps/vscode-extension/src` — 65/65 passed
+
 ### S7-T4 — Context window reporting
 - **agent:** Claude (opencode)
 - **time:** 2026-07-28T10:30 → 11:35

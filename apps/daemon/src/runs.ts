@@ -38,6 +38,7 @@ import {
   type CreateSessionConfigInput,
   type PersistedApprovalRequest,
   type PersistedContextItem,
+  type PersistedSessionCompact,
   type PersistedRun,
   type PersistedRunEvent,
   type PersistedSession,
@@ -358,6 +359,34 @@ export class RunRegistry {
 
   getSessionContextMetrics(sessionId: string): { totalTokens: number; measurementMethod: string; enabledItemCount: number; totalItemCount: number } {
     return this.store.getSessionContextMetrics(sessionId);
+  }
+
+  compactSession(sessionId: string): PersistedSessionCompact {
+    const compact = this.store.compactSession(sessionId);
+    this.#publishSession(sessionId, {
+      kind: "session-updated",
+      sessionId,
+      data: { compactId: compact.id, turnRange: [compact.turnRangeStart, compact.turnRangeEnd] },
+    });
+    return compact;
+  }
+
+  getSessionCompacts(sessionId: string): PersistedSessionCompact[] {
+    return this.store.getSessionCompacts(sessionId);
+  }
+
+  deleteSessionCompact(id: string): boolean {
+    const compact = this.store.getSessionCompact(id);
+    if (!compact) return false;
+    const removed = this.store.deleteSessionCompact(id);
+    if (removed) {
+      this.#publishSession(compact.sessionId, {
+        kind: "session-updated",
+        sessionId: compact.sessionId,
+        data: { compactRemoved: id },
+      });
+    }
+    return removed;
   }
 
   /**

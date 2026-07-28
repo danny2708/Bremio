@@ -347,6 +347,12 @@ export class BremioClient {
     });
   }
 
+  compactSession(sessionId: string): Promise<{ compact: { id: string; summary: string; tokenCount: number } }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/compact`, {
+      method: "POST",
+    });
+  }
+
   updateContextItemEnabled(sessionId: string, itemId: string, enabled: boolean): Promise<{ contextItem: { id: string; enabled: boolean } }> {
     return this.#call(`/sessions/${encodeURIComponent(sessionId)}/context-items/${encodeURIComponent(itemId)}/enabled`, {
       method: "PATCH",

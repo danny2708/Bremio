@@ -24,7 +24,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -262,6 +262,19 @@ export interface CreateSessionConfigInput {
   changedBy?: string;
   changeReason?: string;
   collaborationState?: string;
+}
+
+export interface PersistedSessionCompact {
+  id: string;
+  sessionId: string;
+  turnRangeStart: number;
+  turnRangeEnd: number;
+  summary: string;
+  tokenCount: number;
+  measurementMethod: "estimated" | "measured";
+  compactedRunIds: string[];
+  createdAt: string;
+  createdBy: string;
 }
 
 export interface PersistedSessionContext {
@@ -918,6 +931,90 @@ export class RunStore {
       .prepare("SELECT * FROM session_context WHERE session_id = ? ORDER BY turn_index DESC LIMIT 1")
       .get(sessionId) as Record<string, unknown> | undefined;
     return row ? toSessionContext(row) : undefined;
+  }
+
+  compactSession(sessionId: string): PersistedSessionCompact {
+    const runs = this.db
+      .prepare("SELECT * FROM runs WHERE session_id = ? ORDER BY turn_index ASC")
+      .all(sessionId) as Array<Record<string, unknown>>;
+
+    if (runs.length === 0) throw new Error(`session ${sessionId} has no runs to compact`);
+
+    const latestTurnIndex = runs.reduce((max, r) => Math.max(max, Number(r.turn_index ?? 0)), 0);
+
+    // Compact all turns before the latest one
+    const compactRuns = runs.filter((r) => Number(r.turn_index ?? 0) < latestTurnIndex);
+
+    if (compactRuns.length === 0) throw new Error(`session ${sessionId} has only the current turn; nothing to compact`);
+
+    const turnRangeStart = Number(compactRuns[0]!.turn_index ?? 0);
+    const turnRangeEnd = Number(compactRuns[compactRuns.length - 1]!.turn_index ?? 0);
+    const compactedRunIds: string[] = [];
+    const summaryParts: string[] = [];
+    let totalTokens = 0;
+
+    for (const run of compactRuns) {
+      const runId = String(run.id);
+      compactedRunIds.push(runId);
+      const prompt = String(run.prompt);
+      const turnIdx = Number(run.turn_index ?? 0);
+      const leadProvider = run.lead_provider ? String(run.lead_provider) : "unknown";
+
+      // Read the first status-like event for a brief summary
+      const events = this.db
+        .prepare("SELECT payload, type FROM run_events WHERE run_id = ? ORDER BY seq ASC LIMIT 5")
+        .all(runId) as Array<Record<string, unknown>>;
+
+      let summaryText = "";
+      for (const ev of events) {
+        const payload = ev.payload ? (JSON.parse(String(ev.payload)) as Record<string, unknown>) : {};
+        const msg = typeof payload.message === "string" ? payload.message : "";
+        if (msg && msg.length > 0) {
+          summaryText = msg.slice(0, 200);
+          break;
+        }
+      }
+
+      const line = summaryText
+        ? `Turn ${turnIdx} (${leadProvider}): ${prompt.slice(0, 100)} → ${summaryText}`
+        : `Turn ${turnIdx} (${leadProvider}): ${prompt.slice(0, 100)}`;
+
+      summaryParts.push(line);
+      totalTokens += Math.ceil(line.length / 4);
+    }
+
+    const summary = summaryParts.join("\n");
+    const id = `cmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+    const runIdsJson = JSON.stringify(compactedRunIds);
+
+    this.db
+      .prepare(
+        `INSERT INTO session_compacts (id, session_id, turn_range_start, turn_range_end, summary, token_count, compacted_run_ids, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual')`,
+      )
+      .run(id, sessionId, turnRangeStart, turnRangeEnd, summary, totalTokens, runIdsJson, now);
+
+    return this.getSessionCompact(id)!;
+  }
+
+  getSessionCompacts(sessionId: string): PersistedSessionCompact[] {
+    const rows = this.db
+      .prepare("SELECT * FROM session_compacts WHERE session_id = ? ORDER BY created_at DESC")
+      .all(sessionId) as Array<Record<string, unknown>>;
+    return rows.map(toSessionCompact);
+  }
+
+  getSessionCompact(id: string): PersistedSessionCompact | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM session_compacts WHERE id = ?")
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? toSessionCompact(row) : undefined;
+  }
+
+  deleteSessionCompact(id: string): boolean {
+    const result = this.db.prepare("DELETE FROM session_compacts WHERE id = ?").run(id);
+    return result.changes > 0;
   }
 
   saveContextItem(input: CreateContextItemInput): PersistedContextItem {
@@ -1617,6 +1714,24 @@ function migrate(db: Database): void {
       addColumnIfMissing(db, "context_items", "measurement_method", "TEXT DEFAULT 'estimated'");
     }
 
+    if (Number(current) < 13) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_compacts (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          turn_range_start INTEGER NOT NULL,
+          turn_range_end INTEGER NOT NULL,
+          summary TEXT NOT NULL,
+          token_count INTEGER NOT NULL DEFAULT 0,
+          measurement_method TEXT NOT NULL DEFAULT 'estimated',
+          compacted_run_ids TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          created_by TEXT NOT NULL DEFAULT 'manual'
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_compacts_session ON session_compacts(session_id);
+      `);
+    }
+
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -1653,6 +1768,21 @@ function toSessionContext(row: Record<string, unknown>): PersistedSessionContext
     ...(row.summary !== null && row.summary !== undefined ? { summary: String(row.summary) } : {}),
     ...(providerSessionIds && Object.keys(providerSessionIds).length > 0 ? { providerSessionIds } : {}),
     createdAt: String(row.created_at),
+  };
+}
+
+function toSessionCompact(row: Record<string, unknown>): PersistedSessionCompact {
+  return {
+    id: String(row.id),
+    sessionId: String(row.session_id),
+    turnRangeStart: Number(row.turn_range_start),
+    turnRangeEnd: Number(row.turn_range_end),
+    summary: String(row.summary),
+    tokenCount: Number(row.token_count),
+    measurementMethod: String(row.measurement_method) as "estimated" | "measured",
+    compactedRunIds: JSON.parse(String(row.compacted_run_ids)) as string[],
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by),
   };
 }
 

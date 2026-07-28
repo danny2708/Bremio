@@ -163,6 +163,7 @@ async function handle(
         approvals: true,
         apply: true,
         revert: true,
+        compact: true,
         // No adapter exposes a safe mid-run resume, so this stays false rather
         // than offering a button that would silently start over.
         resume: false,
@@ -363,6 +364,31 @@ async function handle(
     const id = decodeURIComponent(contextMetrics[1] ?? "");
     const metrics = registry.getSessionContextMetrics(id);
     return sendJson(res, 200, { metrics });
+  }
+
+  const sessionCompact = /^\/sessions\/([^/]+)\/compact$/.exec(route);
+  if (method === "POST" && sessionCompact) {
+    const id = decodeURIComponent(sessionCompact[1] ?? "");
+    try {
+      const compact = registry.compactSession(id);
+      return sendJson(res, 201, { compact });
+    } catch (err) {
+      return sendJson(res, 409, { error: (err as Error).message });
+    }
+  }
+
+  const sessionCompactsList = /^\/sessions\/([^/]+)\/compacts$/.exec(route);
+  if (method === "GET" && sessionCompactsList) {
+    const id = decodeURIComponent(sessionCompactsList[1] ?? "");
+    return sendJson(res, 200, { compacts: registry.getSessionCompacts(id) });
+  }
+
+  const sessionCompactDelete = /^\/sessions\/([^/]+)\/compacts\/([^/]+)$/.exec(route);
+  if (method === "DELETE" && sessionCompactDelete) {
+    const compactId = decodeURIComponent(sessionCompactDelete[2] ?? "");
+    const removed = registry.deleteSessionCompact(compactId);
+    if (!removed) return sendJson(res, 404, { error: `unknown compact: ${compactId}` });
+    return sendJson(res, 200, { removed: true });
   }
 
   const runDetail = /^\/runs\/([^/]+)$/.exec(route);

@@ -1177,6 +1177,7 @@ function renderContextItems(sessionId, items, visionNotice) {
       + '<button class="ghost" data-context-add data-session="' + sid + '">Add File</button>'
       + '<button class="ghost" data-context-image data-session="' + sid + '">Add Image</button>'
       + '<button class="ghost" data-context-file data-session="' + sid + '">Add Current File</button>'
+      + '<button class="ghost" data-compact-session="' + sid + '" style="margin-left:4px">Compact</button>'
       + '</div>';
   }
   const chips = items.map(function(item, idx) {
@@ -1200,6 +1201,7 @@ function renderContextItems(sessionId, items, visionNotice) {
     + '<button class="ghost" data-context-add data-session="' + sid + '">Add File</button>'
     + '<button class="ghost" data-context-image data-session="' + sid + '">Add Image</button>'
     + '<button class="ghost" data-context-file data-session="' + sid + '">Add Current File</button>'
+    + '<button class="ghost" data-compact-session="' + sid + '" style="margin-left:4px">Compact</button>'
     + '</div></div>';
 }
 
@@ -1379,6 +1381,11 @@ document.addEventListener("click", (event) => {
   const contextImage = event.target.closest("[data-context-image]");
   if (contextImage) {
     vscode.postMessage({ type: "addContextImage", sessionId: contextImage.dataset.session });
+    return;
+  }
+  const compactBtn = event.target.closest("[data-compact-session]");
+  if (compactBtn) {
+    vscode.postMessage({ type: "compactSession", sessionId: compactBtn.dataset.session });
     return;
   }
   const sessionRow = event.target.closest("[data-session]:not([data-action])");

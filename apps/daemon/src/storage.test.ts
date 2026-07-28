@@ -679,6 +679,57 @@ describe("session_context (B1)", () => {
   });
 });
 
+describe("session_compacts (S7-T5)", () => {
+  it("creates a compact from session runs, skips the latest turn", async () => {
+    const s = await store();
+    const run0 = s.createRun({ id: "run-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "first turn" });
+    const sessionId = run0.sessionId!;
+    s.createRun({ id: "run-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "second turn", sessionId });
+    s.createRun({ id: "run-2", mode: "single", repositoryPath: "/tmp/repo", prompt: "third turn", sessionId });
+
+    const cmp = s.compactSession(sessionId);
+    expect(cmp.sessionId).toBe(sessionId);
+    expect(cmp.turnRangeStart).toBe(0);
+    expect(cmp.turnRangeEnd).toBe(1);
+    expect(cmp.summary).toContain("Turn 0");
+    expect(cmp.summary).toContain("Turn 1");
+    expect(cmp.summary).not.toContain("Turn 2");
+    expect(cmp.tokenCount).toBeGreaterThan(0);
+    expect(cmp.measurementMethod).toBe("estimated");
+    expect(cmp.createdBy).toBe("manual");
+    expect(cmp.compactedRunIds).toEqual(["run-0", "run-1"]);
+  });
+
+  it("rejects compaction when session has no runs", async () => {
+    const s = await store();
+    expect(() => s.compactSession("no-such-session")).toThrow("has no runs to compact");
+  });
+
+  it("rejects compaction when session has only one turn (current)", async () => {
+    const s = await store();
+    const run = s.createRun({ id: "run-only", mode: "single", repositoryPath: "/tmp/repo", prompt: "only turn" });
+    expect(() => s.compactSession(run.sessionId!)).toThrow("nothing to compact");
+  });
+
+  it("lists and deletes compacts", async () => {
+    const s = await store();
+    const run0 = s.createRun({ id: "run-0", mode: "single", repositoryPath: "/tmp/repo", prompt: "turn 0" });
+    const sessionId = run0.sessionId!;
+    s.createRun({ id: "run-1", mode: "single", repositoryPath: "/tmp/repo", prompt: "turn 1", sessionId });
+
+    const cmp = s.compactSession(sessionId);
+    const list = s.getSessionCompacts(sessionId);
+    expect(list).toHaveLength(1);
+    expect(list[0]!.id).toBe(cmp.id);
+
+    const removed = s.deleteSessionCompact(cmp.id);
+    expect(removed).toBe(true);
+    expect(s.getSessionCompacts(sessionId)).toHaveLength(0);
+
+    expect(s.deleteSessionCompact("no-such")).toBe(false);
+  });
+});
+
 async function createV3Fixture(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-v3-"));
   dirs.push(dir);
@@ -800,12 +851,19 @@ describe("session_config (S1-T1/T2)", () => {
     expect(s.listSessions("/tmp/repo")).toHaveLength(1);
   });
 
-  it("pristine and migrated stores both report user_version = 12", async () => {
+  it("pristine and migrated stores both report user_version = 13", async () => {
     const fresh = await store();
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(12);
+    expect(freshVer).toBe(13);
+
+    // Fresh store has session_compacts table
+    const freshCols = fresh["db"].prepare("PRAGMA table_info(session_compacts)").all() as Array<{ name: string }>;
+    const freshNames = freshCols.map((c) => c.name).sort();
+    expect(freshNames).toContain("session_id");
+    expect(freshNames).toContain("turn_range_start");
+    expect(freshNames).toContain("summary");
 
     const file = await createV3Fixture();
     const migrated = await RunStore.open(file);
@@ -813,7 +871,11 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(12);
+    expect(migratedVer).toBe(13);
+
+    // Migrated store also has session_compacts table
+    const migratedCols = migrated["db"].prepare("PRAGMA table_info(session_compacts)").all() as Array<{ name: string }>;
+    expect(migratedCols.length).toBeGreaterThan(0);
   });
 
   it("re-running migration on v5 is a no-op", async () => {
