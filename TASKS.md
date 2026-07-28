@@ -145,7 +145,7 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S7-T1 | `ContextItem` model + persistence | M | S1-T1 | — |
+| [x] | S7-T1 | `ContextItem` model + persistence | M | S1-T1 | — |
 | [ ] | S7-T2 | Add/remove context mid-session (CLI + panel) | M | S7-T1 | — |
 | [ ] | S7-T3 | Images: paste, drag-drop, picker — gated on `vision`, honest fallback | M | S7-T1 | ‖ S7-T2 |
 | [ ] | S7-T4 | Context measurement surfaced, keeping `estimated`/`measured` labels | M | — | ‖ S7-T1 |

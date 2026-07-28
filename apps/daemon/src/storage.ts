@@ -24,7 +24,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -277,6 +277,30 @@ export interface SaveSessionContextInput {
   turnIndex: number;
   summary?: string;
   providerSessionIds?: Record<string, string>;
+}
+
+export type ContextItemType = "file" | "folder" | "selection" | "image" | "url" | "terminal" | "diff" | "note";
+export type ContextItemScope = "message" | "turn" | "session";
+
+export interface PersistedContextItem {
+  id: string;
+  sessionId: string;
+  type: ContextItemType;
+  source: string;
+  addedAt: string;
+  scope: ContextItemScope;
+  tokensEstimated?: number;
+  enabled: boolean;
+}
+
+export interface CreateContextItemInput {
+  id?: string;
+  sessionId: string;
+  type: ContextItemType;
+  source: string;
+  scope?: ContextItemScope;
+  tokensEstimated?: number;
+  enabled?: boolean;
 }
 
 /**
@@ -894,6 +918,55 @@ export class RunStore {
     return row ? toSessionContext(row) : undefined;
   }
 
+  saveContextItem(input: CreateContextItemInput): PersistedContextItem {
+    const id = input.id ?? randomUUID();
+    const now = new Date().toISOString();
+    const scope = input.scope ?? "session";
+    const enabled = input.enabled ?? true;
+
+    this.db
+      .prepare(
+        `INSERT INTO context_items (id, session_id, type, source, added_at, scope, tokens_estimated, enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.sessionId,
+        input.type,
+        input.source,
+        now,
+        scope,
+        input.tokensEstimated ?? null,
+        enabled ? 1 : 0,
+      );
+
+    return this.getContextItem(id)!;
+  }
+
+  getContextItem(id: string): PersistedContextItem | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM context_items WHERE id = ?")
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? toContextItem(row) : undefined;
+  }
+
+  listContextItems(sessionId: string): PersistedContextItem[] {
+    const rows = this.db
+      .prepare("SELECT * FROM context_items WHERE session_id = ? ORDER BY added_at ASC")
+      .all(sessionId) as Array<Record<string, unknown>>;
+    return rows.map(toContextItem);
+  }
+
+  deleteContextItem(id: string): boolean {
+    const result = this.db.prepare("DELETE FROM context_items WHERE id = ?").run(id);
+    return result.changes > 0;
+  }
+
+  updateContextItemEnabled(id: string, enabled: boolean): PersistedContextItem | undefined {
+    this.db.prepare("UPDATE context_items SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
+    return this.getContextItem(id);
+  }
+
   createSessionConfig(input: CreateSessionConfigInput): SessionConfig {
     const now = new Date().toISOString();
     const revision = this.nextConfigRevision(input.sessionId);
@@ -1503,6 +1576,22 @@ function migrate(db: Database): void {
       );
     }
 
+    if (Number(current) < 11) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS context_items (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          source TEXT NOT NULL,
+          added_at TEXT NOT NULL,
+          scope TEXT NOT NULL DEFAULT 'session',
+          tokens_estimated INTEGER,
+          enabled INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_context_items_session ON context_items(session_id);
+      `);
+    }
+
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
   } catch (error) {
@@ -1539,6 +1628,21 @@ function toSessionContext(row: Record<string, unknown>): PersistedSessionContext
     ...(row.summary !== null && row.summary !== undefined ? { summary: String(row.summary) } : {}),
     ...(providerSessionIds && Object.keys(providerSessionIds).length > 0 ? { providerSessionIds } : {}),
     createdAt: String(row.created_at),
+  };
+}
+
+function toContextItem(row: Record<string, unknown>): PersistedContextItem {
+  return {
+    id: String(row.id),
+    sessionId: String(row.session_id),
+    type: String(row.type) as ContextItemType,
+    source: String(row.source),
+    addedAt: String(row.added_at),
+    scope: String(row.scope) as ContextItemScope,
+    ...(row.tokens_estimated !== null && row.tokens_estimated !== undefined
+      ? { tokensEstimated: Number(row.tokens_estimated) }
+      : {}),
+    enabled: Boolean(row.enabled),
   };
 }
 

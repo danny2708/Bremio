@@ -1495,3 +1495,32 @@ Rules:
 - `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.2.0`).
 - Red-check: short-circuited `resolveContinuationMode` to always return the turn-history identity → 3 of the 5 new tests failed, including the Co-lab→Solo case showing `+ "mode": "team", + "workerAgent": "codex"` where `"single"` was expected — reproducing the exact silent-no-op the fix exists for. Restored.
 - One full-suite run hit 2 flaky timeouts (`merge.test.ts` cherry-pick, `protocol.test.ts` digest-drift) under parallel load with the default 5s timeout; both passed in isolation and in a second full run. Not a regression — noted for awareness, not chased.
+
+### S7-T1 — ContextItem model + persistence
+- **agent:** Claude (opencode)
+- **time:** 2026-07-28T08:00 → 08:30
+- **branch:** s6/solo-colab
+- **task(s):** S7-T1
+- **status:** done
+
+**Did**
+- ADR-7 (`docs/14` §ADR-7): `ContextItem{id, sessionId, type, source, addedAt, scope, tokensEstimated, enabled}`
+- Added `ContextItemSchema` + `ContextItemTypeSchema` + `ContextItemScopeSchema` to `@bremio/protocol` (`packages/protocol/src/context-item.ts`)
+- `SCHEMA_VERSION` bumped to 11; migration v11 creates `context_items` table with `session_id` FK → `sessions(id) ON DELETE CASCADE`, `type`, `source`, `added_at`, `scope`, `tokens_estimated`, `enabled`, plus `idx_context_items_session` index
+- Types `PersistedContextItem`, `CreateContextItemInput`, `ContextItemType`, `ContextItemScope` in `storage.ts`
+- Store methods: `saveContextItem`, `getContextItem`, `listContextItems`, `deleteContextItem`, `updateContextItemEnabled` — all with snake→camel mapper `toContextItem`
+- RunRegistry passthrough: `listContextItems`, `getContextItem`, `createContextItem`, `deleteContextItem`, `updateContextItemEnabled` — each publishing a `session-updated` SSE event
+- HTTP routes: `GET /sessions/:id/context-items` (list), `POST /sessions/:id/context-items` (create), `GET /sessions/:id/context-items/:itemId` (get), `DELETE /sessions/:id/context-items/:itemId` (delete), `PATCH /sessions/:id/context-items/:itemId/enabled` (toggle)
+- CLI commands: `bremio session context <id> [list]`, `bremio session context <id> add <type> <source>`, `bremio session context <id> del <item-id>` — daemon-first with direct-store fallback
+
+**Decided**
+- `enabled` is persisted rather than computed — a user might disable a context item without deleting it, and that state should survive a restart
+- Scope defaults to `session` at the persistence layer, matching the most common case; `message` and `turn` scopes are available for S7-T2 to use
+- `tokensEstimated` is optional and nullable in the DB — not every item will have a token estimate at creation time
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- 4 new storage tests (CRUD + order + edge cases) in `storage.test.ts` (53 total)
+- 4 new daemon HTTP tests (create/list, delete, 404, toggle) in `daemon.test.ts` (45 total)
+- `corepack pnpm test` — 812 passed / 64 files (+11 new tests from storage + daemon + 1 404 test)
+- Red-check: removed the `!removed` guard in the server's DELETE route (was returning `{ removed: true }` unconditionally) → test `returns 404 for deleting a non-existent context item` fails because it gets 200 instead of 404 → restored guard → passes

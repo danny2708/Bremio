@@ -800,12 +800,12 @@ describe("session_config (S1-T1/T2)", () => {
     expect(s.listSessions("/tmp/repo")).toHaveLength(1);
   });
 
-  it("pristine and migrated stores both report user_version = 10", async () => {
+  it("pristine and migrated stores both report user_version = 11", async () => {
     const fresh = await store();
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(10);
+    expect(freshVer).toBe(11);
 
     const file = await createV3Fixture();
     const migrated = await RunStore.open(file);
@@ -813,7 +813,7 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(10);
+    expect(migratedVer).toBe(11);
   });
 
   it("re-running migration on v5 is a no-op", async () => {
@@ -1027,5 +1027,87 @@ describe("ProviderSessionBinding (S1-T4)", () => {
     expect(bindings.length).toBeGreaterThanOrEqual(1);
     expect(bindings[0]?.agentId).toBe("claude");
     expect(bindings[0]?.status).toBe("active");
+  });
+
+  describe("context items (S7-T1)", () => {
+    it("creates, gets, lists, and deletes context items", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run = s.createRun({ id: "ci-run", mode: "single", repositoryPath: "/tmp/repo", prompt: "ci" });
+      const sessionId = run.sessionId!;
+
+      const item = s.saveContextItem({ sessionId, type: "file", source: "/tmp/repo/readme.md" });
+      expect(item.type).toBe("file");
+      expect(item.source).toBe("/tmp/repo/readme.md");
+      expect(item.enabled).toBe(true);
+      expect(item.scope).toBe("session");
+      expect(item.id).toBeTruthy();
+
+      const got = s.getContextItem(item.id);
+      expect(got).toBeDefined();
+      expect(got!.type).toBe("file");
+
+      const items = s.listContextItems(sessionId);
+      expect(items).toHaveLength(1);
+      expect(items[0]!.id).toBe(item.id);
+
+      const deleted = s.deleteContextItem(item.id);
+      expect(deleted).toBe(true);
+      expect(s.listContextItems(sessionId)).toHaveLength(0);
+    });
+
+    it("creates context items with explicit fields", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run = s.createRun({ id: "ci-explicit", mode: "single", repositoryPath: "/tmp/repo", prompt: "ci" });
+      const sessionId = run.sessionId!;
+
+      const item = s.saveContextItem({
+        id: "my-custom-id",
+        sessionId,
+        type: "image",
+        source: "/tmp/repo/screenshot.png",
+        scope: "turn",
+        tokensEstimated: 150,
+        enabled: false,
+      });
+
+      expect(item.id).toBe("my-custom-id");
+      expect(item.type).toBe("image");
+      expect(item.scope).toBe("turn");
+      expect(item.tokensEstimated).toBe(150);
+      expect(item.enabled).toBe(false);
+
+      s.updateContextItemEnabled(item.id, true);
+      const updated = s.getContextItem(item.id);
+      expect(updated?.enabled).toBe(true);
+    });
+
+    it("returns undefined for non-existent context item", async () => {
+      const s = await store();
+      stores.push(s);
+      expect(s.getContextItem("non-existent")).toBeUndefined();
+      expect(s.deleteContextItem("non-existent")).toBe(false);
+    });
+
+    it("lists context items in added_at order", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run = s.createRun({ id: "ci-order", mode: "single", repositoryPath: "/tmp/repo", prompt: "ci" });
+      const sessionId = run.sessionId!;
+
+      s.saveContextItem({ sessionId, type: "note", source: "first" });
+      // Small delay to ensure different timestamps
+      await new Promise((r) => setTimeout(r, 2));
+      s.saveContextItem({ sessionId, type: "note", source: "second" });
+
+      const items = s.listContextItems(sessionId);
+      expect(items).toHaveLength(2);
+      expect(items[0]!.source).toBe("first");
+      expect(items[1]!.source).toBe("second");
+    });
   });
 });

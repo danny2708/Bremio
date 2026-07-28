@@ -41,6 +41,8 @@ export {
   type PersistedRun,
   type PersistedRunEvent,
   type PersistedArtifact,
+  type PersistedContextItem,
+  type ContextItemType,
 } from "./storage";
 export { startDaemonServer, type DaemonHandle, type DaemonServerOptions } from "./server";
 export { mergeRun, type MergeRequest, type MergeOutcome, type MergeTaskOutcome } from "./merge";

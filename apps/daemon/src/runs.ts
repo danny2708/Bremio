@@ -33,8 +33,11 @@ import {
 import {
   isTerminal,
   type AuditEvent,
+  type ContextItemType,
+  type CreateContextItemInput,
   type CreateSessionConfigInput,
   type PersistedApprovalRequest,
+  type PersistedContextItem,
   type PersistedRun,
   type PersistedRunEvent,
   type PersistedSession,
@@ -307,6 +310,50 @@ export class RunRegistry {
       data: { configRevision: config.revision },
     });
     return config;
+  }
+
+  listContextItems(sessionId: string): PersistedContextItem[] {
+    return this.store.listContextItems(sessionId);
+  }
+
+  getContextItem(id: string): PersistedContextItem | undefined {
+    return this.store.getContextItem(id);
+  }
+
+  createContextItem(input: CreateContextItemInput): PersistedContextItem {
+    const item = this.store.saveContextItem(input);
+    this.#publishSession(input.sessionId, {
+      kind: "session-updated",
+      sessionId: input.sessionId,
+      data: { contextItemAdded: item.id },
+    });
+    return item;
+  }
+
+  deleteContextItem(id: string): boolean {
+    const item = this.store.getContextItem(id);
+    if (!item) return false;
+    const removed = this.store.deleteContextItem(id);
+    if (removed) {
+      this.#publishSession(item.sessionId, {
+        kind: "session-updated",
+        sessionId: item.sessionId,
+        data: { contextItemRemoved: id },
+      });
+    }
+    return removed;
+  }
+
+  updateContextItemEnabled(id: string, enabled: boolean): PersistedContextItem | undefined {
+    const item = this.store.updateContextItemEnabled(id, enabled);
+    if (item) {
+      this.#publishSession(item.sessionId, {
+        kind: "session-updated",
+        sessionId: item.sessionId,
+        data: { contextItemUpdated: id, enabled },
+      });
+    }
+    return item;
   }
 
   /**

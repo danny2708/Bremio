@@ -4,7 +4,7 @@ import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
 import { OpenCodeAdapter } from "@bremio/adapter-opencode";
-import { daemonStatus, defaultDatabasePath, RunStore } from "@bremio/daemon";
+import { daemonStatus, defaultDatabasePath, RunStore, type ContextItemType, type PersistedContextItem } from "@bremio/daemon";
 import { extractResponse, renderEvent } from "@bremio/event-view";
 import { createRegistry, runBremio, runSingleAgent } from "@bremio/orchestrator";
 import { effectiveMode, type CollaborationState } from "@bremio/policy";
@@ -736,8 +736,167 @@ export async function sessionCommandFromCli(
       ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}),
     });
   }
+  if (subCommand === "context") {
+    const id = positionals[2];
+    if (!id) {
+      console.error(c.red("error: session id is required for 'bremio session context <id>'"));
+      return 2;
+    }
+    const ctxCommand = positionals[3];
+    if (ctxCommand === "list") {
+      return listContextItemsCommand({ id, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+    }
+    if (ctxCommand === "add") {
+      const type = positionals[4];
+      const source = positionals[5];
+      if (!type || !source) {
+        console.error(c.red("error: 'bremio session context <id> add <type> <source>' requires type and source"));
+        return 2;
+      }
+      return addContextItemCommand({ id, type, source, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+    }
+    if (ctxCommand === "del" || ctxCommand === "delete") {
+      const itemId = positionals[4];
+      if (!itemId) {
+        console.error(c.red("error: 'bremio session context <id> del <item-id>' requires item id"));
+        return 2;
+      }
+      return deleteContextItemCommand({ id, itemId, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+    }
+    if (!ctxCommand) {
+      return listContextItemsCommand({ id, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
+    }
+    console.error(
+      c.red(`error: unknown context subcommand '${ctxCommand}'; expected 'list', 'add', or 'del'`),
+    );
+    return 2;
+  }
   console.error(
-    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', 'continue', or 'config-set'`),
+    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', 'continue', 'config-set', or 'context'`),
   );
   return 2;
+}
+
+export interface ListContextItemsOptions {
+  id: string;
+  json?: boolean;
+  databasePath?: string;
+}
+
+export interface AddContextItemOptions {
+  id: string;
+  type: string;
+  source: string;
+  databasePath?: string;
+}
+
+export interface DeleteContextItemOptions {
+  id: string;
+  itemId: string;
+  databasePath?: string;
+}
+
+async function listContextItemsCommand(opts: ListContextItemsOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/context-items`,
+      { headers: { "x-bremio-token": status.endpoint.token } },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { contextItems: PersistedContextItem[] };
+      for (const item of data.contextItems) {
+        console.log(`${item.id}  ${c.green(item.type)}  ${item.enabled ? "" : c.dim("(disabled) ")}${item.source}`);
+      }
+      return 0;
+    }
+    if (res.status === 404) {
+      console.error(c.red(`error: session '${opts.id}' not found`));
+      return 1;
+    }
+    console.error(c.red(`error: daemon returned ${res.status}`));
+    return 1;
+  }
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const items = store.listContextItems(opts.id);
+    for (const item of items) {
+      console.log(`${item.id}  ${c.green(item.type)}  ${item.enabled ? "" : c.dim("(disabled) ")}${item.source}`);
+    }
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+async function addContextItemCommand(opts: AddContextItemOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/context-items`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-bremio-token": status.endpoint.token,
+        },
+        body: JSON.stringify({ type: opts.type, source: opts.source }),
+      },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { contextItem: PersistedContextItem };
+      console.log(`added ${c.green(data.contextItem.type)} context item: ${data.contextItem.id}`);
+      return 0;
+    }
+    if (res.status === 404) {
+      console.error(c.red(`error: session '${opts.id}' not found`));
+      return 1;
+    }
+    console.error(c.red(`error: daemon returned ${res.status}`));
+    return 1;
+  }
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const item = store.saveContextItem({
+      sessionId: opts.id,
+      type: opts.type as ContextItemType,
+      source: opts.source,
+    });
+    console.log(`added ${c.green(item.type)} context item: ${item.id}`);
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+async function deleteContextItemCommand(opts: DeleteContextItemOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/context-items/${encodeURIComponent(opts.itemId)}`,
+      { method: "DELETE", headers: { "x-bremio-token": status.endpoint.token } },
+    );
+    if (res.ok) {
+      console.log(`removed context item: ${opts.itemId}`);
+      return 0;
+    }
+    if (res.status === 404) {
+      console.error(c.red(`error: context item '${opts.itemId}' not found`));
+      return 1;
+    }
+    console.error(c.red(`error: daemon returned ${res.status}`));
+    return 1;
+  }
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const ok = store.deleteContextItem(opts.itemId);
+    if (!ok) {
+      console.error(c.red(`error: context item '${opts.itemId}' not found`));
+      return 1;
+    }
+    console.log(`removed context item: ${opts.itemId}`);
+    return 0;
+  } finally {
+    store.close();
+  }
 }

@@ -15,7 +15,7 @@ import {
 } from "@bremio/quota";
 import { MergeManager } from "@bremio/workspace";
 import { RunRegistry, defaultAdapters, type SessionEvent } from "./runs";
-import { isTerminal } from "./storage";
+import { isTerminal, type CreateContextItemInput } from "./storage";
 import { mergeRun } from "./merge";
 import { applyRunPatch, revertRunPatch } from "./apply";
 import { loadReportByRunId } from "@bremio/orchestrator";
@@ -291,6 +291,54 @@ async function handle(
         return sendJson(res, 200, { transition: result.transition, config: result.config });
       }
       return sendJson(res, 409, { error: result.reason });
+    } catch (err) {
+      return sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
+  const contextItemsList = /^\/sessions\/([^/]+)\/context-items$/.exec(route);
+  if (method === "GET" && contextItemsList) {
+    const id = decodeURIComponent(contextItemsList[1] ?? "");
+    const items = registry.listContextItems(id);
+    return sendJson(res, 200, { contextItems: items });
+  }
+
+  const contextItemCreate = /^\/sessions\/([^/]+)\/context-items$/.exec(route);
+  if (method === "POST" && contextItemCreate) {
+    const id = decodeURIComponent(contextItemCreate[1] ?? "");
+    try {
+      const body = (await readJsonBody(req)) as Record<string, unknown>;
+      const item = registry.createContextItem({ sessionId: id, ...body } as CreateContextItemInput);
+      return sendJson(res, 201, { contextItem: item });
+    } catch (err) {
+      return sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
+  const contextItemDetail = /^\/sessions\/([^/]+)\/context-items\/([^/]+)$/.exec(route);
+  if (method === "GET" && contextItemDetail) {
+    const itemId = decodeURIComponent(contextItemDetail[2] ?? "");
+    const item = registry.getContextItem(itemId);
+    if (!item) return sendJson(res, 404, { error: `unknown context item: ${itemId}` });
+    return sendJson(res, 200, { contextItem: item });
+  }
+
+  const contextItemDelete = /^\/sessions\/([^/]+)\/context-items\/([^/]+)$/.exec(route);
+  if (method === "DELETE" && contextItemDelete) {
+    const itemId = decodeURIComponent(contextItemDelete[2] ?? "");
+    const removed = registry.deleteContextItem(itemId);
+    if (!removed) return sendJson(res, 404, { error: `unknown context item: ${itemId}` });
+    return sendJson(res, 200, { removed: true });
+  }
+
+  const contextItemToggle = /^\/sessions\/([^/]+)\/context-items\/([^/]+)\/enabled$/.exec(route);
+  if (method === "PATCH" && contextItemToggle) {
+    const itemId = decodeURIComponent(contextItemToggle[2] ?? "");
+    try {
+      const body = (await readJsonBody(req)) as { enabled: boolean };
+      const item = registry.updateContextItemEnabled(itemId, body.enabled);
+      if (!item) return sendJson(res, 404, { error: `unknown context item: ${itemId}` });
+      return sendJson(res, 200, { contextItem: item });
     } catch (err) {
       return sendJson(res, 400, { error: (err as Error).message });
     }
