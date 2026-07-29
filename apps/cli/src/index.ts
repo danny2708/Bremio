@@ -49,6 +49,7 @@ import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics
 import { collectComparison, printComparison, type ComparisonSide } from "./compare";
 import { capacityCommand } from "./quota";
 import { approvalCommandFromCli } from "./approval";
+import { mcpCommandFromCli } from "./mcp";
 import { sessionCommandFromCli } from "./session";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
@@ -77,6 +78,7 @@ ${c.bold("Usage")}
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
   bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
   bremio daemon [start|status|stop|restart]   manage the local daemon (HTTP + SSE, loopback)
+  bremio mcp discover  --manifest <file>      list tools from MCP servers
   bremio update                           how to update the CLI, daemon and extension
   bremio doctor [--json]                  adapter health; --json for a support bundle
   bremio diagnostics export [--out <f>]   write a redacted diagnostics bundle
@@ -269,6 +271,9 @@ async function main(): Promise<void> {
       return;
     case "approval":
       process.exitCode = await approvalCommandFromCli(values, positionals);
+      return;
+    case "mcp":
+      process.exitCode = await mcpCommandFromCli(values, positionals);
       return;
     case "daemon":
       process.exitCode = await daemonCommandFromCli(positionals[1]);

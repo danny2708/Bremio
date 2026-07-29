@@ -28,3 +28,8 @@ export {
   type McpToolDescriptor,
   type McpResourceDescriptor,
 } from "./capability-mapping";
+
+export {
+  McpPermissionGuard,
+  type McpPermissionCheck,
+} from "./permission-guard";

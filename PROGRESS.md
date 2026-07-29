@@ -1838,3 +1838,27 @@ Rules:
 - `corepack pnpm typecheck` — clean
 - `corepack pnpm vitest run packages/adapter-sdk/src/mcp` — 23/23 passed (3 test files, +14 tests from S8-T3)
 - `corepack pnpm test` — 893/893 passed / 70 files (+14 tests, was 879/68)
+
+### S8-T5 — MCP: permission integration + UI
+- **agent:** Claude (opencode)
+- **time:** 2026-07-29T21:30 → 2026-07-29T21:35
+- **branch:** s8/tools-and-intergrations
+- **task(s):** S8-T5
+- **status:** done
+
+**Did**
+- Created `packages/adapter-sdk/src/mcp/permission-guard.ts` — `McpPermissionGuard` class that wraps `McpClientHandle.callTool()` with policy evaluation: checks `allowed` before delegating, throws with reason when denied. Injectable `checkPermission` function follows same DI pattern as `ConnectClientFn`.
+- Created `apps/cli/src/mcp.ts` — `bremio mcp discover --manifest <file>` subcommand that reads MCP server manifests, connects via `McpDiscovery`, lists discovered tools/resources/prompts with server info
+- Updated `apps/cli/src/index.ts` — registered `case "mcp"` in the command switch and added `bremio mcp discover` to USAGE
+- Updated barrel exports — added `McpPermissionGuard` and `McpPermissionCheck` to `mcp/index.ts` and `adapter-sdk/src/index.ts`
+- 10 new tests: 6 permission guard tests (allow default, actionClass passed, deny, approval reported, throw on deny, delegation), 4 CLI command tests (usage, --help, unknown subcommand, unknown+help)
+
+**Decided**
+- `McpPermissionGuard` uses injectable `checkPermission` function rather than depending directly on `@bremio/policy` — avoids circular dependency (policy depends on adapter-sdk). Production code wires it with the real `evaluate()` from `@bremio/policy`.
+- CLI `mcp` subcommand reads manifests from a JSON file (`--manifest` or `.bremio/mcp-servers.json`) rather than requiring daemon integration — keeps the command self-contained for now; daemon wiring is a follow-up concern.
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/adapter-sdk/src/mcp apps/cli/src/mcp.test.ts` — 33/33 passed (5 test files, +10 tests from S8-T4)
+- `corepack pnpm test` — 903/903 passed / 72 files (+10 tests, was 893/70)
+- Red-check: removed `if (!check.allowed)` guard from `permission-guard.ts` → "callTool throws when denied" fails (callTool goes through without throwing). Restored.

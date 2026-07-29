@@ -80,4 +80,5 @@ export {
   mapTool,
   mapTools,
   mapResourceActionClass,
+  McpPermissionGuard,
 } from "./mcp";

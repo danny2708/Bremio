@@ -245,9 +245,7 @@ describe("McpClientHandle", () => {
     const result = await client.callTool("echo", { msg: "hello" });
 
     expect(result.content).toHaveLength(1);
-    if (result.content[0]!.type === "text") {
-      expect(result.content[0]!.text).toBe("hello");
-    }
+    expect(result.content[0]).toHaveProperty("text", "hello");
   });
 
   it("callTool marks error", async () => {
@@ -296,6 +294,6 @@ describe("McpClientHandle", () => {
 
     expect(result.description).toBe("A test prompt");
     expect(result.messages).toHaveLength(1);
-    expect(result.messages[0]!.content.text).toBe("Hello");
+    expect(result.messages[0]!.content).toHaveProperty("text", "Hello");
   });
 });
