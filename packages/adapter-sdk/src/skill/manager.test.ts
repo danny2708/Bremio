@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { SkillManager } from "./manager";
+import { HookManager } from "../hooks/manager";
+import type { HookHandler, HookHandlerResult } from "../hooks/types";
 import type { Skill } from "./types";
 
 function mockSkill(overrides: Partial<Skill> = {}): Skill {
@@ -260,6 +262,59 @@ describe("SkillManager", () => {
     it("returns undefined for unknown id", () => {
       const sm = new SkillManager();
       expect(sm.getState("unknown")).toBeUndefined();
+    });
+  });
+
+  describe("hooks integration", () => {
+    it("executes normally when no hook manager is provided", async () => {
+      const sm = new SkillManager();
+      sm.register(mockSkill());
+      sm.enable("test-skill");
+      const result = await sm.execute("test-skill", {});
+      expect(result.success).toBe(true);
+    });
+
+    it("executes normally when hooks allow", async () => {
+      const hk = new HookManager();
+      const sm = new SkillManager(hk);
+      sm.register(mockSkill());
+      sm.enable("test-skill");
+      const result = await sm.execute("test-skill", { query: "hello" });
+      expect(result.success).toBe(true);
+    });
+
+    it("throws when a hook denies execution", async () => {
+      const hk = new HookManager();
+      hk.register({
+        id: "deny-all",
+        hookPoint: "skill:before-execute",
+        handler: vi
+          .fn()
+          .mockResolvedValue({ allow: false, reason: "not authorized" } as HookHandlerResult),
+      });
+      const sm = new SkillManager(hk);
+      sm.register(mockSkill());
+      sm.enable("test-skill");
+      await expect(sm.execute("test-skill", {})).rejects.toThrow(
+        'Hook vetoed execution of skill "test-skill": not authorized',
+      );
+    });
+
+    it("passes skillId and runId to the hook", async () => {
+      const handler: HookHandler = vi
+        .fn()
+        .mockResolvedValue({ allow: true } as HookHandlerResult);
+      const hk = new HookManager();
+      hk.register({ id: "check", hookPoint: "skill:before-execute", handler });
+      const sm = new SkillManager(hk);
+      sm.register(mockSkill());
+      sm.enable("test-skill");
+      await sm.execute("test-skill", {}, { runId: "run-99" });
+      expect(handler).toHaveBeenCalledWith({
+        skillId: "test-skill",
+        args: {},
+        runId: "run-99",
+      });
     });
   });
 });

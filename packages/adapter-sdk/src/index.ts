@@ -100,3 +100,13 @@ export type {
   SkillResult,
   SkillState,
 } from "./skill";
+
+export { HookManager } from "./hooks";
+export type {
+  HookContext,
+  HookEvaluationResult,
+  HookHandler,
+  HookHandlerResult,
+  HookPoint,
+  HookRegistration,
+} from "./hooks";

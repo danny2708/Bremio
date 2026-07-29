@@ -1921,3 +1921,37 @@ Rules:
 - Red-check A: removed duplicate-registration guard → "throws when registering a duplicate id" fails (second register silently overwrites). Restored.
 - Red-check B: removed enabled-state check in execute → "throws when executing a non-enabled skill" and "throws when executing a disabled skill" both fail (skill runs in wrong state). Restored.
 - Red-check C: removed try/catch in execute → 3 tests fail (error propagates instead of transitioning to error state). Restored.
+
+---
+
+### S8-T8 — User-extensible hooks with veto semantics
+- **agent:** Claude (opencode)
+- **time:** 2026-07-29T22:20 → 2026-07-29T22:38
+- **branch:** s8/tools-and-intergrations
+- **task(s):** S8-T8
+- **status:** done
+
+**Did**
+- Created `packages/adapter-sdk/src/hooks/types.ts` — `HookPoint`, `HookContext`, `HookHandlerResult`, `HookHandler`, `HookRegistration`, `HookEvaluationResult`
+- Created `packages/adapter-sdk/src/hooks/manager.ts` — `HookManager` class with `register`, `unregister`, `evaluate`, `list`, `listForPoint`
+- Created `packages/adapter-sdk/src/hooks/index.ts` — barrel export
+- Created `packages/adapter-sdk/src/hooks/manager.test.ts` — 17 tests covering: register (happy, duplicate guard, mutation safety, immutability), unregister (happy, not-found), evaluate (no handlers, allow, deny, throws handling, priority ordering), list/listForPoint
+- Integrated HookManager into SkillManager via optional `Pick<HookManager, "evaluate">` duck-type constructor parameter
+- SkillManager.execute() calls `hooks.evaluate("skill:before-execute", ...)` and throws on denial
+- Added 4 hook integration tests in SkillManager: deny veto, allow passes, handler receives context, deny throws proper error
+- Updated `packages/adapter-sdk/src/index.ts` — exports HookManager and hook types
+- 31 skill + 17 hooks = 48 total tests, all passing
+
+**Decided**
+- HookManager is stand-alone, not coupled to SkillManager — only exposes `evaluate` via duck-type so the integration is optional and testable
+- Handlers that throw are caught and treated as denial (fail-closed), never propagated
+- Priority ascending (lower runs first); first denial short-circuits
+- Hook point string is `skill:before-execute` — namespaced to avoid collisions as points grow
+
+**Verification**
+- `corepack pnpm vitest run packages/adapter-sdk/src/hooks/manager.test.ts` — 17 hooks tests pass
+- `corepack pnpm vitest run packages/adapter-sdk/src/skill/manager.test.ts` — 31 skill tests (with 4 hook integration) pass
+- `corepack pnpm typecheck` — clean
+- Red-check A: removed duplicate-registration guard → "throws when registering a duplicate id" fails. Restored.
+- Red-check B: removed hook deny guard in SkillManager.execute() → 2 hook integration tests fail. Restored.
+- Red-check C: removed try/catch in HookManager.evaluate() → "handles a handler that throws" fails (error propagates). Restored.

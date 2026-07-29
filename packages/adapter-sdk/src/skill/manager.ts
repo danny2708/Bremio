@@ -1,7 +1,16 @@
 import type { Skill, SkillContext, SkillRegistration, SkillResult, SkillState } from "./types";
+import type { HookManager } from "../hooks/manager";
+import type { HookEvaluationResult } from "../hooks/types";
+
+type HooksLike = Pick<HookManager, "evaluate">;
 
 export class SkillManager {
   private readonly skills = new Map<string, SkillRegistration>();
+  private readonly hooks?: HooksLike;
+
+  constructor(hooks?: HooksLike) {
+    this.hooks = hooks;
+  }
 
   register(skill: Skill): this {
     if (this.skills.has(skill.id)) {
@@ -40,6 +49,17 @@ export class SkillManager {
       throw new Error(
         `Cannot execute skill ${id}: current state is "${entry.state}" (must be "enabled")`,
       );
+    }
+
+    if (this.hooks) {
+      const evalResult = await this.hooks.evaluate("skill:before-execute", {
+        skillId: id,
+        args,
+        runId: context?.runId,
+      });
+      if (!evalResult.allowed) {
+        throw new Error(`Hook vetoed execution of skill "${id}": ${evalResult.reason}`);
+      }
     }
 
     const started = Date.now();
