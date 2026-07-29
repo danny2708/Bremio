@@ -69,6 +69,15 @@ export type {
   McpClientHandle,
   McpServerDiscovery,
   ConnectClientFn,
+  McpToolDescriptor,
+  McpResourceDescriptor,
 } from "./mcp";
 
-export { McpDiscovery } from "./mcp";
+export {
+  McpDiscovery,
+  createTransport,
+  connectClient,
+  mapTool,
+  mapTools,
+  mapResourceActionClass,
+} from "./mcp";

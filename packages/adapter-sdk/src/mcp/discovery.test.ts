@@ -5,15 +5,23 @@ import type { McpServerManifest } from "./manifest";
 function mockClient(
   overrides: Partial<McpClientHandle> = {},
 ): McpClientHandle {
-  return {
+  const defaults: McpClientHandle = {
     getServerCapabilities: () => ({ tools: {} }),
     getServerVersion: () => ({ name: "mock-server", version: "1.0.0" }),
     listTools: () => Promise.resolve({ tools: [] }),
     listResources: () => Promise.resolve({ resources: [] }),
     listPrompts: () => Promise.resolve({ prompts: [] }),
+    callTool: () =>
+      Promise.resolve({ content: [{ type: "text", text: "" }] }),
+    readResource: () =>
+      Promise.resolve({ contents: [{ uri: "", text: "" }] }),
+    getPrompt: () =>
+      Promise.resolve({
+        messages: [{ role: "user" as const, content: { type: "text" as const, text: "" } }],
+      }),
     close: () => Promise.resolve(),
-    ...overrides,
   };
+  return { ...defaults, ...overrides };
 }
 
 function mockConnect(fn: () => McpClientHandle) {
@@ -222,5 +230,72 @@ describe("McpDiscovery", () => {
 
     expect(results).toHaveLength(0);
     expect(connect).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("McpClientHandle", () => {
+  it("callTool returns content", async () => {
+    const client = mockClient({
+      callTool: () =>
+        Promise.resolve({
+          content: [{ type: "text" as const, text: "hello" }],
+        }),
+    });
+
+    const result = await client.callTool("echo", { msg: "hello" });
+
+    expect(result.content).toHaveLength(1);
+    if (result.content[0]!.type === "text") {
+      expect(result.content[0]!.text).toBe("hello");
+    }
+  });
+
+  it("callTool marks error", async () => {
+    const client = mockClient({
+      callTool: () =>
+        Promise.resolve({
+          content: [{ type: "text" as const, text: "failed" }],
+          isError: true,
+        }),
+    });
+
+    const result = await client.callTool("fail", {});
+
+    expect(result.isError).toBe(true);
+  });
+
+  it("readResource returns text content", async () => {
+    const client = mockClient({
+      readResource: () =>
+        Promise.resolve({
+          contents: [{ uri: "file:///data.txt", text: "data", mimeType: "text/plain" }],
+        }),
+    });
+
+    const result = await client.readResource("file:///data.txt");
+
+    expect(result.contents).toHaveLength(1);
+    expect(result.contents[0]!.uri).toBe("file:///data.txt");
+    if ("text" in result.contents[0]!) {
+      expect(result.contents[0]!.text).toBe("data");
+    }
+  });
+
+  it("getPrompt returns messages", async () => {
+    const client = mockClient({
+      getPrompt: () =>
+        Promise.resolve({
+          description: "A test prompt",
+          messages: [
+            { role: "user" as const, content: { type: "text" as const, text: "Hello" } },
+          ],
+        }),
+    });
+
+    const result = await client.getPrompt("greet", { name: "world" });
+
+    expect(result.description).toBe("A test prompt");
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]!.content.text).toBe("Hello");
   });
 });

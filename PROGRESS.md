@@ -1810,7 +1810,31 @@ Rules:
 
 ### S8-T3 — MCP: manifest + discovery
 - **agent:** Claude (opencode)
-- **time:** 2026-07-29T20:46 → open
+- **time:** 2026-07-29T20:46 → 2026-07-29T21:05
 - **branch:** s8/tools-and-intergrations
 - **task(s):** S8-T3
-- **status:** in-progress
+- **status:** done
+
+### S8-T4 — MCP: transport + capability mapping
+- **agent:** Claude (opencode)
+- **time:** 2026-07-29T21:10 → 2026-07-29T21:20
+- **branch:** s8/tools-and-intergrations
+- **task(s):** S8-T4
+- **status:** done
+
+**Did**
+- Created `packages/adapter-sdk/src/mcp/transport.ts` — public `createTransport()` and `connectClient()` functions extracted from the internal discovery implementation, now exported from `@bremio/adapter-sdk`
+- Created `packages/adapter-sdk/src/mcp/types.ts` — shared `McpClientHandle` and `McpServerDiscovery` interfaces extracted to break the circular dependency between discovery and transport
+- Extended `McpClientHandle` with `callTool(name, args)`, `readResource(uri)`, `getPrompt(name, args)` methods, mapping to MCP SDK's `CallToolResult`, `ReadResourceResult`, and `GetPromptResult` types
+- Created `packages/adapter-sdk/src/mcp/capability-mapping.ts` — `McpToolDescriptor` and `McpResourceDescriptor` types with `mapTool()`, `mapTools()`, `mapResourceActionClass()` pure functions that map MCP capabilities to Bremio action classes (`mcp-tool`, `read`)
+- Updated barrel exports in `mcp/index.ts` and `adapter-sdk/src/index.ts` to export all new types and functions
+
+**Decided**
+- Extracted `McpClientHandle` into a shared `types.ts` to resolve the circular dependency between `transport.ts` (needs the handle type for its return) and `discovery.ts` (needs `connectClient()` from transport)
+- Capability mapping is kept as pure functions rather than a class — the mapping from MCP `Tool` → `McpToolDescriptor` is a simple data transformation, and the action class for MCP resources is constant (`read`)
+- No new runtime dependencies: `@modelcontextprotocol/sdk` is already used by the existing discovery code
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/adapter-sdk/src/mcp` — 23/23 passed (3 test files, +14 tests from S8-T3)
+- `corepack pnpm test` — 893/893 passed / 70 files (+14 tests, was 879/68)

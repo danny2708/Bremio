@@ -165,7 +165,7 @@ Gated on `docs/15` §2 and the outcome of Sprint 2. Do not start without sign-of
 | [x] | S8-T1 | Bremio command tool, reusing `ProcessSupervisor` unchanged | L | S3-T1 |
 | [x] | S8-T2 | Web search tool | M | S3-T1 |
 | [x] | S8-T3 | MCP: manifest + discovery | M | S8-T1 |
-| [ ] | S8-T4 | MCP: transport + capability mapping | L | S8-T3 |
+| [x] | S8-T4 | MCP: transport + capability mapping | L | S8-T3 |
 | [ ] | S8-T5 | MCP: permission integration + UI | M | S8-T4 |
 | [ ] | S8-T6 | Plugin lifecycle (distinct from skills — `docs/14` §2.14) | L | S8-T3 |
 | [ ] | S8-T7 | Skill lifecycle | M | S8-T6 |
