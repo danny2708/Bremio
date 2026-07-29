@@ -11,7 +11,7 @@
  * genuinely bidirectional feature arrives.
  */
 import { startDaemonServer, type DaemonHandle } from "./server";
-import { RunRegistry } from "./runs";
+import { RunRegistry, createDefaultPluginManager } from "./runs";
 import { RunStore, defaultDatabasePath } from "./storage";
 import {
   MINIMUM_CLIENT_PROTOCOL,
@@ -119,7 +119,9 @@ export async function startDaemon(options: StartDaemonOptions): Promise<RunningD
   await cleanLeakedEndpointFiles(endpointFile);
 
   const store = await RunStore.open(options.databasePath ?? defaultDatabasePath());
-  const registry = new RunRegistry(store);
+  const pluginManager = createDefaultPluginManager();
+  await pluginManager.activateAll();
+  const registry = new RunRegistry(store, undefined, undefined, pluginManager);
   const reconciled = registry.reconcileOnStartup().map((run) => run.id);
 
   // Trim old terminal runs at startup rather than on a timer: it is the one

@@ -82,3 +82,12 @@ export {
   mapResourceActionClass,
   McpPermissionGuard,
 } from "./mcp";
+
+export { PluginManager } from "./plugin";
+export type {
+  PluginState,
+  PluginLifecycleHooks,
+  PluginDescriptor,
+  PluginRegistration,
+  AgentRegistry,
+} from "./plugin";

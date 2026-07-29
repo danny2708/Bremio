@@ -1862,3 +1862,20 @@ Rules:
 - `corepack pnpm vitest run packages/adapter-sdk/src/mcp apps/cli/src/mcp.test.ts` — 33/33 passed (5 test files, +10 tests from S8-T4)
 - `corepack pnpm test` — 903/903 passed / 72 files (+10 tests, was 893/70)
 - Red-check: removed `if (!check.allowed)` guard from `permission-guard.ts` → "callTool throws when denied" fails (callTool goes through without throwing). Restored.
+
+---
+
+### S8-T6 — Plugin lifecycle
+- **agent:** Claude (opencode)
+- **time:** 2026-07-29T22:00 → open
+- **branch:** s8/tools-and-intergrations
+- **task(s):** S8-T6
+- **status:** in-progress
+
+**Did**
+
+**Decided**
+
+**Blocked / handed off**
+
+**Verification**
