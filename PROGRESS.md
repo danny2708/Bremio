@@ -1870,12 +1870,54 @@ Rules:
 - **time:** 2026-07-29T22:00 → open
 - **branch:** s8/tools-and-intergrations
 - **task(s):** S8-T6
-- **status:** in-progress
+- **status:** done
 
 **Did**
+- Created PluginManager with state machine (registered→activating→active→deactivating→inactive→error)
+- Added PluginLifecycleHooks (onActivate, onDeactivate, onError)
+- 21 tests covering registration, activation, deactivation, state guards, hooks, error handling, registry filtering
+- wired createDefaultPluginManager() into daemon startup, RunRegistry, and /adapters endpoint
+- wired createCLIPluginManager() and KNOWN_ADAPTER_IDS into CLI (replaced hardcoded adapter lists)
 
 **Decided**
-
-**Blocked / handed off**
+- Plugin lifecycle mirrors the PRD's design: plugins are adapter wrappers, skills (S8-T7) are a separate concept for individual tool capabilities
+- PluginManager uses injectable adapter factories via PluginDescriptor.manifest.adapterFactory()
+- AgentRegistry is a simple Map<string, AgentAdapter> keyed by plugin id, only populated for active plugins
 
 **Verification**
+- corepack pnpm typecheck — clean
+- corepack pnpm vitest run packages/adapter-sdk/src/plugin — 21/21 passed
+- Red-check: removed duplicate-registration guard — "throws when registering a duplicate id" test fails. Restored.
+- State-machine guards in activate/deactivate and registry filter (only active plugins) all confirmed
+
+---
+
+### S8-T7 — Skill lifecycle
+- **agent:** Claude (opencode)
+- **time:** 2026-07-29T22:00 → 2026-07-29T22:20
+- **branch:** s8/tools-and-intergrations
+- **task(s):** S8-T7
+- **status:** done
+
+**Did**
+- Created `packages/adapter-sdk/src/skill/types.ts` — `Skill` interface (`id`, `name`, `description`, `inputSchema`, `execute`), `SkillState` (`registered | enabled | disabled | error`), `SkillRegistration`, `SkillContext`, `SkillResult`
+- Created `packages/adapter-sdk/src/skill/manager.ts` — `SkillManager` class with `register()`, `enable()`, `disable()`, `execute()`, `get()`, `list()`, `getRegistry()`, `getState()`
+  - State machine: `registered → enabled → disabled → error`
+  - Guards: duplicate registration, invalid state transitions, execute only when enabled
+  - Error handling: `execute()` catches skill errors, transitions to `error` state, returns `{ success: false, error }` instead of throwing
+- Created `packages/adapter-sdk/src/skill/manager.test.ts` — 27 tests covering registration, enable/disable transitions, execute guards, error state transitions, registry filtering, list immutability
+- Created `packages/adapter-sdk/src/skill/index.ts` — barrel export
+- Updated `packages/adapter-sdk/src/index.ts` — exports `SkillManager` and all skill types
+
+**Decided**
+- Skill lifecycle is deliberately simpler than Plugin lifecycle: no activating/deactivating intermediate states since enabling a skill is synchronous (no async hooks). Three user-visible states + error cover all transitions needed.
+- `execute()` catches errors internally and returns a failed `SkillResult` rather than throwing — matches the pattern where the caller always gets a structured result, and the error transition is recorded in the manager state.
+- `getRegistry()` returns only enabled skills (same pattern as PluginManager's `getRegistry()` for active plugins), enabling future tool routing against the active skill set.
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/adapter-sdk/src/skill` — 27/27 passed
+- `corepack pnpm vitest run packages/adapter-sdk/src` — all plugin + skill + MCP + command-tool + web-search tests pass
+- Red-check A: removed duplicate-registration guard → "throws when registering a duplicate id" fails (second register silently overwrites). Restored.
+- Red-check B: removed enabled-state check in execute → "throws when executing a non-enabled skill" and "throws when executing a disabled skill" both fail (skill runs in wrong state). Restored.
+- Red-check C: removed try/catch in execute → 3 tests fail (error propagates instead of transitioning to error state). Restored.

@@ -91,3 +91,12 @@ export type {
   PluginRegistration,
   AgentRegistry,
 } from "./plugin";
+
+export { SkillManager } from "./skill";
+export type {
+  Skill,
+  SkillContext,
+  SkillRegistration,
+  SkillResult,
+  SkillState,
+} from "./skill";
