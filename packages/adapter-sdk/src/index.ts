@@ -59,3 +59,16 @@ export {
   type WebSearchToolOptions,
   type WebSearchResult,
 } from "./web-search-tool";
+
+export type {
+  McpStdioConfig,
+  McpSseConfig,
+  McpStreamableHttpConfig,
+  McpTransportConfig,
+  McpServerManifest,
+  McpClientHandle,
+  McpServerDiscovery,
+  ConnectClientFn,
+} from "./mcp";
+
+export { McpDiscovery } from "./mcp";

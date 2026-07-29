@@ -1776,3 +1776,41 @@ Rules:
 - Red-check A: removed `timedOut = true` from timeout handler → "reports timedOut when timeout is exceeded" fails (AbortError thrown instead of timedOut result). Restored.
 - Red-check B: removed abstract-parsing branch from `parseResponse` → "includes the abstract as the first result when present" and "concurrent searches return independent results" both fail. Restored.
 - Red-check C: removed loop-level `maxResults` breaks + final `slice()` → "limits results to maxResults" fails (expected 2, got 4). Restored.
+
+### S8-T3 — MCP: manifest + discovery
+- **agent:** Claude (opencode)
+- **time:** 2026-07-29T20:46 → 2026-07-29T21:05
+- **branch:** s8/tools-and-intergrations
+- **task(s):** S8-T3
+- **status:** done
+
+**Did**
+- Created `packages/adapter-sdk/src/mcp/manifest.ts` — `McpServerManifest` with `id`, `name`, `description`, `transport`; transport union of `McpStdioConfig` (command/args/env/cwd), `McpSseConfig` (url), `McpStreamableHttpConfig` (url)
+- Created `packages/adapter-sdk/src/mcp/discovery.ts` — `McpDiscovery` class:
+  - `discover(manifests)` connects to each manifest, calls `getServerCapabilities()` + `listTools()`/`listResources()`/`listPrompts()`, returns `McpServerDiscovery[]`
+  - `ConnectClientFn` injectable factory (DI pattern) for testing — default implementation creates `Client` from `@modelcontextprotocol/sdk` + builds transport from manifest config
+  - Skips servers that fail to connect (returns null, does not fail batch)
+  - Checks `ServerCapabilities` before calling list methods — servers without a capability get empty arrays
+  - Calls `client.close()` in `finally` block — cleanup even on error
+- Created `McpClientHandle` interface (subset of MCP SDK Client's discovery methods) so tests never import the real SDK
+- Exported all types and `McpDiscovery` from `@bremio/adapter-sdk`
+
+**Decided**
+- `McpDiscovery` takes a single `ConnectClientFn` factory (manifest → connected client handle) rather than separate transport + client factories, keeping the abstraction boundary clean — the factory encapsulates SDK-specific transport creation
+- `McpClientHandle` interface avoids leaking MCP SDK types into the adapter-sdk public API — tests mock this interface directly without vi.mock on the SDK
+- Capability-check-before-list guards (`capabilities.tools ? listTools() : []`) prevent calling unsupported methods on servers that don't advertise the capability
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/adapter-sdk/src/mcp/discovery.test.ts` — 9/9 passed
+- `corepack pnpm test` — 879/879 passed / 68 files (+9)
+- Red-check A: removed `catch { return null }` from `discoverServer` → "skips servers that fail to connect" + "skips manifest when connect throws" both fail (error propagates instead of skip). Restored.
+- Red-check B: removed `capabilities.tools/resources/prompts` guards before list calls → "returns empty tools when server has no tool capability" + "returns empty resources when server has no resource capability" both fail (`listToolsFn`/`listResourcesFn` spy asserts `not.toHaveBeenCalled()`). Restored.
+- Red-check C: removed `finally { client.close() }` → "calls close on the client after discovery" + "calls close even when listTools fails" both fail. Restored.
+
+### S8-T3 — MCP: manifest + discovery
+- **agent:** Claude (opencode)
+- **time:** 2026-07-29T20:46 → open
+- **branch:** s8/tools-and-intergrations
+- **task(s):** S8-T3
+- **status:** in-progress
