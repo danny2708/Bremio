@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import {
   classifyAgentError,
   processSupervisor,
+  PluginManager,
   type AgentAdapter,
   type ProcessSupervisor,
   type TerminationOutcome,
@@ -111,6 +112,31 @@ export interface StartRunInput {
 }
 
 /**
+ * Create a fully-configured PluginManager with all built-in adapters registered
+ * and activated. The manager tracks each adapter through its lifecycle:
+ * registered → activating → active.
+ *
+ * Plugins can be deactivated and re-activated at runtime, enabling dynamic
+ * adapter enablement without a daemon restart.
+ */
+export function createDefaultPluginManager(): PluginManager {
+  const mgr = new PluginManager();
+  mgr.register({
+    manifest: { id: "claude", displayName: "Claude", version: "1.0.0", adapterFactory: () => new ClaudeAdapter(), supportedRoles: ["lead", "planner", "implementer", "reviewer"], configurationSchema: {} },
+  });
+  mgr.register({
+    manifest: { id: "codex", displayName: "Codex", version: "1.0.0", adapterFactory: () => new CodexAdapter(), supportedRoles: ["lead", "implementer", "reviewer", "tester"], configurationSchema: {} },
+  });
+  mgr.register({
+    manifest: { id: "antigravity", displayName: "Antigravity", version: "1.0.0", adapterFactory: () => new AntigravityAdapter(), supportedRoles: ["lead", "implementer"], configurationSchema: {} },
+  });
+  mgr.register({
+    manifest: { id: "opencode", displayName: "OpenCode", version: "1.0.0", adapterFactory: () => new OpenCodeAdapter(), supportedRoles: ["implementer", "reviewer", "tester"], configurationSchema: {} },
+  });
+  return mgr;
+}
+
+/**
  * Every adapter the daemon can execute.
  *
  * `/adapters` advertises this same list. They were two literals until S4-T4 made
@@ -181,7 +207,27 @@ export class RunRegistry {
     private readonly supervisor: ProcessSupervisor = processSupervisor,
     /** Overridden only by tests, so the review path can run without a provider. */
     private readonly adapters: () => AgentAdapter[] = defaultAdapters,
+    /** Plugin manager for lifecycle-tracked adapter registration. When set,
+     * its active adapters take precedence over `adapters()`. */
+    private readonly pluginManager?: PluginManager,
   ) {}
+
+  /**
+   * The adapters a run will actually be executed with.
+   *
+   * `/adapters` reports this rather than building its own list. S8-T6 gave the
+   * daemon a long-lived `PluginManager` whose plugins can be deactivated at
+   * runtime, but left the route constructing a *fresh* manager and activating
+   * everything on it — so a deactivated plugin kept being advertised as
+   * available while the run path could no longer run it. That is the same
+   * advertise/execute split S4-T4 introduced and S4-REVIEW closed; the parity
+   * test survived because both sides still happened to name the same four ids.
+   */
+  executableAdapters(): AgentAdapter[] {
+    return this.pluginManager
+      ? [...this.pluginManager.getRegistry().values()]
+      : this.adapters();
+  }
 
   /**
    * Mark runs that were mid-flight when the previous process died.
@@ -869,7 +915,7 @@ export class RunRegistry {
     input: StartRunInput,
     controller: AbortController,
   ): Promise<void> {
-    const registry = createRegistry(this.adapters());
+    const registry = createRegistry(this.executableAdapters());
 
     // Build session continuation context when continuing an existing session
     const turnIndex = input.sessionId

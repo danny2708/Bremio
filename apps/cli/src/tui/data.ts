@@ -3,7 +3,7 @@ import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
 import { OpenCodeAdapter } from "@bremio/adapter-opencode";
-import type { AgentAdapter, AgentCapabilities, AgentHealth } from "@bremio/adapter-sdk";
+import { PluginManager, type AgentAdapter, type AgentCapabilities, type AgentHealth } from "@bremio/adapter-sdk";
 import {
   DEFAULT_STALE_AFTER_SECONDS,
   defaultAqtDatabasePath,
@@ -21,9 +21,40 @@ export const AGENT_LABELS: Record<string, string> = {
   opencode: "OpenCode",
 };
 
+/**
+ * Set of known adapter ids, used for synchronous agent-id validation in the CLI.
+ * This is the same set `createCLIPluginManager` registers, extracted so the
+ * validation and execution paths share one source of truth.
+ */
+export const KNOWN_ADAPTER_IDS: ReadonlySet<string> = new Set(Object.keys(AGENT_LABELS));
+
 /** Fresh adapter instances. Cheap to construct; health work happens on demand. */
 export function createAdapters(): AgentAdapter[] {
   return [new ClaudeAdapter(), new CodexAdapter(), new AntigravityAdapter(), new OpenCodeAdapter()];
+}
+
+/**
+ * Create a fully-configured PluginManager with all built-in adapters registered
+ * and activated. Supports lifecycle management: each plugin transitions through
+ * registered → activating → active. Use this in async contexts (doctor,
+ * runCommand, compareCommandFromCli) for lifecycle-tracked adapter access.
+ */
+export async function createCLIPluginManager(): Promise<PluginManager> {
+  const mgr = new PluginManager();
+  mgr.register({
+    manifest: { id: "claude", displayName: "Claude", version: "1.0.0", adapterFactory: () => new ClaudeAdapter(), supportedRoles: ["lead", "planner", "implementer", "reviewer"], configurationSchema: {} },
+  });
+  mgr.register({
+    manifest: { id: "codex", displayName: "Codex", version: "1.0.0", adapterFactory: () => new CodexAdapter(), supportedRoles: ["lead", "implementer", "reviewer", "tester"], configurationSchema: {} },
+  });
+  mgr.register({
+    manifest: { id: "antigravity", displayName: "Antigravity", version: "1.0.0", adapterFactory: () => new AntigravityAdapter(), supportedRoles: ["lead", "implementer"], configurationSchema: {} },
+  });
+  mgr.register({
+    manifest: { id: "opencode", displayName: "OpenCode", version: "1.0.0", adapterFactory: () => new OpenCodeAdapter(), supportedRoles: ["implementer", "reviewer", "tester"], configurationSchema: {} },
+  });
+  await mgr.activateAll();
+  return mgr;
 }
 
 export interface AgentDiagnostic {

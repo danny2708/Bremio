@@ -4,14 +4,9 @@ import { createInterface } from "node:readline/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { pino } from "pino";
-import { AntigravityAdapter } from "@bremio/adapter-antigravity";
-import { ClaudeAdapter } from "@bremio/adapter-claude";
-import { CodexAdapter } from "@bremio/adapter-codex";
-import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import {
   LeadPlanError,
   PlanValidationError,
-  createRegistry,
   evaluateCalibrationReadiness,
   ledgerPathFor,
   readLedger,
@@ -49,9 +44,11 @@ import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics
 import { collectComparison, printComparison, type ComparisonSide } from "./compare";
 import { capacityCommand } from "./quota";
 import { approvalCommandFromCli } from "./approval";
+import { mcpCommandFromCli } from "./mcp";
 import { sessionCommandFromCli } from "./session";
 import { statsCommand } from "./stats";
 import { canUseTui, startTui } from "./tui";
+import { createCLIPluginManager, KNOWN_ADAPTER_IDS } from "./tui/data";
 import { renderEvent } from "@bremio/event-view";
 import { c, formatEventView, printPlan, printReport, renderRunEvent, statusGlyph, tagStandalone } from "./ui";
 import { runViaEphemeralDaemon } from "./ephemeral";
@@ -77,6 +74,7 @@ ${c.bold("Usage")}
   bremio capacity [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
   bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
   bremio daemon [start|status|stop|restart]   manage the local daemon (HTTP + SSE, loopback)
+  bremio mcp discover  --manifest <file>      list tools from MCP servers
   bremio update                           how to update the CLI, daemon and extension
   bremio doctor [--json]                  adapter health; --json for a support bundle
   bremio diagnostics export [--out <f>]   write a redacted diagnostics bundle
@@ -270,6 +268,9 @@ async function main(): Promise<void> {
     case "approval":
       process.exitCode = await approvalCommandFromCli(values, positionals);
       return;
+    case "mcp":
+      process.exitCode = await mcpCommandFromCli(values, positionals);
+      return;
     case "daemon":
       process.exitCode = await daemonCommandFromCli(positionals[1]);
       return;
@@ -291,7 +292,7 @@ async function main(): Promise<void> {
 
 async function compareCommandFromCli(values: Values, positionals: string[]): Promise<number> {
   const prompt = (values.prompt ?? positionals.slice(1).join(" ")).trim();
-  const agentIds = new Set(["claude", "codex", "antigravity", "opencode"]);
+  const agentIds = KNOWN_ADAPTER_IDS;
   const singleAgentId = values.agent ?? "claude";
   const teamLeadId = values.lead ?? "claude";
   const errors: string[] = [];
@@ -339,12 +340,8 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
   }
 
   const json = values.json === true;
-  const registry = createRegistry([
-    new ClaudeAdapter(),
-    new CodexAdapter(),
-    new AntigravityAdapter(),
-    new OpenCodeAdapter(),
-  ]);
+  const pluginManager = await createCLIPluginManager();
+  const registry = pluginManager.getRegistry();
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
   const singleController = new AbortController();
   const teamController = new AbortController();
@@ -535,7 +532,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       errors.push("--mode must be 'single' or 'team'");
     }
   }
-  const agentIds = new Set(["claude", "codex", "antigravity", "opencode"]);
+  const agentIds = KNOWN_ADAPTER_IDS;
   if (mode === "single" && !agentIds.has(values.agent ?? "")) {
     errors.push("Single mode requires --agent 'claude', 'codex', 'antigravity', or 'opencode'");
   }
@@ -696,12 +693,8 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   }
 
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
-  const registry = createRegistry([
-    new ClaudeAdapter(),
-    new CodexAdapter(),
-    new AntigravityAdapter(),
-    new OpenCodeAdapter(),
-  ]);
+  const pluginManager = await createCLIPluginManager();
+  const registry = pluginManager.getRegistry();
 
   // Capability gate for lead role — not a name check, so the next
   // capability-only provider won't hit the same bug S1-R4 fixed.
@@ -1235,12 +1228,8 @@ async function diagnosticsCommand(values: Values, subcommand?: string): Promise<
 
 async function doctor(): Promise<void> {
   console.log(c.bold("bremio doctor — adapter health\n"));
-  for (const adapter of [
-    new ClaudeAdapter(),
-    new CodexAdapter(),
-    new AntigravityAdapter(),
-    new OpenCodeAdapter(),
-  ]) {
+  const pm = await createCLIPluginManager();
+  for (const [id, adapter] of pm.getRegistry()) {
     const health = await adapter.healthCheck();
     const caps = await adapter.getCapabilities();
     const glyph =
@@ -1249,7 +1238,7 @@ async function doctor(): Promise<void> {
         : health.status === "degraded"
           ? c.yellow("degraded")
           : c.red("unavailable");
-    console.log(`  ${adapter.id.padEnd(8)} ${glyph}   ${c.dim(health.detail ?? "")}`);
+    console.log(`  ${id.padEnd(8)} ${glyph}   ${c.dim(health.detail ?? "")}`);
     console.log(
       c.dim(
         `           lead-eligible: ${caps.planning && caps.structuredOutput ? "yes" : "no"}  ` +

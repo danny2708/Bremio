@@ -3,7 +3,13 @@ import { connect } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RunRegistry, defaultAdapters, type RunEvent, type SessionEvent } from "./runs";
+import {
+  RunRegistry,
+  createDefaultPluginManager,
+  defaultAdapters,
+  type RunEvent,
+  type SessionEvent,
+} from "./runs";
 import { RunStore, type PersistedSession, type SessionDetail } from "./storage";
 import { startDaemonServer, type DaemonHandle } from "./server";
 import { publishEndpoint, readEndpoint, retractEndpoint } from "./endpoint";
@@ -158,7 +164,7 @@ describe("daemon HTTP surface", () => {
     // These were two separate literals. S4-T4 made the daemon the default path
     // for `bremio run`, at which point the route offered opencode while
     // `#execute` built a registry of three — so the advertised agent failed
-    // with "not registered". Both sides now read `defaultAdapters()`.
+    // with "not registered".
     const handle = await daemon();
     const response = await call(handle, "/adapters");
     const body = (await response.json()) as { adapters: Array<{ id: string }> };
@@ -166,6 +172,36 @@ describe("daemon HTTP surface", () => {
       defaultAdapters().map((a) => a.id).sort(),
     );
   }, 15_000);
+
+  it("stops advertising a plugin once it is deactivated", async () => {
+    // The version above compares two lists that both name the four built-in
+    // ids, so it kept passing when S8-T6 pointed the route at a *fresh*
+    // PluginManager while the run path used the daemon's own. Deactivation is
+    // what tells them apart, and it is the feature S8-T6 exists to provide.
+    const pluginManager = createDefaultPluginManager();
+    await pluginManager.activateAll();
+
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-plugin-db-"));
+    const store = await RunStore.open(path.join(dir, "bremio.db"));
+    cleanups.push(async () => {
+      store.close();
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
+    });
+    const registry = new RunRegistry(store, undefined, undefined, pluginManager);
+    const handle = await daemon(registry);
+
+    const before = (await (await call(handle, "/adapters")).json()) as { adapters: Array<{ id: string }> };
+    expect(before.adapters.map((a) => a.id)).toContain("opencode");
+
+    await pluginManager.deactivate("opencode");
+
+    const after = (await (await call(handle, "/adapters")).json()) as { adapters: Array<{ id: string }> };
+    expect(after.adapters.map((a) => a.id)).not.toContain("opencode");
+    // And the route agrees with what a run would actually get.
+    expect(after.adapters.map((a) => a.id).sort()).toEqual(
+      registry.executableAdapters().map((a) => a.id).sort(),
+    );
+  }, 20_000);
 
   it("reports opencode lead-eligibility from the capability contract", async () => {
     const handle = await daemon();

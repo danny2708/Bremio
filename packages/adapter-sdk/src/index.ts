@@ -50,3 +50,63 @@ export {
   type TerminateOptions,
   type TerminationOutcome,
 } from "./process-supervisor";
+
+export { CommandTool, type CommandToolOptions, type CommandResult } from "./command-tool";
+
+export {
+  WebSearchTool,
+  type WebSearchResultItem,
+  type WebSearchToolOptions,
+  type WebSearchResult,
+} from "./web-search-tool";
+
+export type {
+  McpStdioConfig,
+  McpSseConfig,
+  McpStreamableHttpConfig,
+  McpTransportConfig,
+  McpServerManifest,
+  McpClientHandle,
+  McpServerDiscovery,
+  ConnectClientFn,
+  McpToolDescriptor,
+  McpResourceDescriptor,
+} from "./mcp";
+
+export {
+  McpDiscovery,
+  createTransport,
+  connectClient,
+  mapTool,
+  mapTools,
+  mapResourceActionClass,
+  McpPermissionGuard,
+} from "./mcp";
+
+export { PluginManager } from "./plugin";
+export type {
+  PluginState,
+  PluginLifecycleHooks,
+  PluginDescriptor,
+  PluginRegistration,
+  AgentRegistry,
+} from "./plugin";
+
+export { SkillManager } from "./skill";
+export type {
+  Skill,
+  SkillContext,
+  SkillRegistration,
+  SkillResult,
+  SkillState,
+} from "./skill";
+
+export { HookManager } from "./hooks";
+export type {
+  HookContext,
+  HookEvaluationResult,
+  HookHandler,
+  HookHandlerResult,
+  HookPoint,
+  HookRegistration,
+} from "./hooks";

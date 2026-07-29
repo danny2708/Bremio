@@ -15,7 +15,7 @@ import {
   toAqtCapacitySnapshots,
 } from "@bremio/quota";
 import { MergeManager } from "@bremio/workspace";
-import { RunRegistry, defaultAdapters, type SessionEvent } from "./runs";
+import { RunRegistry, createDefaultPluginManager, type SessionEvent } from "./runs";
 import { isTerminal, type CreateContextItemInput, type PersistedContextItem } from "./storage";
 import { mergeRun } from "./merge";
 import { applyRunPatch, revertRunPatch } from "./apply";
@@ -182,8 +182,10 @@ async function handle(
   }
 
   if (method === "GET" && route === "/adapters") {
-    // Same list the run path executes with — see `defaultAdapters`.
-    const adapters = defaultAdapters();
+    // Literally the list the run path executes with, read off this daemon's
+    // own registry — not a freshly built one, which would keep advertising a
+    // plugin after it had been deactivated here.
+    const adapters = registry.executableAdapters();
     const diagnostics = await Promise.all(
       adapters.map(async (adapter) => {
         const [health, capabilities, runtimeCaps] = await Promise.all([
