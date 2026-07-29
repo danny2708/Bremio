@@ -1745,3 +1745,34 @@ Rules:
 - `corepack pnpm test` — 860/860 passed / 66 files (+10, was 849/65)
 - Red-check A: removed `timedOut = true` from timeout handler → test "times out and kills the process when timeout is exceeded" fails with `expected true to be false`. Restored.
 - Red-check B: replaced `this.supervisor.spawn(...)` with bare `spawn(...)` so the supervisor never tracks the child → test "tracks the child in the supervisor during execution and releases on completion" fails (assertions on `isSupervised`/`livePids` fail). Restored.
+
+### S8-T2 — Web search tool
+- **agent:** Claude (opencode)
+- **time:** 2026-07-29T20:30 → 2026-07-29T20:45
+- **branch:** s8/tools-and-intergrations
+- **task(s):** S8-T2
+- **status:** done
+
+**Did**
+- Created `WebSearchTool` class in `packages/adapter-sdk/src/web-search-tool.ts`:
+  - `execute(query, options)` — makes HTTP GET to DuckDuckGo Instant Answer API (JSON, no API key required), returns structured `WebSearchResult`
+  - Parses `AbstractText`/`AbstractURL` as primary result, `Results` array, and `RelatedTopics` (including nested topic categories) into uniform `WebSearchResultItem[]`
+  - Timeout via internal `AbortController` — sets `timedOut` flag before aborting, returns partial result on timeout (not throwing)
+  - External cancellation via `AbortSignal` option — combined with timeout signal via `AbortSignal.any()`, re-throws on external abort
+  - `fetchFn` injected in constructor (default `globalThis.fetch`) so tests never hit the network; endpoint URL configurable
+  - `maxResults` cap enforced at every collection loop and a final `slice()`
+- Exported `WebSearchTool`, `WebSearchResultItem`, `WebSearchToolOptions`, `WebSearchResult` from `@bremio/adapter-sdk`
+- 10 tests: returns results, abstract first, maxResults limit, empty response, API error, timeout, external signal, nested topics, empty query, concurrent isolation
+
+**Decided**
+- Injected `fetchFn` rather than hardcoding a search client, mirroring `CommandTool`'s DI of `ProcessSupervisor` — lets tests inject mock responses and adapters provide custom search backends
+- DuckDuckGo Instant Answer API as default endpoint because it requires no API key, returns JSON, and provides abstract + related topics that are useful for coding-agent queries
+- Timeout returns partial result (`{ results: [], timedOut: true }`) instead of throwing, same pattern as `CommandTool`'s `timedOut` flag — allows caller to distinguish timeout from external cancellation
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/adapter-sdk/src/web-search-tool.test.ts` — 10/10 passed
+- `corepack pnpm test` — 870/870 passed / 67 files (+10, was 860/66)
+- Red-check A: removed `timedOut = true` from timeout handler → "reports timedOut when timeout is exceeded" fails (AbortError thrown instead of timedOut result). Restored.
+- Red-check B: removed abstract-parsing branch from `parseResponse` → "includes the abstract as the first result when present" and "concurrent searches return independent results" both fail. Restored.
+- Red-check C: removed loop-level `maxResults` breaks + final `slice()` → "limits results to maxResults" fails (expected 2, got 4). Restored.

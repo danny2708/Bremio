@@ -52,3 +52,10 @@ export {
 } from "./process-supervisor";
 
 export { CommandTool, type CommandToolOptions, type CommandResult } from "./command-tool";
+
+export {
+  WebSearchTool,
+  type WebSearchResultItem,
+  type WebSearchToolOptions,
+  type WebSearchResult,
+} from "./web-search-tool";
