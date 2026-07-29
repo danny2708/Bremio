@@ -1,9 +1,9 @@
-import type {
+﻿import type {
   Tool,
   ServerCapabilities,
   Resource,
   Prompt,
-} from "@modelcontextprotocol/sdk/types";
+} from "@modelcontextprotocol/sdk/types.js";
 import type {
   McpServerManifest,
 } from "./manifest";

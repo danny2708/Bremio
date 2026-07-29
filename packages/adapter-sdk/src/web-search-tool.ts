@@ -41,8 +41,28 @@ interface DuckDuckGoResponse {
   Type?: string;
 }
 
+/** The policy answer for one search, from the caller's `ControlMode` matrix. */
+export interface WebSearchPermissionCheck {
+  allowed: boolean;
+  reason: string;
+}
+
+/**
+ * Queries a search endpoint over the network.
+ *
+ * `checkPermission` is required and consulted before the request leaves the
+ * machine. `ActionClass` has had a `network` cell since S2-T1, and the query
+ * text — which can carry repository contents — goes to a third-party service,
+ * so this is precisely the egress the matrix exists to gate. It was built
+ * without consulting it.
+ */
 export class WebSearchTool {
   constructor(
+    private readonly checkPermission: (
+      actionClass: "network",
+      query: string,
+      endpoint: string,
+    ) => WebSearchPermissionCheck,
     private readonly fetchFn: typeof globalThis.fetch = fetch,
     private readonly endpoint = "https://api.duckduckgo.com/",
   ) {}
@@ -53,6 +73,12 @@ export class WebSearchTool {
   ): Promise<WebSearchResult> {
     const started = Date.now();
     const { timeout, signal: externalSignal, maxResults = 5 } = options;
+
+    // Before the request, not after: a denied search must never leave.
+    const permission = this.checkPermission("network", query, this.endpoint);
+    if (!permission.allowed) {
+      throw new Error(`web search denied: ${permission.reason}`);
+    }
 
     const abortController = new AbortController();
     const signals: AbortSignal[] = [abortController.signal];

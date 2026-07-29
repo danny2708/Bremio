@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ProcessSupervisor } from "./process-supervisor";
 import { CommandTool } from "./command-tool";
@@ -11,7 +14,7 @@ describe("CommandTool", () => {
 
   beforeEach(() => {
     supervisor = new ProcessSupervisor();
-    tool = new CommandTool(supervisor);
+    tool = new CommandTool(supervisor, () => ({ allowed: true, reason: "test" }));
   });
 
   it("executes a simple command and captures stdout", async () => {
@@ -127,5 +130,35 @@ describe("CommandTool", () => {
     expect(r2.stdout).toBe("second");
     expect(supervisor.isSupervised("conc-1")).toBe(false);
     expect(supervisor.isSupervised("conc-2")).toBe(false);
+  });
+
+  describe("command permission gate", () => {
+    it("never spawns a denied command", async () => {
+      const denying = new CommandTool(supervisor, () => ({
+        allowed: false,
+        reason: "commands are denied in plan mode",
+      }));
+      const sentinel = path.join(os.tmpdir(), `bremio-cmd-gate-${Date.now()}.txt`);
+
+      await expect(
+        denying.execute("node", ["-e", `require("fs").writeFileSync(${JSON.stringify(sentinel)}, "ran")`], {
+          runId: "denied-run",
+        }),
+      ).rejects.toThrow(/commands are denied in plan mode/);
+
+      // The refusal has to happen before the spawn, not after: the proof is
+      // that the process left no trace behind.
+      expect(existsSync(sentinel)).toBe(false);
+      expect(supervisor.isSupervised("denied-run")).toBe(false);
+    });
+
+    it("asks about the actual command and arguments", async () => {
+      const check = vi.fn().mockReturnValue({ allowed: true, reason: "ok" });
+      const gated = new CommandTool(supervisor, check);
+
+      await gated.execute("node", ["-e", "process.stdout.write('x')"], { runId: "asked" });
+
+      expect(check).toHaveBeenCalledWith("command", "node", ["-e", "process.stdout.write('x')"]);
+    });
   });
 });

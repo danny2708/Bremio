@@ -182,10 +182,10 @@ async function handle(
   }
 
   if (method === "GET" && route === "/adapters") {
-    // Same list the run path executes with — see `createDefaultPluginManager`.
-    const pm = createDefaultPluginManager();
-    await pm.activateAll();
-    const adapters = [...pm.getRegistry().values()];
+    // Literally the list the run path executes with, read off this daemon's
+    // own registry — not a freshly built one, which would keep advertising a
+    // plugin after it had been deactivated here.
+    const adapters = registry.executableAdapters();
     const diagnostics = await Promise.all(
       adapters.map(async (adapter) => {
         const [health, capabilities, runtimeCaps] = await Promise.all([

@@ -18,12 +18,12 @@ function mockClient(overrides: Partial<McpClientHandle> = {}): McpClientHandle {
 }
 
 describe("McpPermissionGuard", () => {
-  it("allows tool call when no policy check is configured", async () => {
-    const guard = new McpPermissionGuard();
-    const check = guard.checkToolCall("any-tool");
-
-    expect(check.allowed).toBe(true);
-    expect(check.approvalRequired).toBe("none");
+  it("cannot be constructed without a policy check", () => {
+    // It used to default to allow-everything with the reason "no policy check
+    // configured", so forgetting to wire the gate opened it. The check is now
+    // required, which turns that omission into a compile error.
+    // @ts-expect-error the constructor argument is mandatory
+    expect(() => new McpPermissionGuard()).toBeTypeOf("function");
   });
 
   it("passes actionClass mcp-tool to the check function", async () => {

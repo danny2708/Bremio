@@ -1955,3 +1955,30 @@ Rules:
 - Red-check A: removed duplicate-registration guard → "throws when registering a duplicate id" fails. Restored.
 - Red-check B: removed hook deny guard in SkillManager.execute() → 2 hook integration tests fail. Restored.
 - Red-check C: removed try/catch in HookManager.evaluate() → "handles a handler that throws" fails (error propagates). Restored.
+
+### S8-REVIEW — tech-lead audit of Sprint 8
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-29T22:40 → 2026-07-29T23:25
+- **branch:** s8/tools-and-intergrations
+- **task(s):** S8-T1 … S8-T8
+- **status:** done
+
+**Did**
+- **Fixed a broken release build.** `pnpm release:check` failed on this branch: `packages/adapter-sdk/src/mcp/*` imported `@modelcontextprotocol/sdk/client/stdio` and friends without the `.js` suffix. `tsc` resolves that form, `esbuild` does not, so `pnpm build` died and nothing could be packaged. Eight tasks landed on top of it because every S8 block verified with `typecheck` + `vitest` only — the last `release:check — PASS` recorded in this file before today is Sprint 7's review. Added `.js` to all eight SDK imports.
+- **Fixed the advertise/execute split, reintroduced.** S8-T6 gave the daemon a long-lived `PluginManager` whose plugins can be deactivated at runtime, but pointed `/adapters` at a *freshly constructed* manager with everything activated. A deactivated plugin kept being advertised while the run path could no longer run it — the same defect S4-T4 introduced and S4-REVIEW closed. Added `RunRegistry.executableAdapters()` as the one source; the route and `#execute` both read it.
+- **The S4 parity test had gone vacuous and did not notice.** It compares `/adapters` against `defaultAdapters()`, and the run path had stopped using `defaultAdapters()` — but both still name the same four ids, so it stayed green. Added a test that deactivates a plugin and asserts the route stops advertising it, which is the behaviour S8-T6 exists to provide.
+- **Closed three ungated capabilities.** `McpPermissionGuard`'s permission check *defaulted to allow-everything* with the reason "no policy check configured" — a security control that is open when unwired, in a codebase where every other gate fails closed. `CommandTool` (arbitrary process spawn) and `WebSearchTool` (sends the query, which can carry repository contents, to `api.duckduckgo.com`) had no policy hook at all, despite `ActionClass` carrying `command` and `network` cells since S2-T1 and both tasks listing S3-T1 as a dependency. All three now *require* a check to construct, and the two tools refuse before the spawn / before the request.
+- Scheduled **S9-T5** (wire the tools or declare them inert) and **S9-T6** (`release:check` in the definition of done).
+
+**Decided**
+- Made the policy check a required constructor argument rather than adding a wired-up default. There is no production caller to wire yet, and a required argument turns "forgot the gate" into a compile error instead of a silent allow. This is the same shape as S0-T4's Antigravity opt-in: refuse to act rather than act permissively.
+- Did not build call sites for the tools. Sprint 8 delivers capabilities; the consumers are Sprint 9+ work, and inventing a call site during a review would be scope I was not asked for. Recorded as S9-T5 instead, with the honest note in `TASKS.md` that only the plugin lifecycle reached a production path.
+- Marked S8-T6 `[x]` (its own PROGRESS block says done and it is wired) and recorded in the sprint heading that the sprint's ⛔ sign-off gate was bypassed, rather than quietly deleting the gate.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 977 passed / 75 files (was 972 / 75).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.2.0`). It failed outright before the import fix.
+- Red-check A: pointed `/adapters` back at a fresh `PluginManager` → "stops advertising a plugin once it is deactivated" failed with `expected [...] to not include 'opencode'`. The old parity test passed throughout, which is the evidence it was vacuous. Restored.
+- Red-check B: disabled `CommandTool`'s deny branch → "never spawns a denied command" failed, resolving instead of rejecting. The test asserts on a filesystem sentinel, so it proves the process never ran rather than that an error was thrown. Restored.
+- Red-check C: disabled `WebSearchTool`'s deny branch → "does not reach the network when the query is denied" failed, and `fetch` had been called. Restored.

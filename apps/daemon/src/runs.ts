@@ -213,6 +213,23 @@ export class RunRegistry {
   ) {}
 
   /**
+   * The adapters a run will actually be executed with.
+   *
+   * `/adapters` reports this rather than building its own list. S8-T6 gave the
+   * daemon a long-lived `PluginManager` whose plugins can be deactivated at
+   * runtime, but left the route constructing a *fresh* manager and activating
+   * everything on it — so a deactivated plugin kept being advertised as
+   * available while the run path could no longer run it. That is the same
+   * advertise/execute split S4-T4 introduced and S4-REVIEW closed; the parity
+   * test survived because both sides still happened to name the same four ids.
+   */
+  executableAdapters(): AgentAdapter[] {
+    return this.pluginManager
+      ? [...this.pluginManager.getRegistry().values()]
+      : this.adapters();
+  }
+
+  /**
    * Mark runs that were mid-flight when the previous process died.
    *
    * A run that was actively executing (`running`) had a child process we were
@@ -898,7 +915,7 @@ export class RunRegistry {
     input: StartRunInput,
     controller: AbortController,
   ): Promise<void> {
-    const registry = this.pluginManager?.getRegistry() ?? createRegistry(this.adapters());
+    const registry = createRegistry(this.executableAdapters());
 
     // Build session continuation context when continuing an existing session
     const turnIndex = input.sessionId

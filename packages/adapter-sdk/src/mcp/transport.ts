@@ -1,15 +1,19 @@
+// The `.js` suffixes are required, not stylistic: the SDK's exports map points
+// at real ESM files, so esbuild cannot resolve the extensionless form and
+// `pnpm build` fails on it. `tsc` accepts it either way, which is why
+// typecheck-only verification missed this.
 import {
   Client,
-} from "@modelcontextprotocol/sdk/client";
+} from "@modelcontextprotocol/sdk/client/index.js";
 import {
   StdioClientTransport,
-} from "@modelcontextprotocol/sdk/client/stdio";
+} from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
   SSEClientTransport,
-} from "@modelcontextprotocol/sdk/client/sse";
+} from "@modelcontextprotocol/sdk/client/sse.js";
 import {
   StreamableHTTPClientTransport,
-} from "@modelcontextprotocol/sdk/client/streamableHttp";
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type {
   McpServerManifest,
   McpTransportConfig,

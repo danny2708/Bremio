@@ -1,5 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+﻿import { describe, it, expect, vi } from "vitest";
 import { WebSearchTool, type WebSearchResult } from "./web-search-tool";
+
+/** These tests are about parsing and timeouts; the gate has its own below. */
+const ALLOW = () => ({ allowed: true, reason: "test" });
 
 function mockFetch(data: unknown, ok = true): typeof globalThis.fetch {
   return vi.fn().mockResolvedValue({
@@ -70,7 +73,7 @@ describe("WebSearchTool", () => {
 
   it("returns results from the API response", async () => {
     const fetchFn = mockFetch(sampleResponse);
-    const tool = new WebSearchTool(fetchFn);
+    const tool = new WebSearchTool(ALLOW, fetchFn);
     const result = await tool.execute("typescript");
 
     expect(result.results.length).toBeGreaterThanOrEqual(3);
@@ -85,7 +88,7 @@ describe("WebSearchTool", () => {
 
   it("includes the abstract as the first result when present", async () => {
     const fetchFn = mockFetch(sampleResponse);
-    const tool = new WebSearchTool(fetchFn);
+    const tool = new WebSearchTool(ALLOW, fetchFn);
     const result = await tool.execute("typescript");
 
     expect(result.results.length).toBeGreaterThanOrEqual(1);
@@ -95,7 +98,7 @@ describe("WebSearchTool", () => {
 
   it("limits results to maxResults", async () => {
     const fetchFn = mockFetch(sampleResponse);
-    const tool = new WebSearchTool(fetchFn);
+    const tool = new WebSearchTool(ALLOW, fetchFn);
     const result = await tool.execute("typescript", { maxResults: 2 });
 
     expect(result.results.length).toBe(2);
@@ -103,7 +106,7 @@ describe("WebSearchTool", () => {
 
   it("handles an empty response gracefully", async () => {
     const fetchFn = mockFetch({});
-    const tool = new WebSearchTool(fetchFn);
+    const tool = new WebSearchTool(ALLOW, fetchFn);
     const result = await tool.execute("xyznonexistent12345");
 
     expect(result.results).toEqual([]);
@@ -112,13 +115,13 @@ describe("WebSearchTool", () => {
 
   it("handles API error responses", async () => {
     const fetchFn = mockFetch({ msg: "Internal error" }, false);
-    const tool = new WebSearchTool(fetchFn);
+    const tool = new WebSearchTool(ALLOW, fetchFn);
     await expect(tool.execute("test")).rejects.toThrow("search request failed: 500");
   });
 
   it("reports timedOut when timeout is exceeded", async () => {
     const fetchFn = mockFetchDelayed(sampleResponse, 500);
-    const tool = new WebSearchTool(fetchFn);
+    const tool = new WebSearchTool(ALLOW, fetchFn);
 
     const result = await tool.execute("typescript", { timeout: 50, maxResults: 5 });
     expect(result.timedOut).toBe(true);
@@ -134,7 +137,7 @@ describe("WebSearchTool", () => {
         }),
     ) as unknown as typeof globalThis.fetch;
 
-    const tool = new WebSearchTool(fetchFn);
+    const tool = new WebSearchTool(ALLOW, fetchFn);
     const controller = new AbortController();
 
     const promise = tool.execute("typescript", { signal: controller.signal });
@@ -156,7 +159,7 @@ describe("WebSearchTool", () => {
       ],
     };
     const fetchFn = mockFetch(response);
-    const tool = new WebSearchTool(fetchFn);
+    const tool = new WebSearchTool(ALLOW, fetchFn);
     const result = await tool.execute("test");
 
     expect(result.results.length).toBe(2);
@@ -167,7 +170,7 @@ describe("WebSearchTool", () => {
   it("does not call fetch on empty query but returns empty", async () => {
     // DDG API will still be called with q=, but should return empty results
     const fetchFn = mockFetch({});
-    const tool = new WebSearchTool(fetchFn);
+    const tool = new WebSearchTool(ALLOW, fetchFn);
     const result = await tool.execute("");
 
     expect(result.results).toEqual([]);
@@ -186,8 +189,8 @@ describe("WebSearchTool", () => {
       Heading: "Query B",
     });
 
-    const toolA = new WebSearchTool(fetchA);
-    const toolB = new WebSearchTool(fetchB);
+    const toolA = new WebSearchTool(ALLOW, fetchA);
+    const toolB = new WebSearchTool(ALLOW, fetchB);
 
     const [rA, rB] = await Promise.all([
       toolA.execute("query a"),
@@ -198,5 +201,30 @@ describe("WebSearchTool", () => {
     expect(rA.results[0]!.snippet).toBe("Result A");
     expect(rB.results.length).toBeGreaterThanOrEqual(1);
     expect(rB.results[0]!.snippet).toBe("Result B");
+  });
+
+  describe("network permission gate", () => {
+    it("does not reach the network when the query is denied", async () => {
+      // The query text can carry repository contents to a third party, which
+      // is exactly what the `network` ActionClass exists to gate. The tool was
+      // built without consulting it.
+      const fetchFn = mockFetch({});
+      const tool = new WebSearchTool(
+        () => ({ allowed: false, reason: "network denied in plan mode" }),
+        fetchFn,
+      );
+
+      await expect(tool.execute("secrets")).rejects.toThrow(/network denied in plan mode/);
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it("asks about the actual query and endpoint", async () => {
+      const check = vi.fn().mockReturnValue({ allowed: true, reason: "ok" });
+      const tool = new WebSearchTool(check, mockFetch({}), "https://example.test/");
+
+      await tool.execute("typescript");
+
+      expect(check).toHaveBeenCalledWith("network", "typescript", "https://example.test/");
+    });
   });
 });

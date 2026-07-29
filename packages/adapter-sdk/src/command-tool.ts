@@ -18,8 +18,30 @@ export interface CommandResult {
   duration: number;
 }
 
+/** The policy answer for one command, from the caller's `ControlMode` matrix. */
+export interface CommandPermissionCheck {
+  allowed: boolean;
+  reason: string;
+}
+
+/**
+ * Runs a command under `ProcessSupervisor`.
+ *
+ * `checkPermission` is required, and consulted before the spawn. `ActionClass`
+ * has had a `command` cell since S2-T1 and an approval lifecycle since S3;
+ * this tool was built past both, so a caller could spawn an arbitrary process
+ * with the policy layer never asked. Making the check mandatory means the
+ * first consumer cannot silently be the one that bypasses it.
+ */
 export class CommandTool {
-  constructor(private readonly supervisor: ProcessSupervisor) {}
+  constructor(
+    private readonly supervisor: ProcessSupervisor,
+    private readonly checkPermission: (
+      actionClass: "command",
+      command: string,
+      args: string[],
+    ) => CommandPermissionCheck,
+  ) {}
 
   async execute(
     command: string,
@@ -28,6 +50,12 @@ export class CommandTool {
   ): Promise<CommandResult> {
     const started = Date.now();
     const { runId, cwd, env: extraEnv, signal: externalSignal, timeout } = options;
+
+    // Before the spawn, not after: a denied command must never have run.
+    const permission = this.checkPermission("command", command, args);
+    if (!permission.allowed) {
+      throw new Error(`command "${command}" denied: ${permission.reason}`);
+    }
 
     const abortController = new AbortController();
     const signalsToCombine: AbortSignal[] = [abortController.signal];

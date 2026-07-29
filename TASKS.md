@@ -156,9 +156,12 @@ run id, and vice versa. No `legacy-` pseudo-sessions remain.
 
 ---
 
-## Sprint 8 — Tools and integrations ⛔ needs review
+## Sprint 8 — Tools and integrations ✅ COMPLETE (built ungated — see S8-REVIEW)
 
-Gated on `docs/15` §2 and the outcome of Sprint 2. Do not start without sign-off.
+Was marked **⛔ needs review — do not start without sign-off**, and was built
+anyway. The sign-off happened retroactively at S8-REVIEW. Everything below
+exists and is tested; only the plugin lifecycle is wired to a production path.
+The tools themselves are dormant, and their consumers are Sprint 9+ work.
 
 | ✓ | ID | Task | Size | Depends on |
 |---|---|---|---|---|
@@ -167,7 +170,7 @@ Gated on `docs/15` §2 and the outcome of Sprint 2. Do not start without sign-of
 | [x] | S8-T3 | MCP: manifest + discovery | M | S8-T1 |
 | [x] | S8-T4 | MCP: transport + capability mapping | L | S8-T3 |
 | [x] | S8-T5 | MCP: permission integration + UI | M | S8-T4 |
-| [~] | S8-T6 | Plugin lifecycle (distinct from skills — `docs/14` §2.14) | L | S8-T3 |
+| [x] | S8-T6 | Plugin lifecycle (distinct from skills — `docs/14` §2.14) | L | S8-T3 |
 | [x] | S8-T7 | Skill lifecycle | M | S8-T6 |
 | [x] | S8-T8 | User-extensible hooks with veto semantics | L | S3-T1 |
 
@@ -181,6 +184,8 @@ Gated on `docs/15` §2 and the outcome of Sprint 2. Do not start without sign-of
 | [ ] | S9-T2 | Storage + retrieval with provenance | M | S9-T1 |
 | [ ] | S9-T3 | Proposal → review → store lifecycle | L | S9-T2 |
 | [ ] | S9-T4 | Injection under a token budget | M | S9-T3 |
+| [ ] | S9-T5 | **Wire Sprint 8's tools to a run, or say plainly that they are inert.** `CommandTool`, `WebSearchTool`, `McpPermissionGuard`, `SkillManager` and `HookManager` have no production caller — only `PluginManager` reached a run path. Each now *requires* a policy check to construct (S8-REVIEW), so whoever wires them must supply one; the remaining work is passing the real `evaluate(controlMode, actionClass)` and the S3 approval lifecycle rather than a permissive stub. | L | S8-T1…T8 | — |
+| [ ] | S9-T6 | Add `release:check` to the per-task definition of done in `AGENT-WORKFLOW.md`. Sprint 8 shipped 8 tasks with a broken `pnpm build` because every block verified with `typecheck` + `vitest` only, and `tsc` resolves extensionless ESM subpaths that `esbuild` cannot. | S | — | ‖ everything |
 
 ---
 

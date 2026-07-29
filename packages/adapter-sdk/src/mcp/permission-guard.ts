@@ -1,5 +1,5 @@
-import type { McpClientHandle } from "./types";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types";
+﻿import type { McpClientHandle } from "./types";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 export interface McpPermissionCheck {
   allowed: boolean;
@@ -7,16 +7,21 @@ export interface McpPermissionCheck {
   reason: string;
 }
 
+/**
+ * Gates MCP tool calls on a policy decision.
+ *
+ * `checkPermission` is required. It used to default to
+ * `{ allowed: true, reason: "no policy check configured" }` — a security
+ * control that permits everything when nobody wires it up, in a codebase where
+ * every other gate fails closed. Requiring it makes the omission a compile
+ * error instead of a silent allow.
+ */
 export class McpPermissionGuard {
   constructor(
     private readonly checkPermission: (
       actionClass: string,
       toolName: string,
-    ) => McpPermissionCheck = () => ({
-      allowed: true,
-      approvalRequired: "none",
-      reason: "no policy check configured",
-    }),
+    ) => McpPermissionCheck,
   ) {}
 
   checkToolCall(toolName: string): McpPermissionCheck {
