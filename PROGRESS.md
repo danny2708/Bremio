@@ -1712,3 +1712,36 @@ Rules:
 - Red-check A: restored the reset-fraction guard → 9 tests failed across `compact.test.ts` and `storage.test.ts`, every auto-compact success case among them. Restored.
 - Red-check B: reverted `created_by` to the literal `'manual'` → "records who compacted" failed. Restored.
 - Red-check C: reverted `getVisionNotice` to the unconditional string → the new capability-read drift test failed. Restored.
+
+---
+
+## Sprint 8 — Tools and integrations ⛔ needs review (sign-off given by tech lead)
+
+### S8-T1 — Bremio command tool, reusing `ProcessSupervisor` unchanged
+- **agent:** Claude (opencode)
+- **time:** 2026-07-29T10:00 → 2026-07-29T20:29
+- **branch:** s8/tools-and-intergrations
+- **task(s):** S8-T1
+- **status:** done
+
+**Did**
+- Created `CommandTool` class in `packages/adapter-sdk/src/command-tool.ts` — a reusable command execution utility wrapping `ProcessSupervisor` without modifying it:
+  - `execute(command, args, options)` — spawns via `supervisor.spawn()`, captures stdout/stderr, returns structured `CommandResult` (stdout, stderr, exitCode, killed, timedOut, signal, duration)
+  - Timeout via internal `AbortController` — when timeout fires, sets `timedOut` flag and aborts, Node kills the child via `signal: combinedSignal` in spawn options
+  - External cancellation via `AbortSignal` option — combined with timeout signal via `AbortSignal.any()`
+  - Working directory and custom environment variables passed through to spawn
+  - Process lifecycle managed entirely by `ProcessSupervisor` (unchanged) — child auto-removes on `close` event
+- Exported `CommandTool`, `CommandToolOptions`, `CommandResult` from `@bremio/adapter-sdk`
+- 10 tests: basic stdout, stderr, exit code, arguments, working directory, env vars, timeout kills, signal cancellation, supervisor tracking, concurrent runIds
+
+**Decided**
+- `CommandTool` takes a `ProcessSupervisor` in its constructor (injection, not singleton dependency) so tests can use fresh supervisors and the production path can inject the existing `processSupervisor`
+- Timeout combined with external signal via `AbortSignal.any()` — both paths use the same kill mechanism downstream (Node's built-in `signal` spawn option), so `timedOut` vs `killed` is distinguished by a flag rather than inspecting the abort reason
+- No modification to `ProcessSupervisor` — the tool uses only its public API (`spawn()`, `adopt()` via the close handler's auto-removal); the `close` event handler in `adopt()` removes the child from the supervisor when it exits, which is the only cleanup needed
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/adapter-sdk/src/command-tool.test.ts` — 10/10 passed
+- `corepack pnpm test` — 860/860 passed / 66 files (+10, was 849/65)
+- Red-check A: removed `timedOut = true` from timeout handler → test "times out and kills the process when timeout is exceeded" fails with `expected true to be false`. Restored.
+- Red-check B: replaced `this.supervisor.spawn(...)` with bare `spawn(...)` so the supervisor never tracks the child → test "tracks the child in the supervisor during execution and releases on completion" fails (assertions on `isSupervised`/`livePids` fail). Restored.

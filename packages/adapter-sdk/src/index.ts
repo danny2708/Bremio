@@ -50,3 +50,5 @@ export {
   type TerminateOptions,
   type TerminationOutcome,
 } from "./process-supervisor";
+
+export { CommandTool, type CommandToolOptions, type CommandResult } from "./command-tool";
