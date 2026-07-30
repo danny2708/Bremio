@@ -519,7 +519,7 @@ export function panelHtml(nonce: string, cspSource: string, iconUri = ""): strin
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource}; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} data:; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bremio</title>
 <style>
@@ -764,18 +764,61 @@ pre.log {
 .session-row { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
 .session-row:hover { background: color-mix(in srgb, var(--bremio-accent) 10%, transparent); }
 .session-row .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.turn { border-left: 2px solid color-mix(in srgb, var(--bremio-accent) 35%, transparent); padding: 0 0 0 10px; margin: 0 0 18px; }
-.speaker { font-weight: 600; font-size: 12px; margin-bottom: 3px; }
+.turn { margin: 0 0 22px; }
+.speaker { font-weight: 600; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 5px; display: flex; align-items: baseline; gap: 6px; }
 .speaker.you { color: var(--bremio-accent-hover); }
 .speaker.agent { color: var(--fg); }
 .bubble { white-space: pre-wrap; word-break: break-word; margin-bottom: 10px; }
-.bubble.response { font-size: 13px; line-height: 1.5; }
+/* The prompt is what you said: a quoted card, so it reads as the question
+ * rather than as more output. */
+.bubble.prompt {
+  background: color-mix(in srgb, var(--bremio-accent) 8%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--bremio-accent) 45%, transparent);
+  border-radius: 0 6px 6px 0; padding: 8px 10px; font-size: 13px; line-height: 1.5;
+}
+.bubble.response { font-size: 13px; line-height: 1.55; white-space: normal; }
+/* Markdown inside a reply. The agent writes prose, lists and code; rendering
+ * it as one pre-wrapped blob made a JSON answer an unreadable wall. */
+.md > *:first-child { margin-top: 0; }
+.md > *:last-child { margin-bottom: 0; }
+.md p { margin: 0 0 8px; }
+.md h1, .md h2, .md h3 { font-size: 13px; font-weight: 600; margin: 14px 0 6px; line-height: 1.3; }
+.md h1 { font-size: 15px; }
+.md h2 { font-size: 14px; }
+.md ul, .md ol { margin: 0 0 8px; padding-left: 20px; }
+.md li { margin: 2px 0; }
+.md code {
+  font-family: var(--vscode-editor-font-family, monospace); font-size: 12px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent); padding: 1px 4px; border-radius: 3px;
+}
+.md pre {
+  font-family: var(--vscode-editor-font-family, monospace); font-size: 12px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; margin: 0 0 8px; overflow-x: auto; white-space: pre;
+}
+.md pre code { background: none; padding: 0; }
+.md blockquote { margin: 0 0 8px; padding-left: 10px; border-left: 2px solid var(--border); color: var(--muted); }
+.md a { color: var(--bremio-accent-hover); }
+.md hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 /* The process log is reference material, not the answer: dimmed, monospaced
  * and scrollable so a thousand tool calls cannot push the reply off screen. */
 .process { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; color: var(--muted); max-height: 260px; overflow: auto; resize: vertical; min-height: 48px; margin-bottom: 8px; }
 .process summary { cursor: pointer; }
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
+
+/* Attached images, shown rather than merely named. */
+.ctx-gallery { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ctx-thumb { margin: 0; width: 132px; }
+.ctx-thumb.disabled { opacity: .4; }
+.ctx-thumb img {
+  display: block; width: 132px; height: 88px; object-fit: cover;
+  border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.ctx-thumb figcaption {
+  font-size: 10px; color: var(--muted); margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* Diff viewer: syntax-highlighted unified-diff inside the panel. */
 .diff-viewer { margin-bottom: 10px; }
@@ -1193,16 +1236,127 @@ function renderContextItems(sessionId, items, visionNotice) {
       + '<button data-context-remove="' + idx + '" data-item="' + escapeHtml(item.id) + '" aria-label="Remove">x</button>'
       + '</span>';
   }).join("");
+  // An attached screenshot is worth seeing. Items without a preview (missing
+  // file, unknown type, over the size cap) simply keep their chip.
+  const thumbs = items
+    .filter(function(item) { return item.type === "image" && item.preview; })
+    .map(function(item) {
+      const name = escapeHtml(item.source.slice(Math.max(item.source.lastIndexOf("/"), item.source.lastIndexOf("\\\\")) + 1));
+      return '<figure class="ctx-thumb' + (item.enabled ? '' : ' disabled') + '">'
+        + '<img src="' + escapeHtml(item.preview) + '" alt="' + name + '" loading="lazy">'
+        + '<figcaption>' + name + '</figcaption>'
+        + '</figure>';
+    })
+    .join("");
+  const gallery = thumbs ? '<div class="ctx-gallery">' + thumbs + '</div>' : "";
   return '<div id="context-items-section" style="margin-top:16px">'
     + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items (' + items.length + ')' + tokenSummary + '</div>'
     + notice
     + '<div>' + chips + '</div>'
+    + gallery
     + '<div style="margin-top:8px">'
     + '<button class="ghost" data-context-add data-session="' + sid + '">Add File</button>'
     + '<button class="ghost" data-context-image data-session="' + sid + '">Add Image</button>'
     + '<button class="ghost" data-context-file data-session="' + sid + '">Add Current File</button>'
     + '<button class="ghost" data-compact-session="' + sid + '" style="margin-left:4px">Compact</button>'
     + '</div></div>';
+}
+
+/**
+ * Render an agent reply as Markdown.
+ *
+ * Escaping happens first, on the raw text, so by the time any pattern runs
+ * there is no left angle bracket or ampersand left to smuggle a tag through —
+ * every element below is one this function wrote. Do not reorder that.
+ *
+ * Deliberately small: paragraphs, headings, lists, fenced and inline code,
+ * bold/italic, links, rules, blockquotes. Anything else falls through as
+ * text, which is what the whole reply used to be.
+ */
+function renderMarkdown(text) {
+  if (!text) return "";
+
+  // Pull fenced blocks out before anything else touches them, so their
+  // contents are never treated as markup.
+  const fences = [];
+  let src = escapeHtml(String(text)).replace(/\`\`\`([\\w-]*)\\n?([\\s\\S]*?)\`\`\`/g, function(_m, lang, body) {
+    fences.push('<pre><code' + (lang ? ' data-lang="' + lang + '"' : '') + '>' + body.replace(/\\n$/, "") + '</code></pre>');
+    return "\\u0000FENCE" + (fences.length - 1) + "\\u0000";
+  });
+
+  const inline = (s) => s
+    .replace(/\`([^\`]+)\`/g, "<code>$1</code>")
+    .replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\\*([^*\\n]+)\\*/g, "$1<em>$2</em>")
+    // Only http(s): a link is the one place an escaped string could still
+    // carry a scheme like javascript:.
+    .replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)\\s]+)\\)/g, '<a href="$2">$1</a>');
+
+  const blocks = [];
+  let list = null;
+
+  const closeList = () => {
+    if (!list) return;
+    blocks.push("<" + list.tag + ">" + list.items.join("") + "</" + list.tag + ">");
+    list = null;
+  };
+
+  for (const rawLine of src.split("\\n")) {
+    const line = rawLine.replace(/\\s+$/, "");
+
+    const fence = /^\\u0000FENCE(\\d+)\\u0000$/.exec(line.trim());
+    if (fence) { closeList(); blocks.push(fences[Number(fence[1])]); continue; }
+
+    if (line.trim() === "") { closeList(); continue; }
+
+    const heading = /^(#{1,3})\\s+(.*)$/.exec(line);
+    if (heading) {
+      closeList();
+      const level = heading[1].length;
+      blocks.push("<h" + level + ">" + inline(heading[2]) + "</h" + level + ">");
+      continue;
+    }
+
+    if (/^(-{3,}|\\*{3,})$/.test(line.trim())) { closeList(); blocks.push("<hr>"); continue; }
+
+    const quote = /^&gt;\\s?(.*)$/.exec(line);
+    if (quote) { closeList(); blocks.push("<blockquote>" + inline(quote[1]) + "</blockquote>"); continue; }
+
+    const bullet = /^\\s*[-*+]\\s+(.*)$/.exec(line);
+    const numbered = /^\\s*\\d+[.)]\\s+(.*)$/.exec(line);
+    if (bullet || numbered) {
+      const tag = bullet ? "ul" : "ol";
+      if (!list || list.tag !== tag) { closeList(); list = { tag, items: [] }; }
+      list.items.push("<li>" + inline((bullet || numbered)[1]) + "</li>");
+      continue;
+    }
+
+    closeList();
+    blocks.push("<p>" + inline(line) + "</p>");
+  }
+  closeList();
+
+  return blocks.join("");
+}
+
+/**
+ * A JSON reply, pretty-printed.
+ *
+ * Some agents answer with a bare JSON object. As one line it is unreadable —
+ * the report that prompted this fix was a single 4,000-character line.
+ */
+function prettyJsonBlock(text) {
+  const trimmed = String(text ?? "").trim();
+  if (!(trimmed.startsWith("{") || trimmed.startsWith("[")) || trimmed.length < 40) return "";
+  try {
+    return "<pre><code>" + escapeHtml(JSON.stringify(JSON.parse(trimmed), null, 2)) + "</code></pre>";
+  } catch {
+    return "";
+  }
+}
+
+function renderResponseBody(text) {
+  return prettyJsonBlock(text) || renderMarkdown(text);
 }
 
 /**
@@ -1221,7 +1375,7 @@ function renderTranscript(session, turns, contextItems, visionNotice) {
   for (const turn of turns) {
     out += '<div class="turn">';
     out += '<div class="speaker you">You</div>';
-    out += '<div class="bubble">' + escapeHtml(turn.prompt) + "</div>";
+    out += '<div class="bubble prompt">' + escapeHtml(turn.prompt) + "</div>";
 
     const who = turn.model || "Agent";
     out += '<div class="speaker agent">' + escapeHtml(who)
@@ -1240,7 +1394,7 @@ function renderTranscript(session, turns, contextItems, visionNotice) {
     }
 
     out += turn.response
-      ? '<div class="bubble response">' + escapeHtml(turn.response) + "</div>"
+      ? '<div class="bubble response md">' + renderResponseBody(turn.response) + "</div>"
       : '<div class="bubble muted">(no response recorded)</div>';
 
     out += '<div class="turn-foot">' + escapeHtml(turn.status) + " · run " + escapeHtml(turn.runId) + "</div>";

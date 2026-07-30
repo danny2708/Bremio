@@ -9,6 +9,8 @@ vi.mock("vscode", () => ({
     createOutputChannel: vi.fn(() => ({ appendLine: vi.fn(), append: vi.fn() })),
     onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
     activeTextEditor: undefined,
+    showOpenDialog: vi.fn(async () => undefined),
+    showWarningMessage: vi.fn(async () => undefined),
   },
   workspace: {
     workspaceFolders: undefined,
@@ -39,7 +41,7 @@ import {
   renderLogLine,
   type CapacityView,
 } from "./webview";
-import { resolveActiveAttachment } from "./extension";
+import { addContextFile, resolveActiveAttachment } from "./extension";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -514,6 +516,26 @@ describe("attachActiveFile (resolveActiveAttachment)", () => {
   });
 });
 
+describe("Add Current File", () => {
+  it("warns instead of opening a file picker when nothing is open", async () => {
+    // The button opened `showOpenDialog`, which is the one thing "Add Current
+    // File" promises you will not have to do. With no editor open it must say
+    // so, not fall back to browsing.
+    const vscode = (await import("vscode")) as unknown as {
+      window: { showOpenDialog: ReturnType<typeof vi.fn>; showWarningMessage: ReturnType<typeof vi.fn> };
+    };
+    vscode.window.showOpenDialog.mockClear();
+    vscode.window.showWarningMessage.mockClear();
+
+    await addContextFile("ses-1");
+
+    expect(vscode.window.showOpenDialog).not.toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("no file is open"),
+    );
+  });
+});
+
 describe("A3-T3: session replay in extension panel", () => {
   it("1. replaying a recorded event set renders reasoning and tool calls, not just messages", () => {
     const reasoningEvent = {
@@ -588,6 +610,86 @@ describe("A3-T3: session replay in extension panel", () => {
       id: "run-empty-1",
     };
     expect(emptyNoticeMessage.type).toBe("runEmpty");
+  });
+});
+
+/**
+ * The transcript renderer lives inside the panel's inlined `<script>`, so it
+ * cannot be imported. Executing the real emitted script is the only way to
+ * test it for real — and it is worth testing for real, because the markdown
+ * pass runs on agent output and the escaping order is what keeps it safe.
+ */
+describe("transcript rendering, executed from the real panel script", () => {
+  function loadPanelScript(): {
+    renderMarkdown: (t: string) => string;
+    renderResponseBody: (t: string) => string;
+  } {
+    const html = panelHtml("nonce", "vscode-resource:", "icon.png");
+    const script = html.split('<script nonce="nonce">')[1]!.split("</script>")[0]!;
+    // Every property access yields another stub, so the panel's setup code
+    // runs without a DOM.
+    const stub: unknown = new Proxy(function () {}, {
+      get: (_t, prop) => (prop === Symbol.toPrimitive ? () => "" : stub),
+      set: () => true,
+      apply: () => stub,
+      construct: () => stub as object,
+    });
+    const run = new Function(
+      "document",
+      "window",
+      "acquireVsCodeApi",
+      "console",
+      `${script}\nreturn { renderMarkdown, renderResponseBody };`,
+    ) as (...args: unknown[]) => {
+      renderMarkdown: (t: string) => string;
+      renderResponseBody: (t: string) => string;
+    };
+    return run(stub, stub, () => stub, console);
+  }
+
+  const panel = loadPanelScript();
+
+  it("renders headings, emphasis, code and lists", () => {
+    expect(panel.renderMarkdown("# Title\nplain")).toBe("<h1>Title</h1><p>plain</p>");
+    expect(panel.renderMarkdown("a **b** and `c`")).toBe(
+      "<p>a <strong>b</strong> and <code>c</code></p>",
+    );
+    expect(panel.renderMarkdown("- one\n- two")).toBe("<ul><li>one</li><li>two</li></ul>");
+    expect(panel.renderMarkdown("1. first\n2. second")).toBe(
+      "<ol><li>first</li><li>second</li></ol>",
+    );
+  });
+
+  it("renders a fenced block with its language, not as prose", () => {
+    expect(panel.renderMarkdown("before\n```ts\nconst x = 1;\n```\nafter")).toBe(
+      '<p>before</p><pre><code data-lang="ts">const x = 1;</code></pre><p>after</p>',
+    );
+  });
+
+  it("escapes markup in agent output instead of rendering it", () => {
+    // Escaping runs before any pattern, so a tag in the reply can never become
+    // an element. Reordering those two steps is the way this breaks.
+    const out = panel.renderMarkdown('<img src=x onerror=alert(1)>');
+    expect(out).toBe("<p>&lt;img src=x onerror=alert(1)&gt;</p>");
+    expect(out).not.toContain("<img");
+  });
+
+  it("refuses to build a link out of a non-http scheme", () => {
+    const out = panel.renderMarkdown("[click](javascript:alert(1))");
+    expect(out).not.toContain("<a ");
+    expect(out).toContain("javascript:alert(1)");
+  });
+
+  it("pretty-prints a JSON reply rather than showing one long line", () => {
+    const reply = JSON.stringify({ findings: [{ severity: "info", message: "x".repeat(50) }] });
+    const out = panel.renderResponseBody(reply);
+    expect(out.startsWith("<pre><code>")).toBe(true);
+    expect(out.split("\n").length).toBeGreaterThan(4);
+  });
+
+  it("leaves short or non-JSON replies to the markdown path", () => {
+    expect(panel.renderResponseBody("{}")).toBe("<p>{}</p>");
+    expect(panel.renderResponseBody("just prose")).toBe("<p>just prose</p>");
   });
 });
 

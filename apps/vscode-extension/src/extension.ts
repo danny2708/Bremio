@@ -351,10 +351,10 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
     }),
   );
 
-  let contextItems: Array<{ id: string; type: string; source: string; enabled: boolean }> = [];
+  let contextItems: Array<{ id: string; type: string; source: string; enabled: boolean; preview?: string }> = [];
   try {
     const result = await client.contextItems(sessionId);
-    contextItems = result.contextItems;
+    contextItems = await withImagePreviews(result.contextItems);
   } catch {
     // context items are optional — session may have none
   }
@@ -425,6 +425,64 @@ function attachActiveFile(): void {
   post({ type: "attachments", files: result.files });
 }
 
+/** Biggest image we will inline into the panel. Screenshots are far smaller. */
+const MAX_PREVIEW_BYTES = 4 * 1024 * 1024;
+
+const PREVIEW_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+};
+
+/**
+ * Read image context items into `data:` URIs the panel can render.
+ *
+ * The panel showed images as filename chips and nothing else, so a pasted
+ * screenshot was a name and a token count. It cannot load them by path:
+ * `localResourceRoots` is deliberately scoped to the extension's own `media`
+ * folder, and context images live in the workspace (or anywhere the file
+ * picker went). Inlining keeps that scope intact.
+ *
+ * A missing or oversized file yields no preview rather than an error — the
+ * chip still lists it, which is the pre-existing behaviour.
+ */
+async function withImagePreviews<T extends { type: string; source: string }>(
+  items: readonly T[],
+): Promise<Array<T & { preview?: string }>> {
+  return Promise.all(
+    items.map(async (item) => {
+      if (item.type !== "image") return item;
+      const mime = PREVIEW_MIME[path.extname(item.source).toLowerCase()];
+      if (!mime) return item;
+      try {
+        const uri = vscode.Uri.file(item.source);
+        const stat = await vscode.workspace.fs.stat(uri);
+        if (stat.size > MAX_PREVIEW_BYTES) return item;
+        const bytes = await vscode.workspace.fs.readFile(uri);
+        return {
+          ...item,
+          preview: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+        };
+      } catch {
+        return item;
+      }
+    }),
+  );
+}
+
+/** Send the session's context items to the panel, images included. */
+async function postContextItems(sessionId: string): Promise<void> {
+  const result = await client.contextItems(sessionId);
+  post({
+    type: "contextItemsUpdated",
+    contextItems: await withImagePreviews(result.contextItems),
+  });
+}
+
 function describeFile(uri: vscode.Uri): { path: string; label: string } {
   const repoPath = currentRepo();
   const full = uri.fsPath;
@@ -443,17 +501,29 @@ async function addContextItem(sessionId: string, type: string, source: string): 
   } else {
     await client.createContextItem(sessionId, type, source);
   }
-  const result = await client.contextItems(sessionId);
-  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+  await postContextItems(sessionId);
 }
 
-async function addContextFile(sessionId: string): Promise<void> {
-  const uris = await vscode.window.showOpenDialog({ canSelectFiles: true });
-  if (!uris || uris.length === 0 || !uris[0]) return;
-  const desc = describeFile(uris[0]);
-  await client.createContextItem(sessionId, "file", desc.path);
-  const result = await client.contextItems(sessionId);
-  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+export async function addContextFile(sessionId: string): Promise<void> {
+  // "Add Current File" means the current file. This opened a file picker,
+  // which is the one thing that button promises you will not have to do.
+  // `resolveActiveAttachment` is the same resolution the composer's attach
+  // button uses, including the `lastActiveEditor` fallback that matters here:
+  // clicking into the Bremio panel clears `activeTextEditor`, so without it
+  // the answer is always "no file open".
+  const result = resolveActiveAttachment(
+    vscode.window.activeTextEditor,
+    lastActiveEditor,
+    currentRepo(),
+  );
+  if ("error" in result) {
+    void vscode.window.showWarningMessage(
+      "Bremio: no file is open in the editor. Open one, then use Add Current File.",
+    );
+    return;
+  }
+  await client.createContextItem(sessionId, "file", result.files[0]!.path);
+  await postContextItems(sessionId);
 }
 
 async function addContextImage(sessionId: string): Promise<void> {
@@ -464,8 +534,7 @@ async function addContextImage(sessionId: string): Promise<void> {
   if (!uris || uris.length === 0 || !uris[0]) return;
   const desc = describeFile(uris[0]);
   await client.createContextItem(sessionId, "image", desc.path);
-  const result = await client.contextItems(sessionId);
-  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+  await postContextItems(sessionId);
 }
 
 async function handlePasteImage(sessionId: string, dataUrl: string, fileName: string): Promise<void> {
@@ -479,20 +548,17 @@ async function handlePasteImage(sessionId: string, dataUrl: string, fileName: st
   const target = path.join(imagesDir, fileName);
   await vscode.workspace.fs.writeFile(vscode.Uri.file(target), new Uint8Array(buf));
   await client.createContextItem(sessionId, "image", target);
-  const result = await client.contextItems(sessionId);
-  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+  await postContextItems(sessionId);
 }
 
 async function removeContextItem(sessionId: string, itemId: string): Promise<void> {
   await client.deleteContextItem(sessionId, itemId);
-  const result = await client.contextItems(sessionId);
-  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+  await postContextItems(sessionId);
 }
 
 async function toggleContextItem(sessionId: string, itemId: string, enabled: boolean): Promise<void> {
   await client.updateContextItemEnabled(sessionId, itemId, enabled);
-  const result = await client.contextItems(sessionId);
-  post({ type: "contextItemsUpdated", contextItems: result.contextItems });
+  await postContextItems(sessionId);
 }
 
 async function compactSession(sessionId: string): Promise<void> {
