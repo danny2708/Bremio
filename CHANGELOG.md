@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.3.0 — 2026-07-30
+
+Nine sprints of architecture work, from the locked semantics in `docs/15`
+through to memory. The theme is that Bremio stops guessing: where it used to
+substitute a default, it now refuses and says why.
+
+### It stops running the wrong thing
+
+- **Resume runs the agent you started with.** It used to derive the provider
+  from a model string that was never populated, so every resumed session
+  silently ran Claude regardless of what it began on. Identity now comes from
+  what was persisted, and a gap stops the resume instead of filling itself in.
+- **`--agent opencode` works through the daemon.** The daemon advertised four
+  adapters and could execute three. Both sides now read one list, and a
+  deactivated plugin stops being advertised the moment it is deactivated.
+- **An approved Solo↔Co-lab switch changes the next turn.** The transition
+  state machine recorded its decision in a column nothing read.
+
+### It stops touching your files without asking
+
+- **Your staged index survives a run.** Computing a run's diff used to run
+  `git add -A` … `git reset`, flattening anything you had staged with
+  `git add -p`. The diff is now read-only.
+- **`--force` works, and is recoverable.** It could not clear the rejection its
+  own message described, and what it overwrote was gone for good. It is now
+  scoped to the patch's files and saves what it replaces to `.bremio/recovery/`.
+- **Conflicts see untracked files**, instead of dying on "already exists".
+- **Agents no longer bypass permission prompts by default.** Antigravity's
+  `--dangerously-skip-permissions` and OpenCode's `--auto` are explicit opt-ins
+  that fail before spawn rather than silently escalating.
+
+### It tells you the truth about what it did
+
+- **Changes are attributed** to the agent or to you, from the adapter's own
+  declared tool vocabulary rather than one provider's tool names.
+- **Approvals are bound to content.** A worktree that changes after you approve
+  it is refused rather than merged, and a review nobody could answer settles as
+  `review_unattended` with the branch kept instead of hanging forever.
+- **Auto-compact can fire more than once.** Its hysteresis rule was
+  unsatisfiable, so a long session got exactly one compaction. Compacts also
+  record whether you or Bremio triggered them.
+- **Token counts say `estimated` when they are estimates**, everywhere.
+
+### New surfaces
+
+- Diff viewer and per-file apply/revert in the panel; context items, images
+  (gated on the provider actually reporting vision), and context metrics;
+  session compaction, manual and automatic; plugin, skill and hook lifecycles;
+  MCP discovery, transport and permission integration; a memory model with a
+  proposal → review → store lifecycle and budgeted injection.
+
+Memory and the Sprint 8 tool surface are built, policy-bound and tested, but
+have no consumer wired yet — see `TASKS.md` S9-T5 and S9-T7.
+
 ## 1.2.0 — 2026-07-23
 
 The three surfaces stop disagreeing about what Bremio can do, and every one of
