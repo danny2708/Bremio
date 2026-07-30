@@ -2129,3 +2129,20 @@ Rules:
 - Red-check A: removed `!evalResult.allowed` guard from CommandTool's permission callback → "denies commands in plan mode" fails: command executes with `exitCode: -1` instead of rejecting. Restored.
 - Red-check B: removed `evalResult.approvalRequired !== "none"` guard from WebSearchTool's permission callback → "denies network access in approve mode" fails: search actually fires to DuckDuckGo. Restored.
 - Red-check C: replaced `evalResult.allowed` with `true` in McpPermissionGuard → "denies mcp-tool calls in plan mode" fails: `expected true to be false`. Restored.
+
+### S9-T6 — Add release:check to the per-task definition of done
+- **agent:** Claude (opencode)
+- **time:** 2026-07-30T10:50 → 2026-07-30T10:55
+- **branch:** s9/memory
+- **task(s):** S9-T6
+- **status:** done
+
+**Did**
+- Changed `AGENT-WORKFLOW.md` gate (line 29–30): from `corepack pnpm test`. At a sprint end, `corepack pnpm release:check`. to `corepack pnpm test`, then `corepack pnpm release:check`.
+- Every task block must now run `release:check` (which does `typecheck` + `test` + `build` + `release:smoke`) as a per-task gate, not just at sprint end.
+
+**Decided**
+- No other changes to AGENT-WORKFLOW.md — the sprint-end `release:check` was the right place to run it before this change, and adding it per task is the minimal fix for the S8 bug where 8 tasks shipped with a broken `pnpm build`.
+
+**Verification**
+- `corepack pnpm release:check` — PASS (typecheck + 1072 tests + build + `PASS clean packed install: bremio 1.2.0`)

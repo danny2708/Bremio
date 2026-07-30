@@ -27,7 +27,7 @@ quality is sufficient. Agents do not merge their own work to `main`.
 4. **Never touch:** the AI-Quota-Tray repo, anything under `.bremio/`, and any
    file outside your task's stated scope. Record unrelated findings; do not fix them.
 5. **Gates are mandatory per task:** `corepack pnpm typecheck`, then
-   `corepack pnpm test`. At a sprint end, `corepack pnpm release:check`.
+   `corepack pnpm test`, then `corepack pnpm release:check`.
 6. **Tests assert behaviour, and a fix starts with a failing test.** For any
    guard you add, red-check it: remove the production guard (not the assertion),
    confirm the test fails for the right reason, restore it, and note this in your
