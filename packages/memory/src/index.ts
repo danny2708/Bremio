@@ -27,3 +27,8 @@ export {
   MemoryProposalLifecycle,
   type ProposalReviewInput,
 } from "./proposal";
+
+export {
+  MemoryInjector,
+  type MemoryInjectionConfig,
+} from "./injector";

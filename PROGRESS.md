@@ -2040,10 +2040,41 @@ Rules:
 
 ### S9-T3 — Proposal → review → store lifecycle
 - **agent:** Claude (opencode)
-- **time:** 2026-07-30T08:45 → open
+- **time:** 2026-07-30T08:45 → 2026-07-30T09:10
 - **branch:** s9/memory
 - **task(s):** S9-T3
-- **status:** in-progress
+- **status:** done
+
+### S9-T4 — Injection under a token budget
+- **agent:** Claude (opencode)
+- **time:** 2026-07-30T09:10 → 2026-07-30T09:25
+- **branch:** s9/memory
+- **task(s):** S9-T4
+- **status:** done
+
+**Did**
+- Created `MemoryInjector` class wrapping a `MemoryStore` with `estimateTokens()`, `estimateEntryTokens()`, `select()`, `formatInjection()` methods
+- `estimateTokens(text)` — char/4 heuristic (same as S7-T4's pattern)
+- `estimateEntryTokens(entry)` — title + content + 10-token overhead
+- `select(config)` — queries project+user scopes (default), excludes proposals and expired entries, filters by tags if given, sorts by recency (newest first), greedily fills the `maxTokens` budget, respects optional `maxEntries` cap; throws for non-positive `maxTokens`
+- `formatInjection(entries)` — XML-like structured format with scope/title attributes, tags section, and content; HTML-escapes special chars; returns empty string for empty array
+- `MemoryInjectionConfig` type exported from `@bremio/memory`
+- 20 tests covering estimate-token edge cases, budget selection, scope/tags/maxEntries filtering, recency sorting, zero/negative guard, proposal exclusion, expired exclusion, formatInjection formatting and escaping
+
+**Decided**
+- Default scopes are `["project", "user"]` — session memory is ephemeral and not suitable for injection into persistent context
+- Proposals and expired entries are excluded from injection — only finalized, non-expired memory is injected
+- Greedy fill by recency (newest first) is the selection strategy — sufficient for a first implementation; relevance scoring can be added later if needed
+- Format uses XML-like tags rather than markdown — unambiguous parsing boundary for the agent consuming the injection
+- Token estimation follows the same char/4 heuristic used in S7-T4, keeping estimation consistent across the codebase
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/memory/src/injector.test.ts` — 20 tests pass
+- `corepack pnpm vitest run packages/memory/` — 85 total memory tests pass (20 types + 30 store + 15 proposal + 20 injector)
+- Red-check A: removed `maxTokens <= 0` guard → both "throws for zero maxTokens" and "throws for negative maxTokens" resolve instead of throwing. Restored.
+- Red-check B: removed `source.kind === "proposal"` exclusion → "excludes proposals from selection" returns 2 entries (proposal included). Restored.
+- Red-check C: removed `expiresAt` exclusion → "excludes expired entries" returns 2 entries (expired included). Restored.
 
 **Did**
 - Created `MemoryProposalLifecycle` class wrapping a `MemoryStore` with `propose()`, `listProposals()`, `review()` methods
