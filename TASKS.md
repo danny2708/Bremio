@@ -196,6 +196,41 @@ policy-bound per S9-T5 and still has no consumer. Both are honest about it.
 
 ---
 
+## Sprint 10 — Concurrency, history and git
+
+Requested 2026-07-30 after dogfooding 1.3.0. Three of the ten asks were already
+built or nearly so — see the notes — so this sprint is smaller than the list
+looks, except for three genuinely new pieces: the prompt queue, session forking
+and multiple workers.
+
+**Do S10-T1 first and alone.** It amends `docs/15`; T7 and T10…T13 are built to
+whatever it says, and starting them first means rewriting them.
+
+| ✓ | ID | Task | Size | Depends on | Parallel? |
+|---|---|---|---|---|---|
+| [ ] | S10-T1 | **Lock the new semantics in `docs/15` before any code.** (a) Co-lab with *N* workers: what `workerProviders` means when it holds more than one id, how the S3 control-mode gate iterates every worker (the S3 review fixed a gate that checked only the lead — with N workers that loop must cover all of them), and what happens when workers disagree. (b) Which `ActionClass` each git operation is: commit is `write`, branch switch is `write`, push is `network`, force-push and history rewriting are `git-destructive` and therefore **denied under autopilot with no override left** (grants were deleted in S5-T7/S6-T4), PR creation is `network`. (c) Whether a forked session may reuse the parent's `ProviderSessionBinding` — it must not, and the doc should say why. | M | — | — |
+| [ ] | S10-T2 | **Prompt queue per session.** A prompt sent while a turn is running is accepted and executed when that turn ends, in order, instead of being refused. `queued` already exists as a `RunStatus` and nothing ever queues; `start()` executes immediately. Must preserve turn ordering, survive a daemon restart (S4-T7 reconciliation marks stranded runs — a queued prompt is not stranded, it never started), and interact correctly with cancellation: cancelling the running turn must not silently run the queued one. Show the queue in the panel with the ability to remove an entry before it starts. | L | S10-T1 | — |
+| [ ] | S10-T3 | **The lead's plan as a live checklist.** Plan tasks already exist with status and already stream (`assembleTaskLanes` renders lanes for a live run); this surfaces them per turn as a checklist that persists into the transcript — pending / running / done / failed, with the agent each is assigned to. Read-only: these are the agent's items, not the user's, and must not be presented as editable. | M | — | ‖ S10-T2 |
+| [ ] | S10-T4 | **Which workers are running, right now.** The daemon knows (`#controllers`, `activeCount`) but exposes only a count. Add a route reporting active runs with their lead, workers and current task, and show it in the panel so a Co-lab run is legible while it happens. | M | — | ‖ S10-T2 |
+| [ ] | S10-T5 | **Per-file apply / revert in the panel.** The daemon and CLI already take a `filePath` (S5-T5); the panel only ever sends `{ repoPath, runId }`, so its Apply/Revert are whole-run only. Wire the diff viewer's per-file rows to the parameter that already exists. Keep the recovery-patch notice from the S5 review visible when `--force` overwrites user edits. | S | — | ‖ everything |
+| [ ] | S10-T6 | **Turn inspector: what this turn actually did.** Click a turn to see its diff, files changed, commands run and worktree path. The data is already persisted per run (S5-T1 change ledger, S5-T3 diff); this is a read path plus UI, not new capture. | M | S5-T3 | ‖ S10-T5 |
+| [ ] | S10-T7 | **Multiple workers instead of one.** `runs.worker_providers` is already a JSON array, so **no migration** — but `RunBremioOptions.workerId` is a single string, `assignAgents(plan, leadId, workerId, …)` takes one, and `retry()` reads `workerProviders?.[0]`. Make the worker set plural end to end: orchestrator, daemon `StartRunInput`, daemon-client, CLI `--worker` (repeatable), panel multi-select. The control-mode gate must check **every** worker, not the first. | L | S10-T1 | — |
+| [ ] | S10-T8 | **Sessions grouped by project.** `listSessions(repositoryPath)` is single-repo by design; there is no cross-repo view, so the panel can only ever show the open folder's sessions. Add a grouped listing keyed by the canonical repository identity from S1-T6 (`resolveRepositoryIdentity`, so a worktree and its main checkout group together rather than appearing as two projects), and group the panel's session list by it. | M | S1-T6 | ‖ S10-T2 |
+| [ ] | S10-T9 | **Surface the current git branch.** `MergeManager.currentBranch()` exists and is used server-side only. Report it to the panel and CLI, and keep it fresh when it changes underneath a session — a stale branch label is worse than none, because apply and merge both act relative to it. | S | — | ‖ everything |
+| [ ] | S10-T10 | **Git: stage and commit.** Review changed files, stage a selection, commit with a message. `write` per S10-T1, so it is gated like any other write and must not run under plan mode. Never `git add -A`: the S5 review removed exactly that call for flattening a user's partial index, and this feature is where it would be most tempting to reintroduce. | M | S10-T1 | — |
+| [ ] | S10-T11 | **Git: create and switch branches.** Includes refusing to switch with a dirty tree rather than carrying changes across, and telling the user which files block it. | M | S10-T1, S10-T9 | ‖ S10-T10 |
+| [ ] | S10-T12 | **Git: push and pull.** `network`, so policy-gated. Force-push is `git-destructive`: denied under autopilot per S10-T1(b), and there is no grant mechanism to override it — so it must be refused with a named reason, not quietly downgraded to a normal push. Credentials come from the user's existing git config; Bremio must not store or prompt for them. | M | S10-T1 | — |
+| [ ] | S10-T13 | **Git: open a pull request.** Via `gh` if it is installed and authenticated, refusing with an actionable message if not — the same shape as the CLI-not-found handling in `cli-launcher`. Requires a GitHub remote; say so plainly when there isn't one instead of failing obscurely. | M | S10-T12 | — |
+| [ ] | S10-T14 | **Fork a session from one of its turns.** Sessions are linear today (`turnIndex`, one parent). Forking needs lineage in the schema (parent session + the turn forked from), the forked session's history truncated at that turn, and a **fresh** `ProviderSessionBinding` — reusing the parent's would make two sessions write to one provider-side conversation, which is the silent-crosstalk failure S1-T4 exists to prevent. Session config revisions carry over; run history does not. | L | S10-T1 | — |
+
+**Sprint gate:** a Co-lab run with two workers, started from the panel, shows
+both workers live with the lead's plan as a checklist; a second prompt sent
+mid-run queues and then executes; the turn inspector shows that turn's diff; and
+the resulting change can be committed and pushed from the panel without ever
+running `git add -A`.
+
+---
+
 ## Not scheduled
 
 | ID | Item | Why not scheduled |
