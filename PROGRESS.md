@@ -2146,3 +2146,29 @@ Rules:
 
 **Verification**
 - `corepack pnpm release:check` — PASS (typecheck + 1072 tests + build + `PASS clean packed install: bremio 1.2.0`)
+
+### S9-REVIEW — tech-lead audit of Sprint 9
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-30T09:45 → 2026-07-30T10:20
+- **branch:** s9/memory
+- **task(s):** S9-T1 … S9-T6
+- **status:** done
+
+**Did**
+- Audited all 6 tasks. The memory model is well built: the proposal lifecycle genuinely gates injection (`MemoryInjector.select` skips `source.kind === "proposal"`, so an unreviewed entry can never reach a prompt), `formatInjection` escapes content so an entry cannot forge its own `</memory>` boundary, and S9-T5 wired the Sprint 8 toolset to the real `evaluate()` rather than a permissive stub — and says plainly in its own doc comment that the tools remain inert. S9-T6 added `release:check` to the workflow's definition of done, which is what Sprint 8 needed.
+- **Fixed an arbitrary-file-write in `FsMemoryStore`.** `resolvePath` built `path.join(rootDir, storageDir, `${id}.json`)` from an entry id that the proposal lifecycle exists specifically to let an *agent* supply. An id of `../../../../.bashrc` walked straight out of the store. `outside-workspace` is denied even under autopilot (`docs/15` §2.5); the storage layer should not be the way around it. The path is now resolved and checked against its base, and `store`/`get`/`delete` all refuse.
+- **Fixed MCP tool calls running without their required approval.** `McpPermissionCheck.approvalRequired` was carried in the type, returned by S9-T5's policy binding, and never read: `callTool` tested only `allowed`. `evaluate("approve", "mcp-tool")` answers `allowed: true` with `per-action`, so in Approve control mode the tool ran and no approval was ever requested — while the command and web-search gates refuse exactly that case. The gate now refuses too.
+- **Fixed accepted proposals being recorded as the user's own.** `review(..., "accept")` defaulted `targetSource` to `{ kind: "manual" }`, so an agent's proposal became a manual entry on acceptance. That is the S7 auto-compact defect again (wrong actor in the audit trail) and it contradicts S1-T3's rule that provenance gaps are confirmed, never filled from a default. Accept now requires an explicit `targetSource`.
+- Scheduled **S9-T7** (memory has no consumer — needs a decision) and **S9-T8** (transient scope is writable to a filesystem store that cannot read it back).
+
+**Decided**
+- Made `targetSource` mandatory on accept rather than inferring it from `metadata.proposedBy`. `propose()` overwrites the original source, so the only honest options are "ask" or "guess", and this project asks.
+- Did not fix the injection budget being approximate. `formatInjection` adds markup and XML-escaping that `estimateEntryTokens` does not count, so the formatted block can exceed `maxTokens` — but the estimate is `length / 4` and labelled an estimate throughout, the same honest approximation S7-T4 uses. Tightening it would imply a precision the whole path does not have.
+- Recorded the ⛔ gate being bypassed for the second sprint running rather than deleting it. Worth deciding whether that marker means anything.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 1081 passed / 80 files (was 1073 / 80).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.2.0`).
+- Red-check: disabled all three guards at once, each having its own test — 8 failures. The traversal ids resolved to `"promise resolved undefined instead of rejecting"`, i.e. the writes *succeeded*; the MCP calls returned tool content; accept silently stamped `manual`. Restored.
+- One earlier `release:check` failed while three of my own commands were building into `dist/` concurrently. Its output was not captured, so rather than guess I re-ran it sequentially: PASS. Recorded as contention, not a Sprint 9 defect.

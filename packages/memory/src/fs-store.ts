@@ -8,12 +8,35 @@ export class FsMemoryStore implements MemoryStore {
 
   constructor(rootDir: string) {
     if (!rootDir) throw new Error("FsMemoryStore requires a root directory");
-    this.rootDir = rootDir;
+    this.rootDir = path.resolve(rootDir);
   }
 
+  /**
+   * Turn an entry id into a path inside the store, or refuse.
+   *
+   * The id reaches here from a `MemoryEntry`, and the proposal lifecycle exists
+   * specifically so an *agent* can suggest entries — so the id is untrusted
+   * input. `path.join(root, dir, `${id}.json`)` happily walks out of the store
+   * on an id like `../../../../.bashrc`, which turns `store()` into an
+   * arbitrary-file-write. `outside-workspace` is denied even under autopilot
+   * (docs/15 §2.5); the storage layer should not be the way around that.
+   */
   private resolvePath(scope: MemoryScope, id: string): string {
     const storageDir = resolveStorageDir(scope);
-    return path.join(this.rootDir, storageDir, `${id}.json`);
+    const base = path.resolve(this.rootDir, storageDir);
+    const resolved = path.resolve(base, `${id}.json`);
+    const relative = path.relative(base, resolved);
+    if (
+      relative === "" ||
+      relative.startsWith("..") ||
+      path.isAbsolute(relative) ||
+      path.dirname(relative) !== "."
+    ) {
+      throw new Error(
+        `memory entry id "${id}" would write outside the ${scope} memory directory`,
+      );
+    }
+    return resolved;
   }
 
   private async ensureDir(filePath: string): Promise<void> {

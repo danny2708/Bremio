@@ -76,10 +76,24 @@ describe("MemoryProposalLifecycle (InMemoryStore)", () => {
     await expect(lc.listProposals()).resolves.toHaveLength(0);
   });
 
-  it("accept changes source to manual by default", async () => {
+  it("refuses to accept without being told what the entry's provenance is", async () => {
+    // It used to default to `{ kind: "manual" }`, recording the *user* as the
+    // author of something an agent proposed. Provenance is confirmed, not
+    // assumed (S1-T3), and a wrong actor in the audit trail is the S7
+    // auto-compact defect again.
     const lc = createLifecycle();
     await lc.propose(makeEntry());
-    await lc.review("prop-001", { decision: "accept" });
+    await expect(lc.review("prop-001", { decision: "accept" })).rejects.toThrow(
+      /provenance cannot be assumed/,
+    );
+    // Still pending, so it can be reviewed properly.
+    expect(await lc.listProposals()).toHaveLength(1);
+  });
+
+  it("accept marks the entry reviewed once a provenance is given", async () => {
+    const lc = createLifecycle();
+    await lc.propose(makeEntry());
+    await lc.review("prop-001", { decision: "accept", targetSource: { kind: "manual" } });
     const proposals = await lc.listProposals();
     expect(proposals).toHaveLength(0);
     const store = (lc as any).store as InMemoryStore;
@@ -111,6 +125,7 @@ describe("MemoryProposalLifecycle (InMemoryStore)", () => {
       decision: "accept",
       reviewer: "user-bob",
       notes: "looks good",
+      targetSource: { kind: "manual" },
     });
     const store = (lc as any).store as InMemoryStore;
     const entry = await store.get("prop-001");
@@ -161,7 +176,7 @@ describe("MemoryProposalLifecycle (InMemoryStore)", () => {
     const lc = createLifecycle();
     await lc.propose(makeEntry());
     const before = new Date("2026-07-30T00:00:00.000Z");
-    await lc.review("prop-001", { decision: "accept" });
+    await lc.review("prop-001", { decision: "accept", targetSource: { kind: "manual" } });
     const store = (lc as any).store as InMemoryStore;
     const entry = await store.get("prop-001");
     expect(new Date(entry!.updatedAt).getTime()).toBeGreaterThan(before.getTime());
@@ -180,7 +195,11 @@ describe("MemoryProposalLifecycle (FsMemoryStore)", () => {
     await lc.propose(makeEntry({ id: "fs-prop", scope: "project" }));
     let proposals = await lc.listProposals();
     expect(proposals).toHaveLength(1);
-    await lc.review("fs-prop", { decision: "accept", reviewer: "reviewer" });
+    await lc.review("fs-prop", {
+      decision: "accept",
+      reviewer: "reviewer",
+      targetSource: { kind: "manual" },
+    });
     proposals = await lc.listProposals();
     expect(proposals).toHaveLength(0);
     const store = (lc as any).store as FsMemoryStore;

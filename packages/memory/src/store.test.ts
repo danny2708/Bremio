@@ -260,3 +260,48 @@ describe("createMemoryStore", () => {
     expect(() => createMemoryStore("user")).toThrow("userDir is required");
   });
 });
+
+describe("FsMemoryStore refuses ids that escape the store", () => {
+  // The proposal lifecycle exists so an *agent* can suggest entries, which
+  // makes the entry id untrusted input. `path.join(root, dir, id + ".json")`
+  // walks out of the store on a `../` id, turning `store()` into an
+  // arbitrary-file-write — the `outside-workspace` action class that is denied
+  // even under autopilot.
+  const TRAVERSALS = [
+    "../escaped",
+    "../../../../escaped",
+    "nested/escaped",
+    "..\\escaped",
+  ];
+
+  it.each(TRAVERSALS)("refuses to store an entry with id %j", async (id) => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-mem-esc-"));
+    const store = new FsMemoryStore(tmpDir);
+
+    await expect(
+      store.store(makeEntry({ id, scope: "project" })),
+    ).rejects.toThrow(/outside the project memory directory/);
+  });
+
+  it("leaves no file behind when it refuses", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-mem-esc-"));
+    const outside = path.join(tmpDir, "outside.json");
+    const store = new FsMemoryStore(path.join(tmpDir, "root"));
+
+    await expect(
+      store.store(makeEntry({ id: "../../outside", scope: "project" })),
+    ).rejects.toThrow();
+
+    // The refusal has to happen before the write, not after.
+    await expect(fs.readFile(outside, "utf-8")).rejects.toThrow();
+  });
+
+  it("still accepts an ordinary id", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-mem-ok-"));
+    const store = new FsMemoryStore(tmpDir);
+
+    await store.store(makeEntry({ id: "ordinary-id", scope: "project" }));
+
+    expect(await store.get("ordinary-id")).toBeDefined();
+  });
+});

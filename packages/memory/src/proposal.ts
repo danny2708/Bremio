@@ -45,7 +45,17 @@ export class MemoryProposalLifecycle {
     const baseMeta = { ...entry.metadata };
 
     if (input.decision === "accept") {
-      const targetSource = input.targetSource ?? { kind: "manual" };
+      // No default. `{ kind: "manual" }` records the *user* as the author of
+      // something an agent proposed — the same wrong-actor-in-the-audit-trail
+      // defect S7 fixed for auto-compacts, and it contradicts S1-T3's rule
+      // that provenance gaps are confirmed rather than filled from a default.
+      // The reviewer knows what this entry actually is; make them say it.
+      const targetSource = input.targetSource;
+      if (!targetSource) {
+        throw new Error(
+          `accepting proposal ${id} requires an explicit targetSource: its provenance cannot be assumed`,
+        );
+      }
       const accepted: MemoryEntry = {
         ...entry,
         source: targetSource,

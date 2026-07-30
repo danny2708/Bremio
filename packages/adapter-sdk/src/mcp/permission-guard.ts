@@ -39,6 +39,18 @@ export class McpPermissionGuard {
         `MCP tool "${toolName}" denied: ${check.reason}`,
       );
     }
+    // `approvalRequired` was carried in the result type, returned by the policy
+    // binding, and never read — so in `approve` control mode, where
+    // `evaluate("approve", "mcp-tool")` answers `allowed: true` with
+    // `per-action`, the call went through with no approval ever requested.
+    // The command and web-search gates already refuse this case; this one did
+    // not. Obtaining the approval is the caller's job (S3); running the tool
+    // before it exists is not an option.
+    if (check.approvalRequired !== "none") {
+      throw new Error(
+        `MCP tool "${toolName}" requires ${check.approvalRequired} approval, which has not been granted`,
+      );
+    }
     return handle.callTool(toolName, args);
   }
 }
