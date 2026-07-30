@@ -1983,6 +1983,8 @@ Rules:
 - Red-check B: disabled `CommandTool`'s deny branch → "never spawns a denied command" failed, resolving instead of rejecting. The test asserts on a filesystem sentinel, so it proves the process never ran rather than that an error was thrown. Restored.
 - Red-check C: disabled `WebSearchTool`'s deny branch → "does not reach the network when the query is denied" failed, and `fetch` had been called. Restored.
 
+## Sprint 9 — Memory ⛔ needs review
+
 ### S9-T1 — Memory scope model (session / project / user)
 - **agent:** Claude (opencode)
 - **time:** 2026-07-30T00:00 → 2026-07-30T00:18
@@ -2096,3 +2098,34 @@ Rules:
 - Red-check A: removed `reviewStatus === "pending"` filter from `listProposals()` → rejected proposal appears in list (test fails with `length +0 but got 1`). Restored.
 - Red-check B: removed non-proposal guard from `review()` → reviewing a non-proposal entry resolves instead of throwing. Restored.
 - Red-check C: removed already-reviewed guard from `review()` → reviewing an already-rejected proposal resolves instead of throwing. Restored.
+
+### S9-T5 — Wire Sprint 8's tools to a run
+- **agent:** Claude (opencode)
+- **time:** 2026-07-30T10:10 → 2026-07-30T10:45
+- **branch:** s9/memory
+- **task(s):** S9-T5
+- **status:** done
+
+**Did**
+- Created `RunToolset` class in `apps/daemon/src/run-toolset.ts` — a per-run collection of all five Sprint 8 tools (`CommandTool`, `WebSearchTool`, `McpPermissionGuard`, `SkillManager`, `HookManager`) wired to real `evaluate(controlMode, actionClass)` from `@bremio/policy`
+- `createCommandTool(supervisor)` — permission check calls `evaluate(controlMode, "command")`; denies when policy says disallowed, denies when approval is required (per-action or before-apply), allows only when both `allowed` and `approvalRequired === "none"`
+- `createWebSearchTool()` — permission check calls `evaluate(controlMode, "network")`; same three-way gate
+- `createMcpPermissionGuard()` — permission check passes `allowed` and `approvalRequired` through from `evaluate()` directly (since `McpPermissionCheck` already carries `approvalRequired`)
+- `SkillManager` constructed with the `HookManager` instance so skills can be gated by hooks
+- `HookManager` constructed with no dependencies — hooks are user-extensible
+- Wired into `RunRegistry.#execute()`: a `RunToolset` is constructed per run with the run's `controlMode` (defaults to `"autopilot"`), making the tools policy-bound and available in the run lifecycle. No adapter currently calls them — they remain inert at their production call sites.
+- 10 tests covering: construction, plan-mode denial for all three tools, approve-mode approval gating, autopilot-mode allowance, McpPermissionGuard approvalRequired pass-through
+
+**Decided**
+- Tools are constructed lazily through factory methods rather than eagerly — lets callers supply run-specific dependencies (e.g. ProcessSupervisor) without RunToolset needing to know what adapters are used
+- The "S3 approval lifecycle" is expressed as policy-level denial: when `evaluate()` returns `approvalRequired !== "none"`, the permission check returns `{ allowed: false, reason: "requires <type> approval" }`. The run orchestrator must create an S3 approval request before retrying. This keeps the tool as a pure gate without managing approval state.
+- CommandTool/WebSearchTool use simple `{ allowed, reason }` so approval requirements from policy cannot pass through — they are translated to denials. McpPermissionGuard passes the full `approvalRequired` through because its return type already supports it.
+- Tools are inert: infrastructure is in place but no adapter calls them yet. This is the honest answer the task allows ("or say plainly that they are inert").
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run apps/daemon/src/run-toolset.test.ts` — 10 tests pass
+- `corepack pnpm vitest run` — 1072 tests pass / 80 files (was 560 / 42 before S9-T4's full-run count; daemon + orchestrator + full suite = 1072)
+- Red-check A: removed `!evalResult.allowed` guard from CommandTool's permission callback → "denies commands in plan mode" fails: command executes with `exitCode: -1` instead of rejecting. Restored.
+- Red-check B: removed `evalResult.approvalRequired !== "none"` guard from WebSearchTool's permission callback → "denies network access in approve mode" fails: search actually fires to DuckDuckGo. Restored.
+- Red-check C: replaced `evalResult.allowed` with `true` in McpPermissionGuard → "denies mcp-tool calls in plan mode" fails: `expected true to be false`. Restored.
