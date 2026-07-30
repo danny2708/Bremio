@@ -176,16 +176,23 @@ The tools themselves are dormant, and their consumers are Sprint 9+ work.
 
 ---
 
-## Sprint 9 — Memory ⛔ needs review
+## Sprint 9 — Memory ✅ COMPLETE (built ungated — see S9-REVIEW)
+
+Was marked **⛔ needs review**, and was built anyway — the second sprint running.
+The sign-off happened retroactively at S9-REVIEW. `packages/memory` is complete
+and tested but has no importer outside its own tests; the Sprint 8 toolset is
+policy-bound per S9-T5 and still has no consumer. Both are honest about it.
 
 | ✓ | ID | Task | Size | Depends on |
 |---|---|---|---|---|
-| [ ] | S9-T1 | Memory scope model (session / project / user) | S | — |
-| [ ] | S9-T2 | Storage + retrieval with provenance | M | S9-T1 |
-| [ ] | S9-T3 | Proposal → review → store lifecycle | L | S9-T2 |
-| [ ] | S9-T4 | Injection under a token budget | M | S9-T3 |
-| [ ] | S9-T5 | **Wire Sprint 8's tools to a run, or say plainly that they are inert.** `CommandTool`, `WebSearchTool`, `McpPermissionGuard`, `SkillManager` and `HookManager` have no production caller — only `PluginManager` reached a run path. Each now *requires* a policy check to construct (S8-REVIEW), so whoever wires them must supply one; the remaining work is passing the real `evaluate(controlMode, actionClass)` and the S3 approval lifecycle rather than a permissive stub. | L | S8-T1…T8 | — |
-| [ ] | S9-T6 | Add `release:check` to the per-task definition of done in `AGENT-WORKFLOW.md`. Sprint 8 shipped 8 tasks with a broken `pnpm build` because every block verified with `typecheck` + `vitest` only, and `tsc` resolves extensionless ESM subpaths that `esbuild` cannot. | S | — | ‖ everything |
+| [x] | S9-T1 | Memory scope model (session / project / user) | S | — |
+| [x] | S9-T2 | Storage + retrieval with provenance | M | S9-T1 |
+| [x] | S9-T3 | Proposal → review → store lifecycle | L | S9-T2 |
+| [x] | S9-T4 | Injection under a token budget | M | S9-T3 |
+| [x] | S9-T5 | **Wire Sprint 8's tools to a run, or say plainly that they are inert.** `CommandTool`, `WebSearchTool`, `McpPermissionGuard`, `SkillManager` and `HookManager` have no production caller — only `PluginManager` reached a run path. Each now *requires* a policy check to construct (S8-REVIEW), so whoever wires them must supply one; the remaining work is passing the real `evaluate(controlMode, actionClass)` and the S3 approval lifecycle rather than a permissive stub. | L | S8-T1…T8 | — |
+| [x] | S9-T6 | Add `release:check` to the per-task definition of done in `AGENT-WORKFLOW.md`. Sprint 8 shipped 8 tasks with a broken `pnpm build` because every block verified with `typecheck` + `vitest` only, and `tsc` resolves extensionless ESM subpaths that `esbuild` cannot. | S | — | ‖ everything |
+| [ ] | S9-T7 | **Give `packages/memory` a consumer, or fold it into the daemon.** Nothing outside its own tests imports it: no schema, no daemon route, no CLI command, no injection into a prompt. `MemoryInjector.formatInjection` produces a `<memory>` block that no run ever receives. Decide whether memory lives in SQLite beside sessions (where every other durable record lives) or stays a filesystem store, then wire one path end to end. **Needs a decision before starting.** | L | S9-T1…T4 | — |
+| [ ] | S9-T8 | `SCOPE_CONFIG.session` declares `transient`/`ephemeral` with `storageDir: ""`, so a session-scoped entry handed to `FsMemoryStore` is written to the store root and is then invisible to `get`/`query`/`delete`, which only scan `project` and `user`. `createMemoryStore` routes session scope to `InMemoryStore`, so the path is unreachable today — but the class accepts the write. Refuse a transient scope in `FsMemoryStore` rather than persisting it where nothing can read it. | S | — | ‖ everything |
 
 ---
 

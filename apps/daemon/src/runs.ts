@@ -17,6 +17,7 @@ import {
   type ProcessSupervisor,
   type TerminationOutcome,
 } from "@bremio/adapter-sdk";
+import { RunToolset } from "./run-toolset";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
@@ -916,6 +917,14 @@ export class RunRegistry {
     controller: AbortController,
   ): Promise<void> {
     const registry = createRegistry(this.executableAdapters());
+
+    // Construct Sprint 8 tools wired to real policy evaluation and the S3
+    // approval lifecycle. The tools are per-run and policy-bound, but no
+    // adapter currently consumes them — they remain inert at their call sites
+    // until a later task wires them into an adapter or orchestrator path.
+    const toolset = new RunToolset({
+      controlMode: input.controlMode ?? "autopilot",
+    });
 
     // Build session continuation context when continuing an existing session
     const turnIndex = input.sessionId

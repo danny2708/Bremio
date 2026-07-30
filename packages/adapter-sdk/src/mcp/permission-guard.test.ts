@@ -95,4 +95,25 @@ describe("McpPermissionGuard", () => {
     expect(handle.callTool).toHaveBeenCalledWith("echo", { msg: "hi" });
     expect(result.content[0]!.type).toBe("text");
   });
+
+  it.each(["per-action", "before-apply"] as const)(
+    "does not call the tool when %s approval is required but ungranted",
+    async (approvalRequired) => {
+      // `evaluate("approve", "mcp-tool")` answers allowed:true with
+      // per-action. `callTool` only tested `allowed`, so in Approve mode the
+      // tool ran and no approval was ever requested — while the command and
+      // web-search gates refuse the same case.
+      const handle = mockClient();
+      const guard = new McpPermissionGuard(() => ({
+        allowed: true,
+        approvalRequired,
+        reason: "allowed by policy",
+      }));
+
+      await expect(guard.callTool(handle, "echo", {})).rejects.toThrow(
+        new RegExp(`requires ${approvalRequired} approval`),
+      );
+      expect(handle.callTool).not.toHaveBeenCalled();
+    },
+  );
 });
