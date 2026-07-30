@@ -204,6 +204,47 @@ read · write · create · delete · command · network
 mcp-tool · git-destructive · outside-workspace · user-config
 ```
 
+#### 2.4.1 Git operations, classified (S10-T1b)
+
+**Amendment, 2026-07-30.** Sprint 10 gives Bremio the ability to stage, commit,
+branch, push and open pull requests. Those are not a new axis — each one is an
+existing action class, and naming which is what has to happen *before* the code,
+because otherwise each task picks its own gate.
+
+| Operation | Class | Notes |
+|---|---|---|
+| read status, diff, log, branch list | `read` | allowed in every control mode |
+| stage (`git add <paths>`) | `write` | never `git add -A` — see below |
+| commit | `write` | writes inside the workspace; `.git` is not "outside" it |
+| create a branch | `write` | |
+| switch branch | `write` | refuse on a dirty tree rather than carrying changes across |
+| pull / fetch | `network` | may fast-forward the working tree, so also `write` |
+| push an existing or new branch | `network` | |
+| **force-push** | `git-destructive` | |
+| **history rewriting** — rebase, amend of a pushed commit, `reset --hard` on a shared ref | `git-destructive` | |
+| open a pull request | `network` | |
+
+Two consequences that are easy to get wrong:
+
+**`git-destructive` is denied under autopilot and there is nothing left to
+override it.** §2.5 denies the class, and the grant mechanism that was once
+imagined as the override was deleted in S5-T7 and S6-T4 as code nothing called.
+So a force-push under autopilot must be **refused with a named reason**. It must
+not be silently downgraded to a normal push — that substitutes a different
+operation for the one the user asked for, which is the substitution failure this
+whole document exists to prevent.
+
+**Committing is a `write`, so plan mode forbids it.** `plan` permits only
+`read`. An agent in plan mode that stages and commits has escaped plan mode,
+regardless of the fact that the edits were already on disk.
+
+**`git add -A` is not an implementation detail.** The S5 review removed exactly
+that call from the diff computation, where it silently flattened a user's
+partially staged index. Staging is where reintroducing it would be most
+tempting, and the damage would be identical: staging is the user's own working
+state, and Bremio overwriting it destroys intent it cannot reconstruct. Stage
+the paths the user chose, nothing else.
+
 ### 2.5 Autopilot's non-negotiable deny list
 
 **Recorded late — this decision was approved in the `docs/14` Q4 review and was
@@ -225,6 +266,44 @@ are not silently forgotten. No override mechanism exists: `overrideableByGrant`
 and the grant-consumption lifecycle (`consumeApprovalGrant`,
 `pruneExpiredApprovalGrants`, `expireApprovalRequests`) were deleted in S5-T7
 as dead code that nothing called.
+
+### 2.6 Co-lab with more than one worker (S10-T1a)
+
+**Amendment, 2026-07-30.** `CollaborationMode` stays two-valued: `solo` is one
+agent, `colab` is a lead plus **one or more** workers. Worker count is not a
+fourth axis — it is a property of a Co-lab run, and nothing about §2.1, §2.3 or
+the deny list changes because there are three workers instead of one.
+
+**No migration.** `runs.worker_providers` has been a JSON array since S1-T1 and
+already stores `["antigravity"]`. Holding two ids is the shape it was declared
+with. What is single is the *code*: `RunBremioOptions.workerId` is a string,
+`assignAgents(plan, leadId, workerId, …)` takes one, and `retry()` reads
+`workerProviders?.[0]` — which today silently drops every worker but the first.
+
+**The worker set.** An ordered list of distinct agent ids. Order is a preference
+hint for assignment, not a priority guarantee. A worker id may repeat the lead
+only when it is the only registered adapter — the existing
+`worker === lead && registry.size > 1` refusal generalises to "no duplicates,
+and no lead in the worker set unless there is nothing else".
+
+**Every worker is gated, not the first.** `canBackControlMode` must be evaluated
+for the lead and for **each** worker, and the run refused if any one of them
+fails. This is not a hypothetical: the S3 review found a gate that checked only
+the lead, so a plan-mode run with an `advisory` worker executed. With N workers
+the same loop must cover all N, and the *weakest* worker decides whether the run
+may proceed. A run is only as read-only as its least-enforced participant.
+
+**Workers do not disagree, and must not be asked to.** There is no vote and no
+consensus. The lead produces a plan, each task has exactly one assignee, and
+that assignee owns it. What can genuinely conflict is two tasks touching the
+same file — and that conflict is contained by §2.3, which already requires
+`isolated-worktree` for Co-lab: each task gets its own worktree, so the collision
+surfaces at merge, where a human decides. Nothing about N workers weakens that;
+it raises the probability of a merge conflict, not of a silent overwrite.
+
+**Reporting.** A run's `workerProviders` must list every worker that was
+*assigned work*, not every worker offered. A worker that received no task is not
+part of that run's history, and recording it would misattribute the run.
 
 ---
 
@@ -332,6 +411,35 @@ A Co-lab session holds several. When a binding is `lost` or `expired`, the
 recovery choice must be **explicit**: native resume · replay transcript · start
 fresh from a compacted summary · ask the user · fail with a named reason.
 Switching to a different provider is never one of the options.
+
+#### 4.3.1 A forked session gets its own bindings (S10-T1c)
+
+**Amendment, 2026-07-30.** S10-T14 lets a user fork a new session from one turn
+of an existing one. A fork **must not** inherit or copy the parent's
+`nativeSessionId`. It starts with no binding, or with a fresh one.
+
+The reason is not tidiness. A `nativeSessionId` names a conversation that lives
+on the provider's side and that Bremio does not own. If two Bremio sessions
+carried the same one:
+
+- both would append turns to a single provider-side conversation, so each would
+  silently receive context the user never put in it — the crosstalk that
+  `ProviderSessionBinding` exists to make impossible;
+- the provider's history would contain turns *after* the fork point that the
+  fork claims not to have, so the fork's own transcript would be a lie about
+  what the model has seen;
+- neither session could be resumed honestly, because `lastUsedAt` and `status`
+  would describe two different lineages at once.
+
+**What a fork carries over:** the session's configuration revisions (user
+intent — mode, agents, control mode), and the parent's turns *up to and
+including* the fork point, as replayed context. It records its parent session id
+and the turn it forked from, so the lineage is inspectable.
+
+**What it does not carry:** run records (they belong to the runs that produced
+them), provider session bindings, and any pending approval — an approval is
+consent for one specific action in one specific run, and inheriting it would
+grant the fork something nobody agreed to.
 
 ### 4.4 Legacy provenance
 

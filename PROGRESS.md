@@ -2172,3 +2172,29 @@ Rules:
 - `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.2.0`).
 - Red-check: disabled all three guards at once, each having its own test — 8 failures. The traversal ids resolved to `"promise resolved undefined instead of rejecting"`, i.e. the writes *succeeded*; the MCP calls returned tool content; accept silently stamped `manual`. Restored.
 - One earlier `release:check` failed while three of my own commands were building into `dist/` concurrently. Its output was not captured, so rather than guess I re-ran it sequentially: PASS. Recorded as contention, not a Sprint 9 defect.
+
+## Sprint 10 — Concurrency, history and git
+
+### S10-T1 — Lock the new semantics in docs/15 before any code
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-30T16:55 → 2026-07-30T17:10
+- **branch:** main
+- **task(s):** S10-T1
+- **status:** done
+
+**Did**
+- **§2.4.1 — git operations classified.** A table mapping each operation Sprint 10 adds to its `ActionClass`: reads are reads; stage, commit, create-branch and switch-branch are `write`; fetch/push/PR are `network`; `pull` is `network` **and** `write`; force-push and history rewriting are `git-destructive`. Wrote down the two consequences that are easy to get wrong: destructive git is denied under autopilot with nothing left to override it (the grant lifecycle was deleted in S5-T7/S6-T4), so a force-push must be refused by name rather than downgraded to a push; and committing is a `write`, so plan mode forbids it even though the edits were already on disk. Also pinned "never `git add -A`" with the reason — the S5 review removed exactly that call for flattening a user's partial index, and staging is where it would be most tempting to reintroduce.
+- **§2.6 — Co-lab with more than one worker.** Worker count is a property of a Co-lab run, not a fourth axis, so §2.1/§2.3/§2.5 are unchanged. No migration: `runs.worker_providers` has been a JSON array since S1-T1; what is single is the code (`RunBremioOptions.workerId`, `assignAgents(…, workerId, …)`, `retry()` reading `workerProviders?.[0]`, which today silently drops every worker but the first). Locked: the worker set is ordered and distinct, order is a hint not a guarantee; **every** worker is gated by `canBackControlMode`, not the first, because the S3 review found a gate that checked only the lead and let a plan-mode run execute with an `advisory` worker — the weakest worker decides whether the run may proceed; workers do not vote, each task has exactly one assignee, and the real conflict (two tasks on one file) is already contained by §2.3's isolated-worktree requirement, surfacing at merge for a human; and `workerProviders` records workers that were *assigned work*, not workers offered.
+- **§4.3.1 — a forked session gets its own bindings.** A fork must not inherit the parent's `nativeSessionId`, with the three concrete failures spelled out: both sessions appending to one provider-side conversation (the crosstalk `ProviderSessionBinding` exists to prevent), the fork's transcript becoming a lie because the provider's history contains post-fork turns it claims not to have, and neither session being resumable honestly since `status`/`lastUsedAt` would describe two lineages. Locked what carries over (config revisions, turns up to the fork point, parent id + fork turn) and what does not (run records, bindings, pending approvals — consent for one action in one run).
+- Made part (b) executable: `packages/policy/src/git-actions.ts` with `gitActionClasses()` and `isAutopilotDenied()`, plus 29 tests.
+
+**Decided**
+- Went beyond "docs only" for part (b) alone. The task said to lock semantics before code, and I kept T7/T14's semantics as prose because they cannot be pinned without the features — but a *lookup table* that four tasks (T10…T13) each need is precisely the comment-only enforcement this codebase keeps having to fix: §2.2's backing rule was a doc comment until the S2 review made it executable, and the autopilot deny list was prose until S3-T8. One table beats four readings of the same paragraph.
+- `pull` returns two classes rather than the scarier one. A caller checking only `network` would let a pull fast-forward the user's tree in plan mode, so the mapping returns everything that applies and the caller must satisfy all of it.
+- `gitActionClasses` throws on an unknown operation instead of defaulting. A default here would be either permissive (a new operation ungated) or wrong; refusing to guess is the same choice S9's review made for proposal provenance.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/policy` — 134 passed (+29).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.3.0`).
+- Red-check: reclassified `pull` as `network` only and `force-push` as `network` only → both targeted tests failed (`expected [ 'network' ] to include 'write'`, `expected [ 'network' ] to include 'git-destructive'`). The second is the one that matters: a misclassified force-push is indistinguishable from an ordinary push, which is exactly the substitution §2.4.1 forbids. Restored.

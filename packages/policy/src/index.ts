@@ -37,3 +37,9 @@ export {
   type AutoCompactDecision,
   type AutoCompactInput,
 } from "./compact";
+
+export {
+  gitActionClasses,
+  isAutopilotDenied,
+  type GitOperation,
+} from "./git-actions";
