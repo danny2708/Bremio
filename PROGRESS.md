@@ -2037,3 +2037,31 @@ Rules:
 - Red-check A: removed FsMemoryStore root-dir guard → "throws if constructed without a root directory" fails. Restored.
 - Red-check B: removed factory projectDir guard → "throws for project scope without projectDir" fails (different error: FsMemoryStore's inner guard fires). Restored.
 - Red-check C: removed factory userDir guard → "throws for user scope without userDir" fails (same as B). Restored.
+
+### S9-T3 — Proposal → review → store lifecycle
+- **agent:** Claude (opencode)
+- **time:** 2026-07-30T08:45 → open
+- **branch:** s9/memory
+- **task(s):** S9-T3
+- **status:** in-progress
+
+**Did**
+- Created `MemoryProposalLifecycle` class wrapping a `MemoryStore` with `propose()`, `listProposals()`, `review()` methods
+- `propose(entry, proposedBy?)` — stores an entry with `source.kind = "proposal"` and `reviewStatus: "pending"` in metadata
+- `listProposals(scope?)` — returns only pending proposals (filters by `reviewStatus === "pending"`)
+- `review(id, input)` — accept changes source (defaults to `manual`), reject keeps source proposal but sets `reviewStatus: "rejected"`; throws for nonexistent, non-proposal, or already-reviewed entries
+- `ProposalReviewInput` type exported from `@bremio/memory`
+- 15 tests covering propose (with proposer, source override), list (scope filter, non-proposal exclusion, empty), accept (default source, custom targetSource, reviewer/notes metadata, updatedAt), reject (source kept, status recorded), guard throws (nonexistent, non-proposal, already-reviewed), FsMemoryStore integration round-trip
+
+**Decided**
+- `listProposals()` returns only pending proposals — accepted proposals are excluded by their changed source, rejected ones by their `reviewStatus`. The underlying store remains the source of truth for all entries; `listProposals()` is a convenience for "what needs review"
+- Rejected proposals keep `source.kind === "proposal"` with `reviewStatus: "rejected"` — preserves audit trail without polluting the pending view
+- `targetSource` defaults to `{ kind: "manual" }` when not specified on accept — the most common case for reviewed-then-stored entries
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/memory/src/proposal.test.ts` — 15 tests pass
+- `corepack pnpm vitest run packages/memory/` — 65 total memory tests pass (20 types + 30 store + 15 proposal)
+- Red-check A: removed `reviewStatus === "pending"` filter from `listProposals()` → rejected proposal appears in list (test fails with `length +0 but got 1`). Restored.
+- Red-check B: removed non-proposal guard from `review()` → reviewing a non-proposal entry resolves instead of throwing. Restored.
+- Red-check C: removed already-reviewed guard from `review()` → reviewing an already-rejected proposal resolves instead of throwing. Restored.

@@ -22,3 +22,8 @@ export {
   createMemoryStore,
   type CreateMemoryStoreOptions,
 } from "./factory";
+
+export {
+  MemoryProposalLifecycle,
+  type ProposalReviewInput,
+} from "./proposal";
