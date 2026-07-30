@@ -9,3 +9,16 @@ export {
   type MemoryVisibility,
   type ScopeConfig,
 } from "./types";
+
+export {
+  InMemoryStore,
+  type MemoryQuery,
+  type MemoryStore,
+} from "./store";
+
+export { FsMemoryStore } from "./fs-store";
+
+export {
+  createMemoryStore,
+  type CreateMemoryStoreOptions,
+} from "./factory";

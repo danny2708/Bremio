@@ -2008,3 +2008,32 @@ Rules:
 - `corepack pnpm vitest run packages/memory/src/types.test.ts` — 20 tests pass
 - `corepack pnpm test` — 925 tests pass (70 files, +20 memory tests)
 - Red-check A: removed `getScopeConfig` unknown-scope guard → "throws for an unknown scope" fails (returns undefined instead of throwing). Restored.
+
+### S9-T2 — Storage + retrieval with provenance
+- **agent:** Claude (opencode)
+- **time:** 2026-07-30T00:20 → 2026-07-30T00:40
+- **branch:** s9/memory
+- **task(s):** S9-T2
+- **status:** done
+
+**Did**
+- Created `MemoryStore` interface with `store`, `get`, `query`, `delete`, `list` methods
+- Created `InMemoryStore` (Map-backed, returns copies, for session/transient scope)
+- Created `FsMemoryStore` (JSON files in per-scope directories, auto-creates dir trees, queries across scopes with tag/sourceKind/id/limit filters)
+- Created `createMemoryStore(scope, options)` factory — session → InMemoryStore, project/user → FsMemoryStore with required projectDir/userDir
+- 30 tests: InMemoryStore (11), FsMemoryStore (12), factory (5)
+
+**Decided**
+- FsMemoryStore only scans project and user scopes (session is transient, never persisted to disk)
+- InMemoryStore returns defensive copies to prevent internal state mutation via retrieved references
+- FsMemoryStore stores one JSON file per entry (`{storageDir}/{id}.json`) — simple, debuggable, no DB dependency
+- Factory requires explicit `projectDir`/`userDir` for persistent scopes rather than guessing from CWD or env — caller must commit to the root
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/memory/src/store.test.ts` — 30 tests pass
+- `corepack pnpm vitest run packages/memory/` — 50 total memory tests pass (20 types + 30 store)
+- `corepack pnpm test` — 955 tests pass (71 files)
+- Red-check A: removed FsMemoryStore root-dir guard → "throws if constructed without a root directory" fails. Restored.
+- Red-check B: removed factory projectDir guard → "throws for project scope without projectDir" fails (different error: FsMemoryStore's inner guard fires). Restored.
+- Red-check C: removed factory userDir guard → "throws for user scope without userDir" fails (same as B). Restored.

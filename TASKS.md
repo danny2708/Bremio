@@ -181,7 +181,7 @@ The tools themselves are dormant, and their consumers are Sprint 9+ work.
 | ✓ | ID | Task | Size | Depends on |
 |---|---|---|---|---|
 | [x] | S9-T1 | Memory scope model (session / project / user) | S | — |
-| [ ] | S9-T2 | Storage + retrieval with provenance | M | S9-T1 |
+| [x] | S9-T2 | Storage + retrieval with provenance | M | S9-T1 |
 | [ ] | S9-T3 | Proposal → review → store lifecycle | L | S9-T2 |
 | [ ] | S9-T4 | Injection under a token budget | M | S9-T3 |
 | [ ] | S9-T5 | **Wire Sprint 8's tools to a run, or say plainly that they are inert.** `CommandTool`, `WebSearchTool`, `McpPermissionGuard`, `SkillManager` and `HookManager` have no production caller — only `PluginManager` reached a run path. Each now *requires* a policy check to construct (S8-REVIEW), so whoever wires them must supply one; the remaining work is passing the real `evaluate(controlMode, actionClass)` and the S3 approval lifecycle rather than a permissive stub. | L | S8-T1…T8 | — |
