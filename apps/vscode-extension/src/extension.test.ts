@@ -693,3 +693,52 @@ describe("transcript rendering, executed from the real panel script", () => {
   });
 });
 
+describe("context items refresh after an add", () => {
+  const html = panelHtml("nonce", "vscode-resource:", "icon.png");
+  const script = html.split('<script nonce="nonce">')[1]!.split("</script>")[0]!;
+
+  it("parses the refreshed section as markup rather than inserting it as text", () => {
+    // `replaceWith(string)` inserts a *text node*, so adding one item printed
+    // the section's HTML source into the transcript and destroyed the real
+    // section — including the Add buttons, which is why a second file could
+    // not be added until the session was reopened. Reopening worked because
+    // that path re-renders through `innerHTML`.
+    expect(script).not.toMatch(/ctxSection\.replaceWith\(/);
+    expect(script).toMatch(/ctxSection\.outerHTML\s*=/);
+  });
+
+  it("renders an image attachment as a thumbnail and a file as an icon", () => {
+    const run = new Function(
+      "document",
+      "window",
+      "acquireVsCodeApi",
+      "console",
+      `${script}\nreturn { renderContextItems };`,
+    ) as (...args: unknown[]) => { renderContextItems: (s: string, i: unknown[], n: string) => string };
+    const stub: unknown = new Proxy(function () {}, {
+      get: (_t, prop) => (prop === Symbol.toPrimitive ? () => "" : stub),
+      set: () => true,
+      apply: () => stub,
+      construct: () => stub as object,
+    });
+    const { renderContextItems } = run(stub, stub, () => stub, console);
+
+    const out = renderContextItems(
+      "ses-1",
+      [
+        { id: "a", type: "image", source: "C:/repo/.bremio/context-images/shot.png", enabled: true, preview: "data:image/png;base64,AAA" },
+        { id: "b", type: "file", source: "C:/repo/README.md", enabled: true },
+      ],
+      "",
+    );
+
+    expect(out).toContain('src="data:image/png;base64,AAA"');
+    expect(out).toContain("shot.png");
+    expect(out).toContain("codicon-file");
+    expect(out).toContain("README.md");
+    // The add buttons must survive a re-render, or the panel dead-ends.
+    expect(out).toContain("Add Current File");
+    expect(out).toContain("Add Image");
+  });
+});
+

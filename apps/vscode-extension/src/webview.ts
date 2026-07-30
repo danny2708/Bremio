@@ -807,18 +807,27 @@ pre.log {
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
 
-/* Attached images, shown rather than merely named. */
-.ctx-gallery { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.ctx-thumb { margin: 0; width: 132px; }
-.ctx-thumb.disabled { opacity: .4; }
-.ctx-thumb img {
-  display: block; width: 132px; height: 88px; object-fit: cover;
-  border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, var(--fg) 5%, transparent);
+/* Attachments: one card each, thumbnail for images, icon otherwise. */
+.ctx-cards { display: flex; flex-wrap: wrap; gap: 6px; }
+.ctx-card {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 260px;
+  padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.ctx-thumb figcaption {
-  font-size: 10px; color: var(--muted); margin-top: 3px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.ctx-card.disabled { opacity: .45; }
+.ctx-card-thumb {
+  width: 30px; height: 30px; object-fit: cover; border-radius: 4px; flex: 0 0 auto;
+  border: 1px solid var(--border); background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
+.ctx-card-icon { flex: 0 0 auto; width: 30px; text-align: center; color: var(--muted); }
+.ctx-card-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.ctx-card-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-card-meta { font-size: 10px; color: var(--muted); }
+.ctx-card button {
+  background: none; border: 0; color: var(--muted); cursor: pointer;
+  padding: 0 2px; font-size: 11px; flex: 0 0 auto;
+}
+.ctx-card button:hover { color: var(--danger); }
 
 /* Diff viewer: syntax-highlighted unified-diff inside the panel. */
 .diff-viewer { margin-bottom: 10px; }
@@ -1073,13 +1082,21 @@ window.addEventListener("message", (event) => {
     storedContextItems = message.contextItems || [];
     currentSessionId = message.session.id;
     $("tab-sessions").innerHTML = renderTranscript(message.session, message.turns, storedContextItems, getVisionNotice());
+    annotateThumbDims();
   }
   if (message.type === "contextItemsUpdated") {
     storedContextItems = message.contextItems || [];
     const transcript = $("tab-sessions").querySelector("#continue-wrap");
     if (transcript) {
       const ctxSection = $("tab-sessions").querySelector("#context-items-section");
-      if (ctxSection) ctxSection.replaceWith(renderContextItems(currentSessionId, storedContextItems, getVisionNotice()));
+      // replaceWith(string) inserts a *text node*: the markup was displayed as
+      // literal source, and the real section — with the Add File / Add Image /
+      // Add Current File buttons — was replaced by that text, so after adding
+      // one item you could not add another. outerHTML parses it as markup.
+      if (ctxSection) {
+        ctxSection.outerHTML = renderContextItems(currentSessionId, storedContextItems, getVisionNotice());
+        annotateThumbDims();
+      }
     }
   }
   if (message.type === "runStarted") {
@@ -1202,6 +1219,31 @@ function renderSessionList(sessions) {
   }).join("");
 }
 
+/**
+ * Label each thumbnail with its pixel size once the browser has decoded it.
+ *
+ * Done here rather than in the markup because the CSP has no 'unsafe-inline',
+ * so an onload attribute would never fire — and because the extension would
+ * otherwise have to parse PNG/JPEG headers to learn something the image
+ * element already knows.
+ */
+function annotateThumbDims() {
+  const imgs = document.querySelectorAll("#context-items-section img[data-dims]");
+  for (const img of imgs) {
+    if (img.dataset.dimsDone) continue;
+    const fill = function() {
+      if (img.dataset.dimsDone || !img.naturalWidth) return;
+      img.dataset.dimsDone = "1";
+      const meta = img.parentElement ? img.parentElement.querySelector(".ctx-card-meta") : null;
+      if (!meta) return;
+      const dims = img.naturalWidth + "\\u00d7" + img.naturalHeight;
+      meta.textContent = meta.textContent ? dims + " \\u00b7 " + meta.textContent : dims;
+    };
+    if (img.complete) fill();
+    else img.addEventListener("load", fill, { once: true });
+  }
+}
+
 function renderContextItems(sessionId, items, visionNotice) {
   const sid = escapeHtml(sessionId);
   const notice = visionNotice ? '<div class="banner warn" style="margin-bottom:6px;font-size:12px">' + escapeHtml(visionNotice) + '</div>' : "";
@@ -1223,37 +1265,30 @@ function renderContextItems(sessionId, items, visionNotice) {
       + '<button class="ghost" data-compact-session="' + sid + '" style="margin-left:4px">Compact</button>'
       + '</div>';
   }
-  const chips = items.map(function(item, idx) {
+  // One card per attachment: a thumbnail for an image, a file icon otherwise,
+  // then the filename. This was a chip row plus a separate thumbnail gallery,
+  // which showed each image twice and pushed the buttons down the panel.
+  const cards = items.map(function(item, idx) {
     const isImage = item.type === "image";
-    const tokenLabel = item.tokensEstimated !== undefined
-      ? '<span class="muted" style="font-size:10px;margin-left:4px">' + item.tokensEstimated + 't</span>'
-      : "";
-    return '<span class="chip' + (item.enabled ? '' : ' disabled') + '" title="' + escapeHtml(item.source) + '">'
-      + '<span class="codicon codicon-' + (isImage ? 'file-media' : 'file') + '"></span>'
-      + '<span class="name">' + escapeHtml(item.source.slice(Math.max(item.source.lastIndexOf("/"), item.source.lastIndexOf("\\\\")) + 1)) + '</span>'
-      + tokenLabel
+    const name = escapeHtml(item.source.slice(Math.max(item.source.lastIndexOf("/"), item.source.lastIndexOf("\\\\")) + 1));
+    const figure = isImage && item.preview
+      ? '<img class="ctx-card-thumb" src="' + escapeHtml(item.preview) + '" alt="' + name + '" loading="lazy" data-dims>'
+      : '<span class="ctx-card-icon codicon codicon-' + (isImage ? 'file-media' : 'file') + '"></span>';
+    const meta = item.tokensEstimated !== undefined ? item.tokensEstimated + "t" : "";
+    return '<span class="ctx-card' + (item.enabled ? '' : ' disabled') + '" title="' + escapeHtml(item.source) + '">'
+      + figure
+      + '<span class="ctx-card-text">'
+      + '<span class="ctx-card-name">' + name + '</span>'
+      + '<span class="ctx-card-meta">' + escapeHtml(meta) + '</span>'
+      + '</span>'
       + '<button data-context-toggle="' + idx + '" data-item="' + escapeHtml(item.id) + '" data-enabled="' + (item.enabled ? '1' : '0') + '" aria-label="Toggle">' + (item.enabled ? '●' : '○') + '</button>'
       + '<button data-context-remove="' + idx + '" data-item="' + escapeHtml(item.id) + '" aria-label="Remove">x</button>'
       + '</span>';
   }).join("");
-  // An attached screenshot is worth seeing. Items without a preview (missing
-  // file, unknown type, over the size cap) simply keep their chip.
-  const thumbs = items
-    .filter(function(item) { return item.type === "image" && item.preview; })
-    .map(function(item) {
-      const name = escapeHtml(item.source.slice(Math.max(item.source.lastIndexOf("/"), item.source.lastIndexOf("\\\\")) + 1));
-      return '<figure class="ctx-thumb' + (item.enabled ? '' : ' disabled') + '">'
-        + '<img src="' + escapeHtml(item.preview) + '" alt="' + name + '" loading="lazy">'
-        + '<figcaption>' + name + '</figcaption>'
-        + '</figure>';
-    })
-    .join("");
-  const gallery = thumbs ? '<div class="ctx-gallery">' + thumbs + '</div>' : "";
   return '<div id="context-items-section" style="margin-top:16px">'
     + '<div class="section-label" style="margin-bottom:6px"><span class="codicon codicon-pin"></span> Context Items (' + items.length + ')' + tokenSummary + '</div>'
     + notice
-    + '<div>' + chips + '</div>'
-    + gallery
+    + '<div class="ctx-cards">' + cards + '</div>'
     + '<div style="margin-top:8px">'
     + '<button class="ghost" data-context-add data-session="' + sid + '">Add File</button>'
     + '<button class="ghost" data-context-image data-session="' + sid + '">Add Image</button>'
