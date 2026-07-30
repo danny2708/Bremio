@@ -1982,3 +1982,29 @@ Rules:
 - Red-check A: pointed `/adapters` back at a fresh `PluginManager` → "stops advertising a plugin once it is deactivated" failed with `expected [...] to not include 'opencode'`. The old parity test passed throughout, which is the evidence it was vacuous. Restored.
 - Red-check B: disabled `CommandTool`'s deny branch → "never spawns a denied command" failed, resolving instead of rejecting. The test asserts on a filesystem sentinel, so it proves the process never ran rather than that an error was thrown. Restored.
 - Red-check C: disabled `WebSearchTool`'s deny branch → "does not reach the network when the query is denied" failed, and `fetch` had been called. Restored.
+
+### S9-T1 — Memory scope model (session / project / user)
+- **agent:** Claude (opencode)
+- **time:** 2026-07-30T00:00 → 2026-07-30T00:18
+- **branch:** s9/memory
+- **task(s):** S9-T1
+- **status:** done
+
+**Did**
+- Created `packages/memory/` — new `@bremio/memory` package
+- Defined `MemoryScope` (`"session" | "project" | "user"`), `MemorySource` (session/manual/proposal/import), `MemoryEntry`, `ScopeConfig`, `MemoryVisibility`, `MemoryPersistence`
+- `SCOPE_CONFIG` maps each scope to its characteristics: session = ephemeral+transient, project = shared+persistent (`.bremio/memory/project`), user = private+persistent (`memory/user`)
+- `getScopeConfig()` with guard for unknown scopes; `resolveStorageDir()` helper
+- Added `@bremio/memory` to `tsconfig.base.json` paths and `vitest.config.ts` aliases
+- 20 tests covering: three scopes exist, config characteristics per scope, getScopeConfig happy+guard, resolveStorageDir, MemoryEntry construction with all source kinds and scopes
+
+**Decided**
+- Memory is a standalone `@bremio/memory` package (not part of adapter-sdk) — it doesn't depend on adapters and its consumers (orchestrator, daemon) are separate packages
+- Storage paths: session → in-memory (empty storageDir), project → `.bremio/memory/project` (repo-local, git-shareable per Q5), user → `memory/user` (relative to user config dir, private)
+- `MemoryScope` is a union type, not an enum — follows the repo's existing type style (cf. `ControlMode`, `ActionClass`)
+
+**Verification**
+- `corepack pnpm typecheck` — clean
+- `corepack pnpm vitest run packages/memory/src/types.test.ts` — 20 tests pass
+- `corepack pnpm test` — 925 tests pass (70 files, +20 memory tests)
+- Red-check A: removed `getScopeConfig` unknown-scope guard → "throws for an unknown scope" fails (returns undefined instead of throwing). Restored.

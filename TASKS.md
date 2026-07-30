@@ -180,7 +180,7 @@ The tools themselves are dormant, and their consumers are Sprint 9+ work.
 
 | ✓ | ID | Task | Size | Depends on |
 |---|---|---|---|---|
-| [ ] | S9-T1 | Memory scope model (session / project / user) | S | — |
+| [x] | S9-T1 | Memory scope model (session / project / user) | S | — |
 | [ ] | S9-T2 | Storage + retrieval with provenance | M | S9-T1 |
 | [ ] | S9-T3 | Proposal → review → store lifecycle | L | S9-T2 |
 | [ ] | S9-T4 | Injection under a token budget | M | S9-T3 |
