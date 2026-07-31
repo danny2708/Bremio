@@ -362,29 +362,78 @@ export function renderDiffViewer(diff: { stat: string; patch: string }): string 
     ? '<div class="diff-stat">' + esc(diff.stat).replace(/\n/g, "<br>") + "</div>"
     : "";
 
-  const lines = diff.patch.split("\n");
-  let patchHtml = "";
-  for (const line of lines) {
+  const highlight = (line: string): string => {
     if (line.startsWith("+") && !line.startsWith("+++")) {
-      patchHtml += '<div class="diff-add">' + esc(line) + "</div>";
-    } else if (line.startsWith("-") && !line.startsWith("---")) {
-      patchHtml += '<div class="diff-remove">' + esc(line) + "</div>";
-    } else if (line.startsWith("@")) {
-      patchHtml += '<div class="diff-hunk">' + esc(line) + "</div>";
-    } else if (line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("---") || line.startsWith("+++")) {
-      patchHtml += '<div class="diff-meta">' + esc(line) + "</div>";
-    } else {
-      patchHtml += "<div>" + esc(line) + "</div>";
+      return '<div class="diff-add">' + esc(line) + "</div>";
     }
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      return '<div class="diff-remove">' + esc(line) + "</div>";
+    }
+    if (line.startsWith("@")) return '<div class="diff-hunk">' + esc(line) + "</div>";
+    if (
+      line.startsWith("diff --git") || line.startsWith("index ")
+      || line.startsWith("---") || line.startsWith("+++")
+    ) {
+      return '<div class="diff-meta">' + esc(line) + "</div>";
+    }
+    return "<div>" + esc(line) + "</div>";
+  };
+
+  // Split the patch per file so each one can be applied or reverted on its
+  // own (S10-T5). The post-image path is taken from the `diff --git a/x b/y`
+  // header rather than by splitting on whitespace, which loses paths that
+  // contain spaces — the same parsing the workspace package settled on.
+  const fileOf = (line: string): string | undefined => {
+    if (!line.startsWith("diff --git ")) return undefined;
+    const rest = line.slice("diff --git ".length);
+    if (!rest.startsWith("a/")) return undefined;
+    const marker = " b/";
+    for (let i = rest.indexOf(marker); i !== -1; i = rest.indexOf(marker, i + 1)) {
+      if (rest.slice(2, i) === rest.slice(i + marker.length)) return rest.slice(i + marker.length);
+    }
+    const last = rest.lastIndexOf(marker);
+    return last === -1 ? undefined : rest.slice(last + marker.length);
+  };
+
+  const sections: Array<{ file?: string; html: string }> = [];
+  let current: { file?: string; html: string } | undefined;
+  for (const line of diff.patch.split("\n")) {
+    const file = fileOf(line);
+    if (file !== undefined) {
+      current = { file, html: "" };
+      sections.push(current);
+    } else if (!current) {
+      // A patch with no `diff --git` header at all: one unnamed section, whole
+      // run only. Offering per-file buttons here would name files we cannot
+      // identify.
+      current = { html: "" };
+      sections.push(current);
+    }
+    current.html += highlight(line);
   }
+
+  const fileButtons = (file: string): string =>
+    '<div class="diff-file-actions">'
+    + '<button class="ghost" data-action="apply-diff" data-file="' + esc(file) + '">Apply file</button>'
+    + '<button class="ghost" data-action="revert-diff" data-file="' + esc(file) + '">Revert file</button>'
+    + "</div>";
+
+  const body = sections.map((section) => {
+    if (!section.file) return '<pre class="diff-patch">' + section.html + "</pre>";
+    return '<details class="diff-file" open>'
+      + "<summary>" + esc(section.file) + "</summary>"
+      + fileButtons(section.file)
+      + '<pre class="diff-patch">' + section.html + "</pre>"
+      + "</details>";
+  }).join("");
 
   return '<div class="diff-viewer">'
     + '<div class="diff-header"><span class="card-title">Diff</span></div>'
     + statHtml
-    + '<pre class="diff-patch">' + patchHtml + "</pre>"
+    + body
     + '<div class="row" style="margin-top:8px">'
-    + '<button class="ghost" data-action="apply-diff">Apply</button>'
-    + '<button class="ghost" data-action="revert-diff">Revert</button>'
+    + '<button class="ghost" data-action="apply-diff">Apply all</button>'
+    + '<button class="ghost" data-action="revert-diff">Revert all</button>'
     + '<div class="spacer"></div>'
     + '<button class="ghost" data-action="back-to-gate">Back</button>'
     + "</div></div>";
@@ -847,6 +896,7 @@ pre.log {
  * and --bremio-accent-muted was never defined, leaving warn with no fill. */
 .banner.warn { background: color-mix(in srgb, var(--bremio-accent) 16%, transparent); color: var(--bremio-accent-hover); }
 .banner.bad { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+.banner.ok { background: color-mix(in srgb, var(--ok, #3fb950) 14%, transparent); color: var(--ok, #3fb950); }
 
 /* Session transcript: a conversation, so the two speakers are visually
  * distinct and the agent's answer is the most prominent thing on screen.
@@ -896,6 +946,24 @@ pre.log {
 .process summary { cursor: pointer; }
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
+
+/* The checked-out branch. Apply and merge act relative to it, so it belongs
+ * where the user can see it without going looking. */
+.branch-label {
+  font-size: 11px; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1px 8px; max-width: 180px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.branch-label.detached { color: var(--danger); border-color: var(--danger); }
+
+/* Per-file sections inside the diff viewer. */
+.diff-file { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; }
+.diff-file > summary {
+  cursor: pointer; padding: 5px 8px; font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px; background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.diff-file-actions { display: flex; gap: 6px; padding: 6px 8px 0; }
+.diff-file .diff-patch { margin: 0; border: 0; }
 
 /* Runs in flight, and who is working inside them. */
 .active-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
@@ -995,7 +1063,7 @@ pre.log {
     <div class="tagline">Different minds. One team.</div>
   </div>
   <div class="spacer"></div>
-  <div class="row"><span class="status-dot" id="daemon-dot"></span><span class="muted" id="daemon-status">connecting…</span><button class="ghost" id="reconnect" style="display:none">Reconnect</button></div>
+  <div class="row"><span class="branch-label" id="repo-branch" style="display:none"></span><span class="status-dot" id="daemon-dot"></span><span class="muted" id="daemon-status">connecting…</span><button class="ghost" id="reconnect" style="display:none">Reconnect</button></div>
 </header>
 
 <nav>
@@ -1243,6 +1311,24 @@ window.addEventListener("message", (event) => {
   if (message.type === "activeRuns") {
     $("active-runs").innerHTML = renderActiveRuns(message.active);
   }
+  if (message.type === "repoState") {
+    const state = message.repoState || {};
+    const label = $("repo-branch");
+    // Nothing rather than something stale: apply and merge act relative to the
+    // checked-out branch, so a wrong label here is worse than an absent one.
+    if (state.detached) {
+      label.textContent = "detached HEAD";
+      label.className = "branch-label detached";
+      label.style.display = "";
+    } else if (state.branch) {
+      label.textContent = state.branch;
+      label.className = "branch-label";
+      label.style.display = "";
+    } else {
+      label.textContent = "";
+      label.style.display = "none";
+    }
+  }
   if (message.type === "sessions") {
     $("tab-sessions").innerHTML = renderSessionList(message.sessions);
   }
@@ -1336,16 +1422,31 @@ window.addEventListener("message", (event) => {
   }
   if (message.type === "applyResult" || message.type === "revertResult") {
     const verb = message.type === "applyResult" ? "apply" : "revert";
-    const cls = message.ok ? "warn" : "bad";
-    let html = '<div class="banner ' + cls + '">' + escapeHtml(message.detail) + "</div>";
+    let html = '<div class="banner ' + (message.ok ? "ok" : "bad") + '">' + escapeHtml(message.detail) + "</div>";
+    // Where --force put the user's overwritten edits. The CLI has printed this
+    // since the S5 review; the panel dropped it, and the panel is the surface
+    // where force is one click away.
+    if (message.recoveryPatch) {
+      html += '<div class="banner warn">Your overwritten changes were saved to '
+        + escapeHtml(message.recoveryPatch)
+        + " — restore them with: git apply " + escapeHtml(message.recoveryPatch) + "</div>";
+    }
     if (message.conflictedFiles && message.conflictedFiles.length > 0) {
       html += '<div class="card" style="margin-top:8px"><span class="card-title">Conflicting files</span>';
       for (const cf of message.conflictedFiles) {
         const label = cf.status === "user_modified" ? "modified by you" : cf.status === "user_deleted" ? "deleted by you" : cf.status;
         html += '<div class="row muted" style="font-size:11px">- ' + escapeHtml(cf.file) + ' (' + label + ')</div>';
       }
+      // Carry the file through. Without it, overwriting after a *per-file*
+      // conflict would force the whole run — escalating a one-file action into
+      // every file, which is the opposite of what the user asked for.
+      const fileAttr = message.filePath
+        ? ' data-file="' + escapeHtml(message.filePath) + '"'
+        : "";
+      const scope = message.filePath ? escapeHtml(message.filePath) : "all files";
       html += '<div class="row" style="margin-top:8px">'
-        + '<button class="ghost" data-action="force-' + verb + '-diff">Overwrite & ' + verb + '</button>'
+        + '<button class="ghost" data-action="force-' + verb + '-diff"' + fileAttr + '>'
+        + "Overwrite &amp; " + verb + " " + scope + "</button>"
         + '</div></div>';
     }
     $("gate").insertAdjacentHTML("beforeend", html);
@@ -1945,7 +2046,9 @@ document.addEventListener("click", (event) => {
       : button.dataset.action === "force-apply-diff" ? "forceApplyDiff"
       : button.dataset.action === "force-revert-diff" ? "forceRevertDiff"
       : "revertDiff";
-    vscode.postMessage({ type, runId });
+    // Absent on the whole-run buttons, which is what tells the daemon to take
+    // the entire patch rather than one file of it.
+    vscode.postMessage({ type, runId, filePath: button.dataset.file });
     return;
   }
   const runId = button.dataset.run;

@@ -2276,3 +2276,46 @@ Rules:
 - `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.3.0`).
 - Red-check A: stopped clearing tasks on `task-complete` → "counts a task as in flight from its start until its completion" failed with `expected [ 'T1', 'T2' ] to deeply equal [ 'T2' ]` — finished work would have been reported as still running forever. Restored.
 - Red-check B: defaulted a task's agent to the run's lead → "reports a task whose agent the events never named" failed with `expected 'mock' to be undefined`. Restored.
+
+### S10-T5 — Per-file apply / revert in the panel
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-31T15:35 → 2026-07-31T15:50
+- **branch:** main
+- **task(s):** S10-T5
+- **status:** done
+
+**Did**
+- Split the diff viewer per file, each with its own Apply/Revert carrying `data-file`; the whole-run buttons became "Apply all" / "Revert all".
+- Threaded `filePath` through the panel message, `applyDiff`/`revertDiff` and the client. The daemon and CLI have accepted it since S5-T5 — the panel simply never sent one.
+- Surfaced `recoveryPatch` in the panel. The CLI has printed it since the S5 review; the panel dropped it, and the panel is the surface where force is one click away.
+
+**Decided**
+- **The "Overwrite & apply" button now carries the file it came from.** Without it, forcing after a *per-file* conflict would force the whole run — escalating a one-file action into every file. Found while wiring the conflict card, not by a test; the test came after.
+- **A patch with no `diff --git` header gets no per-file buttons.** The file cannot be identified, and offering a button that names one would invent it.
+- Parsed the header the way `packages/workspace` settled on rather than splitting on whitespace, so a path containing spaces survives.
+- Fixed a successful apply rendering as a `warn` banner. There was no `.banner.ok`; added one.
+
+**Verification**
+- `corepack pnpm typecheck` — clean; `corepack pnpm release:check` — PASS.
+- `corepack pnpm test` — 1160 passed / 85 files.
+- Red-check: dropped `data-file` from the per-file Apply → "gives every file in the patch its own apply and revert" failed. That is the whole feature silently becoming whole-run.
+
+### S10-T9 — Surface the current git branch
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-31T15:50 → 2026-08-01T16:05
+- **branch:** main
+- **task(s):** S10-T9
+- **status:** done
+
+**Did**
+- `GET /repo-state?repo=` reports the checked-out branch; the panel shows it in the header.
+- Kept fresh by a `FileSystemWatcher` on `.git/HEAD` — rewritten by every checkout, so it is the exact signal rather than a poll — plus after a merge and on every full refresh.
+
+**Decided**
+- **A detached HEAD is reported as `detached`, not as a branch.** `revparse --abbrev-ref HEAD` answers the literal string `HEAD` when detached, which would have rendered as a branch named "HEAD".
+- **Any failure clears the label rather than leaving the last one.** Apply, revert and merge all act relative to what is checked out, so a stale branch label could let a user approve a merge believing it lands somewhere it does not. Absent beats wrong.
+- The route answers 200 with an `error` field for a non-repository rather than 500 — it is an answer the panel renders, not a server fault.
+
+**Verification**
+- Four route tests: branch, detached, non-repository, missing `repo` (400).
+- Red-check: reported `branch` verbatim → "says a detached HEAD is detached rather than calling it a branch" failed with `expected undefined to be true`.

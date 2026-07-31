@@ -321,6 +321,16 @@ export class BremioClient {
     return this.#call("/active");
   }
 
+  /** The repository's current git state — branch, or a named reason there is none. */
+  repoState(repoPath: string): Promise<{
+    repoPath: string;
+    branch?: string;
+    detached?: boolean;
+    error?: string;
+  }> {
+    return this.#call(`/repo-state?repo=${encodeURIComponent(repoPath)}`);
+  }
+
   capacity(refresh = true): Promise<Record<string, unknown>> {
     return this.#call(`/capacity?refresh=${refresh ? "true" : "false"}`);
   }
@@ -440,7 +450,7 @@ export class BremioClient {
     taskId?: string;
     filePath?: string;
     force?: boolean;
-  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }> }> {
+  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }>; recoveryPatch?: string }> {
     return this.#call("/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -454,7 +464,7 @@ export class BremioClient {
     taskId?: string;
     filePath?: string;
     force?: boolean;
-  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }> }> {
+  }): Promise<{ ok: boolean; output?: string; error?: string; conflictedFiles?: Array<{ file: string; status: string }>; recoveryPatch?: string }> {
     return this.#call("/revert", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

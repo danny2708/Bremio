@@ -31,6 +31,19 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("bremio.stopDaemon", stopDaemon),
     output,
   );
+
+  // `.git/HEAD` is rewritten by every checkout, so it is the exact signal that
+  // the branch changed underneath us — rather than polling, or trusting a
+  // label captured once when the panel opened (S10-T9).
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (folder && typeof vscode.workspace.createFileSystemWatcher === "function") {
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(folder, ".git/HEAD"),
+    );
+    watcher.onDidChange(() => void sendRepoState());
+    watcher.onDidCreate(() => void sendRepoState());
+    context.subscriptions.push(watcher);
+  }
 }
 
 export function deactivate(): void {
@@ -70,6 +83,17 @@ function openPanel(context: vscode.ExtensionContext): void {
 
 function post(message: Record<string, unknown>): void {
   void panel?.webview.postMessage(message);
+}
+
+/**
+ * The file a per-file apply/revert names, or undefined for the whole run.
+ *
+ * An empty string must not become a filePath: the daemon would look for a file
+ * called "" in the patch and refuse, when the user meant the whole diff.
+ */
+function filePathOf(message: Record<string, unknown>): string | undefined {
+  const file = typeof message.filePath === "string" ? message.filePath.trim() : "";
+  return file === "" ? undefined : file;
 }
 
 /**
@@ -240,16 +264,16 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
         await viewDiff(String(message.runId ?? ""));
         return;
       case "applyDiff":
-        await applyDiff(String(message.runId ?? ""));
+        await applyDiff(String(message.runId ?? ""), false, filePathOf(message));
         return;
       case "forceApplyDiff":
-        await applyDiff(String(message.runId ?? ""), true);
+        await applyDiff(String(message.runId ?? ""), true, filePathOf(message));
         return;
       case "forceRevertDiff":
-        await revertDiff(String(message.runId ?? ""), true);
+        await revertDiff(String(message.runId ?? ""), true, filePathOf(message));
         return;
       case "revertDiff":
-        await revertDiff(String(message.runId ?? ""));
+        await revertDiff(String(message.runId ?? ""), false, filePathOf(message));
         return;
       case "merge":
         await merge(String(message.runId ?? ""));
@@ -322,6 +346,7 @@ async function refreshAll(): Promise<void> {
   await sendAdapters();
   await sendRuns();
   await sendActiveRuns();
+  await sendRepoState();
 }
 
 async function sendAdapters(): Promise<void> {
@@ -416,6 +441,25 @@ async function sendRuns(): Promise<void> {
   const repoPath = currentRepo();
   if (!repoPath) return post({ type: "runs", runs: { runs: [], legacyReports: [] } });
   post({ type: "runs", runs: await client.runs(repoPath) });
+}
+
+/**
+ * The repository's current branch (S10-T9).
+ *
+ * Apply, revert and merge all act relative to whatever is checked out, so the
+ * panel showing the wrong branch is worse than showing none — it would let a
+ * user approve a merge believing it lands somewhere it does not. On any
+ * failure the panel is told there is no branch rather than keeping the last
+ * one it saw.
+ */
+async function sendRepoState(): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) return post({ type: "repoState", repoState: {} });
+  try {
+    post({ type: "repoState", repoState: await client.repoState(repoPath) });
+  } catch {
+    post({ type: "repoState", repoState: {} });
+  }
 }
 
 /**
@@ -903,36 +947,61 @@ async function merge(runId: string): Promise<void> {
       : (result.error ?? "merge refused"),
   });
   await sendRuns();
+  // A merge can leave the repository on a different branch than the label the
+  // panel is currently showing.
+  await sendRepoState();
 }
 
-/** Apply a run's stored diff to the working tree. */
-async function applyDiff(runId: string, force = false): Promise<void> {
+/**
+ * Apply a run's stored diff, or just one file of it (S10-T5).
+ *
+ * The daemon and CLI have taken a `filePath` since S5-T5; the panel simply
+ * never sent one, so its Apply was all-or-nothing.
+ */
+async function applyDiff(runId: string, force = false, filePath?: string): Promise<void> {
   const repoPath = currentRepo();
   if (!repoPath) throw new Error("no workspace folder is open");
 
-  const result = await client.applyPatch({ repoPath, runId, force });
+  const result = await client.applyPatch({
+    repoPath,
+    runId,
+    force,
+    ...(filePath ? { filePath } : {}),
+  });
   post({
     type: "applyResult",
     ok: result.ok,
+    ...(filePath ? { filePath } : {}),
     detail: result.ok
-      ? "Changes applied."
+      ? `Changes applied${filePath ? ` to ${filePath}` : ""}.`
       : (result.error ?? "apply refused"),
     conflictedFiles: result.conflictedFiles,
+    // Where `--force` put the user's overwritten edits. The CLI has printed
+    // this since the S5 review; the panel silently dropped it, which is the
+    // surface where force is one click away.
+    recoveryPatch: result.recoveryPatch,
   });
 }
 
-/** Revert a run's stored diff from the working tree. */
-async function revertDiff(runId: string, force = false): Promise<void> {
+/** Revert a run's stored diff, or just one file of it (S10-T5). */
+async function revertDiff(runId: string, force = false, filePath?: string): Promise<void> {
   const repoPath = currentRepo();
   if (!repoPath) throw new Error("no workspace folder is open");
 
-  const result = await client.revertPatch({ repoPath, runId, force });
+  const result = await client.revertPatch({
+    repoPath,
+    runId,
+    force,
+    ...(filePath ? { filePath } : {}),
+  });
   post({
     type: "revertResult",
     ok: result.ok,
+    ...(filePath ? { filePath } : {}),
     detail: result.ok
-      ? "Changes reverted."
+      ? `Changes reverted${filePath ? ` from ${filePath}` : ""}.`
       : (result.error ?? "revert refused"),
     conflictedFiles: result.conflictedFiles,
+    recoveryPatch: result.recoveryPatch,
   });
 }

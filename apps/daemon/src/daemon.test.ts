@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { connect } from "node:net";
 import os from "node:os";
@@ -139,6 +140,70 @@ describe("daemon HTTP surface", () => {
   it("404s events for an unknown run", async () => {
     const handle = await daemon();
     expect((await call(handle, "/runs/does-not-exist/events")).status).toBe(404);
+  });
+
+  it("reports the repository's current branch", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-branch-"));
+    cleanups.push(async () => {
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
+    });
+    const git = (args: string[]) => execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+    git(["init", "-q", "-b", "trunk"]);
+    git(["config", "user.email", "t@bremio.local"]);
+    git(["config", "user.name", "Bremio Test"]);
+    await fs.writeFile(path.join(dir, "README.md"), "x\n");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "init"]);
+
+    const handle = await daemon();
+    const response = await call(handle, `/repo-state?repo=${encodeURIComponent(dir)}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ branch: "trunk" });
+  }, 20_000);
+
+  it("says a detached HEAD is detached rather than calling it a branch", async () => {
+    // `revparse --abbrev-ref HEAD` answers the literal string "HEAD" when
+    // detached, which would render as a branch named HEAD.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-detached-"));
+    cleanups.push(async () => {
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
+    });
+    const git = (args: string[]) => execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+    git(["init", "-q", "-b", "main"]);
+    git(["config", "user.email", "t@bremio.local"]);
+    git(["config", "user.name", "Bremio Test"]);
+    await fs.writeFile(path.join(dir, "README.md"), "x\n");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "init"]);
+    git(["checkout", "-q", "--detach", "HEAD"]);
+
+    const handle = await daemon();
+    const body = (await (await call(handle, `/repo-state?repo=${encodeURIComponent(dir)}`)).json()) as {
+      branch?: string;
+      detached?: boolean;
+    };
+    expect(body.detached).toBe(true);
+    expect(body.branch).toBeUndefined();
+  }, 20_000);
+
+  it("names the problem instead of inventing a branch for a non-repository", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-norepo-"));
+    cleanups.push(async () => {
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
+    });
+
+    const handle = await daemon();
+    const body = (await (await call(handle, `/repo-state?repo=${encodeURIComponent(dir)}`)).json()) as {
+      branch?: string;
+      error?: string;
+    };
+    expect(body.branch).toBeUndefined();
+    expect(body.error).toBeTruthy();
+  }, 20_000);
+
+  it("requires a repo to report state for", async () => {
+    const handle = await daemon();
+    expect((await call(handle, "/repo-state")).status).toBe(400);
   });
 
   it("serves an empty active list on an idle daemon", async () => {

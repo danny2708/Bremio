@@ -14,7 +14,7 @@ import {
   refreshAqtIfAvailable,
   toAqtCapacitySnapshots,
 } from "@bremio/quota";
-import { MergeManager } from "@bremio/workspace";
+import { MergeManager, getCurrentBranch } from "@bremio/workspace";
 import { RunRegistry, createDefaultPluginManager, type SessionEvent } from "./runs";
 import { isTerminal, type CreateContextItemInput, type PersistedContextItem } from "./storage";
 import { mergeRun } from "./merge";
@@ -222,6 +222,27 @@ async function handle(
   // another window is exactly the one a user does not otherwise know about.
   if (method === "GET" && route === "/active") {
     return sendJson(res, 200, { active: registry.activeRuns() });
+  }
+
+  // The repository's current git state (S10-T9). Apply, revert and merge all
+  // act relative to the checked-out branch, so the panel has to be able to
+  // show which one that is rather than leaving the user to assume.
+  if (method === "GET" && route === "/repo-state") {
+    const repoPath = url.searchParams.get("repo");
+    if (!repoPath) return sendJson(res, 400, { error: "repo is required" });
+    try {
+      const branch = await getCurrentBranch(repoPath);
+      // `revparse --abbrev-ref HEAD` answers "HEAD" in a detached checkout.
+      // Reporting that verbatim would read as a branch called HEAD.
+      return sendJson(res, 200, {
+        repoPath,
+        ...(branch === "HEAD" ? { detached: true } : { branch }),
+      });
+    } catch (err) {
+      // Not a git repository, or git is unavailable. A named refusal beats a
+      // stale or invented branch, since merge acts relative to this.
+      return sendJson(res, 200, { repoPath, error: (err as Error).message });
+    }
   }
 
   const runEvents = /^\/runs\/([^/]+)\/events$/.exec(route);

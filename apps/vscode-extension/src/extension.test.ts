@@ -15,6 +15,14 @@ vi.mock("vscode", () => ({
   workspace: {
     workspaceFolders: undefined,
     getConfiguration: vi.fn(() => ({ get: vi.fn(() => true) })),
+    createFileSystemWatcher: vi.fn(() => ({
+      onDidChange: vi.fn(),
+      onDidCreate: vi.fn(),
+      dispose: vi.fn(),
+    })),
+  },
+  RelativePattern: class {
+    constructor(readonly base: unknown, readonly pattern: string) {}
   },
   commands: { registerCommand: vi.fn() },
   Uri: { file: vi.fn((p: string) => ({ fsPath: p, scheme: "file", path: p })) },
