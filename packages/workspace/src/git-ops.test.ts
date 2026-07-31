@@ -108,6 +108,66 @@ describe("GitOps.stage", () => {
   });
 });
 
+describe("GitOps branches", () => {
+  it("lists local branches and marks the checked-out one", async () => {
+    git(["branch", "feature"]);
+    const branches = await new GitOps(repo).branches();
+
+    expect(branches.map((b) => b.name).sort()).toEqual(["feature", "main"]);
+    expect(branches.find((b) => b.current)?.name).toBe("main");
+  });
+
+  it("creates a branch and switches to it", async () => {
+    await new GitOps(repo).createBranch("feature/new");
+    expect((await new GitOps(repo).status()).branch).toBe("feature/new");
+  });
+
+  it("refuses to create a branch that already exists", async () => {
+    // "Create" and "move to the one already there" are different intentions;
+    // the second would quietly adopt someone else's history.
+    git(["branch", "taken"]);
+    await expect(new GitOps(repo).createBranch("taken")).rejects.toThrow(/already exists/);
+  });
+
+  it("switches when the tree is clean", async () => {
+    git(["branch", "other"]);
+    await new GitOps(repo).switchBranch("other");
+    expect((await new GitOps(repo).status()).branch).toBe("other");
+  });
+
+  it("refuses to switch with uncommitted changes, and names them", async () => {
+    // Git would carry the changes across for many switches. That is the
+    // behaviour to avoid, not inherit: work started against one branch
+    // silently becomes work against another.
+    git(["branch", "other"]);
+    await write("README.md", "work in progress\n");
+
+    const error = await new GitOps(repo).switchBranch("other").catch((e: Error) => e);
+
+    expect(error).toBeInstanceOf(GitOpsError);
+    expect((error as Error).message).toContain("README.md");
+    expect((error as Error).message).toMatch(/commit or stash/i);
+    // And it really did not move.
+    expect((await new GitOps(repo).status()).branch).toBe("main");
+  });
+
+  it("allows a switch when the only changes are untracked", async () => {
+    // An untracked file is not attached to any branch, so carrying it across
+    // loses nothing and blocking on it would be needless.
+    git(["branch", "other"]);
+    await write("scratch.txt", "not tracked\n");
+
+    await new GitOps(repo).switchBranch("other");
+
+    expect((await new GitOps(repo).status()).branch).toBe("other");
+  });
+
+  it("refuses a blank branch name", async () => {
+    await expect(new GitOps(repo).switchBranch("  ")).rejects.toThrow(/name is required/);
+    await expect(new GitOps(repo).createBranch("")).rejects.toThrow(/name is required/);
+  });
+});
+
 describe("GitOps.commit", () => {
   it("commits what is staged and reports the hash", async () => {
     await write("a.txt", "a\n");

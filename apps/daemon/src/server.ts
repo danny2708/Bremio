@@ -267,6 +267,32 @@ async function handle(
     }
   }
 
+  // Branches: list, create, switch (S10-T11).
+  if (method === "GET" && route === "/git/branches") {
+    const repoPath = url.searchParams.get("repo");
+    if (!repoPath) return sendJson(res, 400, { error: "repo is required" });
+    try {
+      return sendJson(res, 200, { branches: await new GitOps(repoPath).branches() });
+    } catch (err) {
+      return sendJson(res, 200, { branches: [], error: (err as Error).message });
+    }
+  }
+
+  if (method === "POST" && route === "/git/branch") {
+    const body = (await readJsonBody(req)) as { repo?: string; name?: string; create?: boolean };
+    if (!body.repo) return sendJson(res, 400, { error: "repo is required" });
+    try {
+      const ops = new GitOps(body.repo);
+      if (body.create) await ops.createBranch(String(body.name ?? ""));
+      else await ops.switchBranch(String(body.name ?? ""));
+      return sendJson(res, 200, { ok: true, branches: await ops.branches() });
+    } catch (err) {
+      // "uncommitted changes block this" is an answer the panel renders, and
+      // it names the files, so 200 with an error beats a 500.
+      return sendJson(res, 200, { ok: false, error: (err as Error).message });
+    }
+  }
+
   // The repository's current git state (S10-T9). Apply, revert and merge all
   // act relative to the checked-out branch, so the panel has to be able to
   // show which one that is rather than leaving the user to assume.

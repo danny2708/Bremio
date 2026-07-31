@@ -122,6 +122,78 @@ export class GitOps {
     await this.git.raw(["restore", "--staged", "--", ...paths]);
   }
 
+  /** Local branches, newest commit first, with the checked-out one marked. */
+  async branches(): Promise<Array<{ name: string; current: boolean }>> {
+    const raw = await this.git.raw([
+      "for-each-ref",
+      "--sort=-committerdate",
+      "--format=%(refname:short)%09%(HEAD)",
+      "refs/heads",
+    ]);
+    return raw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [name, head] = line.split("\t");
+        return { name: name ?? line, current: head === "*" };
+      });
+  }
+
+  /**
+   * Move to another branch, or refuse and say what is in the way.
+   *
+   * Git would happily carry uncommitted changes across for many switches, and
+   * that is the behaviour to avoid rather than inherit: work started against
+   * one branch silently becomes work against another, and the user finds out
+   * when they commit it to the wrong place. Refusing names the files, so the
+   * next step (commit, stash, discard) is the user's to choose.
+   */
+  async switchBranch(name: string): Promise<void> {
+    if (!name.trim()) throw new GitOpsError("a branch name is required");
+
+    const blocking = (await this.status()).entries
+      .filter((entry) => !entry.untracked)
+      .map((entry) => entry.path);
+    const unique = [...new Set(blocking)];
+    if (unique.length > 0) {
+      throw new GitOpsError(
+        `cannot switch branches with uncommitted changes to ${unique.length} file(s): ` +
+          `${unique.slice(0, 5).join(", ")}${unique.length > 5 ? ", …" : ""}. ` +
+          "Commit or stash them first.",
+      );
+    }
+
+    await this.git.raw(["checkout", name]);
+  }
+
+  /**
+   * Create a branch from the current HEAD and switch to it.
+   *
+   * Refuses a name that already exists rather than silently switching to it:
+   * "create" and "move to the one that is already there" are different
+   * intentions, and the second would quietly adopt someone else's history.
+   */
+  async createBranch(name: string): Promise<void> {
+    if (!name.trim()) throw new GitOpsError("a branch name is required");
+    if (await this.branchExists(name)) {
+      throw new GitOpsError(`branch "${name}" already exists — switch to it instead`);
+    }
+    await this.git.raw(["checkout", "-b", name]);
+  }
+
+  /**
+   * Whether a local branch of this name exists.
+   *
+   * Asks `branches()` rather than `rev-parse --verify --quiet`: with `--quiet`
+   * git reports a missing ref by exit code alone and writes nothing to stderr,
+   * which simple-git does not surface as a rejection — so the check answered
+   * "exists" for every name, including ones it was about to create.
+   */
+  private async branchExists(name: string): Promise<boolean> {
+    return (await this.branches()).some((branch) => branch.name === name);
+  }
+
   /**
    * Commit what is staged.
    *

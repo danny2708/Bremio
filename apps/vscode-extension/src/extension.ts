@@ -268,6 +268,9 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
       case "gitCommit":
         await gitCommit(String(message.message ?? ""));
         return;
+      case "gitBranch":
+        await gitBranch(String(message.name ?? ""), message.create === true);
+        return;
       case "openSession":
         if (typeof message.sessionId === "string") await sendSessionDetail(message.sessionId);
         return;
@@ -460,15 +463,45 @@ async function sendRuns(): Promise<void> {
   post({ type: "runs", runs: await client.runs(repoPath) });
 }
 
-/** Working-tree status for the Git tab (S10-T10). */
+/** Working-tree status and branches for the Git tab (S10-T10, S10-T11). */
 async function sendGitStatus(): Promise<void> {
   const repoPath = currentRepo();
   if (!repoPath) return post({ type: "gitStatus", git: { entries: [] } });
   try {
-    post({ type: "gitStatus", git: await client.gitStatus(repoPath) });
+    const [git, branchList] = await Promise.all([
+      client.gitStatus(repoPath),
+      client.gitBranches(repoPath).catch(() => ({ branches: [] })),
+    ]);
+    post({ type: "gitStatus", git: { ...git, branches: branchList.branches } });
   } catch (err) {
     post({ type: "gitStatus", git: { entries: [], error: (err as Error).message } });
   }
+}
+
+/**
+ * Create a branch, or move to one (S10-T11).
+ *
+ * A refusal here is expected traffic, not a fault: switching with uncommitted
+ * changes is exactly what this must not do silently, so the daemon's named
+ * reason is surfaced verbatim.
+ */
+async function gitBranch(name: string, create: boolean): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) throw new Error("no workspace folder is open");
+  if (!name.trim()) {
+    post({ type: "gitResult", ok: false, detail: "Enter a branch name first." });
+    return;
+  }
+  const result = await client.gitBranch({ repo: repoPath, name: name.trim(), create });
+  post({
+    type: "gitResult",
+    ok: result.ok,
+    detail: result.ok
+      ? `${create ? "Created and switched to" : "Switched to"} ${name.trim()}.`
+      : (result.error ?? "branch change refused"),
+  });
+  await sendGitStatus();
+  await sendRepoState();
 }
 
 /**

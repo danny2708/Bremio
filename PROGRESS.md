@@ -2347,3 +2347,27 @@ Rules:
 
 **Note — repository root wiped mid-task**
 All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.json`, `pnpm-lock.yaml`, …) were deleted from the working tree by something outside this session, between a passing test run and the next typecheck. Nothing under `apps/` or `packages/` was touched. Restored path-by-path from HEAD so in-flight edits survived; nothing was lost, since deleted files hold no uncommitted content. **This is the second occurrence** — the same state appears in the git snapshot at the start of this session. Worth finding the cause: if it lands while files are staged, recovery is messier.
+
+### S10-T11 — Git: create and switch branches
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-08-01T20:42 → 2026-08-01T20:55
+- **branch:** main
+- **task(s):** S10-T11
+- **status:** done
+
+**Did**
+- `GitOps.branches()`, `switchBranch()`, `createBranch()`; daemon routes `GET /git/branches` and `POST /git/branch`; a branch bar in the Git tab (picker + Switch, name box + Create).
+- 7 more tests in `git-ops.test.ts`, all against a real repository.
+
+**Decided**
+- **A switch with uncommitted tracked changes is refused, and the refusal names the files.** Git would carry them across for many switches, and that is the behaviour to avoid rather than inherit: work started against one branch silently becomes work against another, and the user finds out when they commit it somewhere wrong. Naming the files leaves the next step — commit, stash, discard — to them.
+- **Untracked files do not block a switch.** They are attached to no branch, so carrying them across loses nothing and refusing would be needless friction.
+- **Creating a branch that already exists is refused rather than treated as a switch.** "Create" and "move to the one already there" are different intentions, and silently doing the second would adopt someone else's history under the name the user thought they were making.
+- Branch-change refusals are 200-with-error, not 500: "uncommitted changes block this" is an answer the panel renders.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 1178 passed / 87 files (was 1171 / 86).
+- `corepack pnpm release:check` — PASS.
+- Red-check: disabled the dirty-tree guard → "refuses to switch with uncommitted changes, and names them" failed with `expected undefined to be an instance of GitOpsError`. Restored.
+- **Bug found and fixed while testing.** `branchExists` used `rev-parse --verify --quiet`, which reports a missing ref by exit code alone and writes nothing to stderr — simple-git does not surface that as a rejection, so the check answered "exists" for *every* name, and creating any new branch was refused. It now asks `branches()`. Caught by "creates a branch and switches to it", which failed on a branch that had just been created for the first time.

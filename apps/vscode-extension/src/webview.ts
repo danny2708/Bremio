@@ -1590,11 +1590,29 @@ function renderGitPanel(git) {
       + "</div>";
   };
 
+  const branches = git.branches || [];
+  const options = branches
+    .map(function(b) {
+      return '<option value="' + escapeHtml(b.name) + '"' + (b.current ? " selected" : "") + ">"
+        + escapeHtml(b.name) + "</option>";
+    })
+    .join("");
+  const branchBar = branches.length > 0
+    ? '<div class="section-label">Branch</div>'
+      + '<div class="row" style="margin-bottom:12px">'
+      + '<select id="git-branch-select">' + options + "</select>"
+      + '<button class="ghost" data-action="git-switch">Switch</button>'
+      + '<input id="git-branch-new" type="text" placeholder="new branch name">'
+      + '<button class="ghost" data-action="git-create-branch">Create</button>'
+      + "</div>"
+    : "";
+
   return '<div class="row" style="margin-bottom:10px">'
     + '<span class="section-label">Changes on ' + escapeHtml(git.branch || (git.detached ? "detached HEAD" : "?")) + "</span>"
     + '<div class="spacer"></div>'
     + '<button class="ghost" data-action="git-refresh">Refresh</button>'
     + "</div>"
+    + branchBar
     + section("Staged", staged, "unstage", "Unstage selected")
     + section("Changes", unstaged, "stage", "Stage selected")
     + '<div class="section-label">Commit</div>'
@@ -2138,6 +2156,17 @@ document.addEventListener("click", (event) => {
           .map((box) => box.dataset.gitPath)
       : [];
     vscode.postMessage({ type: "gitStage", paths, unstage });
+    return;
+  }
+  if (button.dataset.action === "git-switch") {
+    const select = $("git-branch-select");
+    vscode.postMessage({ type: "gitBranch", name: select ? select.value : "", create: false });
+    return;
+  }
+  if (button.dataset.action === "git-create-branch") {
+    const box = $("git-branch-new");
+    vscode.postMessage({ type: "gitBranch", name: box ? box.value : "", create: true });
+    if (box) box.value = "";
     return;
   }
   if (button.dataset.action === "git-commit") {
