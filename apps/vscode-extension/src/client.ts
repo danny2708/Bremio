@@ -303,6 +303,24 @@ export class BremioClient {
     return this.#call("/adapters");
   }
 
+  /** Runs in flight across every repository, with who is working on what. */
+  activeRuns(): Promise<{
+    active: Array<{
+      runId: string;
+      sessionId?: string;
+      repositoryPath: string;
+      mode: "single" | "team";
+      status: string;
+      prompt: string;
+      startedAt?: string;
+      leadProvider?: string;
+      workerProviders: string[];
+      tasksInFlight: Array<{ taskId: string; title: string; agentId?: string; since: number }>;
+    }>;
+  }> {
+    return this.#call("/active");
+  }
+
   capacity(refresh = true): Promise<Record<string, unknown>> {
     return this.#call(`/capacity?refresh=${refresh ? "true" : "false"}`);
   }

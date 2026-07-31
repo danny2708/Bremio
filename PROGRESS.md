@@ -2250,3 +2250,29 @@ Rules:
 - `corepack pnpm test` — 1143 passed / 83 files (was 1133 / 82).
 - `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.3.0`).
 - Red-check: stopped seeding the checklist from `plan.tasks` (kept only tasks with events) → four tests failed, including "lists every planned task, including ones that have not started" with `expected [ 'TASK-001' ] to deeply equal [ 'TASK-001', 'TASK-002', 'TASK-003' ]`. That is the checklist degenerating into the lane view, which is exactly the thing it exists not to be. Restored.
+
+### S10-T4 — Which workers are running, right now
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-31T15:00 → 2026-07-31T15:30
+- **branch:** main
+- **task(s):** S10-T4
+- **status:** done
+
+**Did**
+- `RunRegistry.activeRuns()` returns every in-flight run with its mode, status, prompt, lead, workers and the tasks currently in flight (task id, title, agent, start time).
+- `GET /active` serves it; `daemon-client` and the extension client both expose it; the Runs tab shows a "Working now" section above the run list, polled every 2s **only while that tab is visible**.
+- Tests: 5 in `active-runs.test.ts` driving a real run through the injectable adapter factory (blocking adapter, so a run can be observed mid-flight), plus a route test.
+
+**Decided**
+- **Derived from the run's own events, not a parallel in-memory map.** A second copy of "what is each agent doing" is a copy that can disagree with the transcript — and the transcript is what the user reads afterwards. `#tasksInFlight` replays task-start/task-complete from the store, so the live view and the history cannot diverge by construction.
+- **`pending_approval` runs are included, labelled `review`.** Their execution really is still alive, blocked on a human. Hiding them would make a run that is waiting for *you* look like one that finished — the opposite of the intended message.
+- **Not filtered by repository.** A run started from another VS Code window is exactly the one the user has no other way of knowing about; filtering would let two windows drive one daemon while each believed it was idle.
+- **A task whose events never named an agent is reported without one.** Falling back to the lead would put a name in the UI the events never supported. Red-checked, because that fallback is a one-line "improvement" someone will otherwise add.
+- Polling stops when the tab is hidden. A hidden panel polling a daemon forever is a cost with no reader.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 1149 passed / 84 files (was 1143 / 83).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.3.0`).
+- Red-check A: stopped clearing tasks on `task-complete` → "counts a task as in flight from its start until its completion" failed with `expected [ 'T1', 'T2' ] to deeply equal [ 'T2' ]` — finished work would have been reported as still running forever. Restored.
+- Red-check B: defaulted a task's agent to the run's lead → "reports a task whose agent the events never named" failed with `expected 'mock' to be undefined`. Restored.

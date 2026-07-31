@@ -897,6 +897,24 @@ pre.log {
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
 
+/* Runs in flight, and who is working inside them. */
+.active-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.active-card {
+  border: 1px solid var(--border); border-left: 2px solid var(--bremio-accent);
+  border-radius: 6px; padding: 8px 10px;
+  background: color-mix(in srgb, var(--bremio-accent) 6%, transparent);
+}
+.active-card.waiting { border-left-color: var(--warn, #d29922); }
+.active-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.active-mode { font-size: 11px; color: var(--muted); }
+.active-agents { font-size: 10px; color: var(--muted); }
+.active-prompt { font-size: 12px; margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.active-tasks { list-style: none; margin: 0; padding: 0; }
+.active-tasks li { display: flex; align-items: baseline; gap: 6px; font-size: 12px; padding: 1px 0; }
+.active-task-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.active-elapsed { flex: 0 0 auto; font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.active-idle { font-size: 11px; color: var(--muted); }
+
 /* The lead's plan for a turn. Reporting only — nothing here is clickable. */
 .plan-checklist { margin: 0 0 10px; font-size: 12px; }
 .plan-checklist > summary { cursor: pointer; color: var(--muted); }
@@ -1047,7 +1065,7 @@ pre.log {
   </section>
 
   <section id="tab-sessions"><div class="empty">Loading sessions…</div></section>
-  <section id="tab-runs"><div class="empty">Loading runs…</div></section>
+  <section id="tab-runs"><div id="active-runs"></div><div id="runs-list"><div class="empty">Loading runs…</div></div></section>
   <section id="tab-capacity"><div class="empty">Loading capacity…</div></section>
   <section id="tab-doctor"><div class="empty">Checking adapters…</div></section>
 </main>
@@ -1060,9 +1078,28 @@ let adapters = [];
 let activeRunId = null;
 
 /** Show a tab without asking the host to reload it. */
+/**
+ * Keep "Working now" current, but only while it is on screen.
+ *
+ * Elapsed times tick and tasks change, so a single fetch on tab open goes
+ * stale within seconds. The interval is cleared the moment another tab is
+ * shown: a hidden panel polling a daemon forever is a cost with no reader.
+ */
+let activePollTimer = null;
+
+function setActivePolling(on) {
+  if (activePollTimer) {
+    clearInterval(activePollTimer);
+    activePollTimer = null;
+  }
+  if (!on) return;
+  activePollTimer = setInterval(() => vscode.postMessage({ type: "refreshActive" }), 2000);
+}
+
 function showTab(tab) {
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll("main section").forEach((s) => s.classList.toggle("active", s.id === "tab-" + tab));
+  setActivePolling(tab === "runs");
 }
 
 document.querySelectorAll("nav button").forEach((button) => {
@@ -1201,7 +1238,10 @@ window.addEventListener("message", (event) => {
     $("tab-capacity").innerHTML = renderCapacityCards(message.capacity);
   }
   if (message.type === "runs") {
-    $("tab-runs").innerHTML = renderRuns(message.runs);
+    $("runs-list").innerHTML = renderRuns(message.runs);
+  }
+  if (message.type === "activeRuns") {
+    $("active-runs").innerHTML = renderActiveRuns(message.active);
   }
   if (message.type === "sessions") {
     $("tab-sessions").innerHTML = renderSessionList(message.sessions);
@@ -1386,6 +1426,60 @@ function annotateThumbDims() {
     if (img.complete) fill();
     else img.addEventListener("load", fill, { once: true });
   }
+}
+
+/**
+ * Who is working right now (S10-T4).
+ *
+ * The panel could previously only say how many runs were active. That is not
+ * enough to read a Co-lab run: two workers with a task each, and one of them
+ * running far longer than the other, is the thing worth seeing — and a run
+ * started from a different window was invisible entirely.
+ */
+function renderActiveRuns(active) {
+  if (!active || active.length === 0) return "";
+
+  const elapsed = (since) => {
+    const seconds = Math.max(0, Math.round((Date.now() - since) / 1000));
+    if (seconds < 60) return seconds + "s";
+    const minutes = Math.floor(seconds / 60);
+    return minutes < 60 ? minutes + "m" : Math.floor(minutes / 60) + "h" + (minutes % 60) + "m";
+  };
+
+  const cards = active.map(function(run) {
+    // A run blocked on a human is active but not working. Saying so is the
+    // difference between "still going" and "waiting for you".
+    const waiting = run.status === "pending_approval";
+    const workers = (run.workerProviders || []).length > 0
+      ? '<span class="active-agents">' + (run.workerProviders || []).map(escapeHtml).join(", ") + "</span>"
+      : "";
+    const tasks = (run.tasksInFlight || []).length > 0
+      ? '<ul class="active-tasks">' + run.tasksInFlight.map(function(task) {
+          return "<li>"
+            + '<span class="active-task-title">' + escapeHtml(task.title) + "</span>"
+            + (task.agentId ? '<span class="plan-agent">' + escapeHtml(task.agentId) + "</span>" : "")
+            + '<span class="active-elapsed">' + escapeHtml(elapsed(task.since)) + "</span>"
+            + "</li>";
+        }).join("") + "</ul>"
+      : '<div class="active-idle">'
+        + (waiting ? "waiting for your review" : "no task started yet")
+        + "</div>";
+
+    return '<div class="active-card' + (waiting ? " waiting" : "") + '">'
+      + '<div class="active-head">'
+      + '<span class="badge ' + (waiting ? "warn" : "ok") + '">' + escapeHtml(waiting ? "review" : "running") + "</span>"
+      + '<span class="active-mode">' + escapeHtml(displayMode(run.mode)) + "</span>"
+      + (run.leadProvider ? '<span class="plan-agent">' + escapeHtml(run.leadProvider) + " · lead</span>" : "")
+      + workers
+      + "</div>"
+      + '<div class="active-prompt">' + escapeHtml((run.prompt || "").slice(0, 140)) + "</div>"
+      + tasks
+      + "</div>";
+  }).join("");
+
+  return '<div class="section-label" style="margin-bottom:6px">'
+    + '<span class="codicon codicon-pulse"></span> Working now (' + active.length + ")</div>"
+    + '<div class="active-list">' + cards + "</div>";
 }
 
 /**

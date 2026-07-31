@@ -217,9 +217,15 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
         return;
       case "tab":
         if (message.tab === "capacity") await sendCapacity();
-        if (message.tab === "runs") await sendRuns();
+        if (message.tab === "runs") {
+          await sendRuns();
+          await sendActiveRuns();
+        }
         if (message.tab === "sessions") await sendSessions();
         if (message.tab === "doctor") await sendAdapters();
+        return;
+      case "refreshActive":
+        await sendActiveRuns();
         return;
       case "openSession":
         if (typeof message.sessionId === "string") await sendSessionDetail(message.sessionId);
@@ -315,6 +321,7 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
 async function refreshAll(): Promise<void> {
   await sendAdapters();
   await sendRuns();
+  await sendActiveRuns();
 }
 
 async function sendAdapters(): Promise<void> {
@@ -409,6 +416,23 @@ async function sendRuns(): Promise<void> {
   const repoPath = currentRepo();
   if (!repoPath) return post({ type: "runs", runs: { runs: [], legacyReports: [] } });
   post({ type: "runs", runs: await client.runs(repoPath) });
+}
+
+/**
+ * Who is working right now (S10-T4).
+ *
+ * Unfiltered by repository on purpose: a run started from another window is
+ * precisely the one the user has no other way of knowing about, and hiding it
+ * would let two windows drive the same daemon while each believed it was idle.
+ */
+async function sendActiveRuns(): Promise<void> {
+  try {
+    post({ type: "activeRuns", ...(await client.activeRuns()) });
+  } catch {
+    // An older daemon has no /active route. Report nothing rather than an
+    // error: the panel works without this panelled view.
+    post({ type: "activeRuns", active: [] });
+  }
 }
 
 function currentRepo(): string | undefined {

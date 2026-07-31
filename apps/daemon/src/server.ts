@@ -217,6 +217,13 @@ async function handle(
     });
   }
 
+  // Which agents are working right now, across every repository this daemon
+  // serves — deliberately not filtered by `repo`, because a run started from
+  // another window is exactly the one a user does not otherwise know about.
+  if (method === "GET" && route === "/active") {
+    return sendJson(res, 200, { active: registry.activeRuns() });
+  }
+
   const runEvents = /^\/runs\/([^/]+)\/events$/.exec(route);
   if (method === "GET" && runEvents) {
     return streamEvents(req, res, registry, decodeURIComponent(runEvents[1] ?? ""), url);

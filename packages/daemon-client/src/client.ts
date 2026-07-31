@@ -58,6 +58,20 @@ export interface RunEvent {
   data?: unknown;
 }
 
+/** One in-flight run as `/active` reports it (S10-T4). */
+export interface ActiveRunSummary {
+  runId: string;
+  sessionId?: string;
+  repositoryPath: string;
+  mode: "single" | "team";
+  status: string;
+  prompt: string;
+  startedAt?: string;
+  leadProvider?: string;
+  workerProviders: string[];
+  tasksInFlight: Array<{ taskId: string; title: string; agentId?: string; since: number }>;
+}
+
 export interface StartRunRequest {
   mode: "single" | "team" | "auto";
   repoPath: string;
@@ -207,6 +221,11 @@ export class DaemonClient {
 
   async cancelRun(id: string): Promise<{ cancelled: boolean }> {
     return this.post<{ cancelled: boolean }>(`/runs/${encodeURIComponent(id)}/cancel`);
+  }
+
+  /** Runs in flight across every repository, with who is working on what. */
+  async activeRuns(): Promise<{ active: ActiveRunSummary[] }> {
+    return this.get<{ active: ActiveRunSummary[] }>("/active");
   }
 
   async applyPatch(request: {

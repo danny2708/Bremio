@@ -141,6 +141,13 @@ describe("daemon HTTP surface", () => {
     expect((await call(handle, "/runs/does-not-exist/events")).status).toBe(404);
   });
 
+  it("serves an empty active list on an idle daemon", async () => {
+    const handle = await daemon();
+    const response = await call(handle, "/active");
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { active: unknown[] }).active).toEqual([]);
+  });
+
   it("reports 409 when cancelling a run that is not live", async () => {
     const handle = await daemon();
     const response = await call(handle, "/runs/does-not-exist/cancel", { method: "POST" });

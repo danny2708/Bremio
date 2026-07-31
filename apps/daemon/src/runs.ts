@@ -158,6 +158,21 @@ export function defaultAdapters(): AgentAdapter[] {
 type Listener = (event: RunEvent) => void;
 type SessionListener = (event: SessionEvent) => void;
 
+/** A run in flight, and who is working on what inside it (S10-T4). */
+export interface ActiveRun {
+  runId: string;
+  sessionId?: string;
+  repositoryPath: string;
+  mode: "single" | "team";
+  /** `running`, or `pending_approval` when it is blocked on a human. */
+  status: RunStatus;
+  prompt: string;
+  startedAt?: string;
+  leadProvider?: string;
+  workerProviders: string[];
+  tasksInFlight: Array<{ taskId: string; title: string; agentId?: string; since: number }>;
+}
+
 export interface SessionEvent {
   kind: "session-updated";
   sessionId: string;
@@ -719,6 +734,69 @@ export class RunRegistry {
 
   get activeCount(): number {
     return this.#controllers.size;
+  }
+
+  /**
+   * Every run currently in flight, with who is working on what (S10-T4).
+   *
+   * `activeCount` was the only window into this, and a number cannot tell you
+   * that a Co-lab run has two workers, one of them stuck on a task since three
+   * minutes ago. Derived from the run's own events rather than a parallel
+   * in-memory map: a second copy of "what is each agent doing" is a copy that
+   * can disagree with the transcript, and the transcript is what the user will
+   * read afterwards.
+   *
+   * `pending_approval` runs are included and say so. Their execution really is
+   * still alive — it is blocked on a human — and hiding them would make a run
+   * that is waiting for *you* look like a run that finished.
+   */
+  activeRuns(): ActiveRun[] {
+    const active: ActiveRun[] = [];
+    for (const id of this.#controllers.keys()) {
+      const run = this.store.getRun(id);
+      if (!run) continue;
+      active.push({
+        runId: id,
+        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+        repositoryPath: run.repositoryPath,
+        mode: run.mode,
+        status: run.status,
+        prompt: run.prompt,
+        ...(run.startedAt ? { startedAt: run.startedAt } : {}),
+        ...(run.leadProvider ? { leadProvider: run.leadProvider } : {}),
+        workerProviders: run.workerProviders ?? [],
+        tasksInFlight: this.#tasksInFlight(id),
+      });
+    }
+    return active;
+  }
+
+  /**
+   * The tasks a run has started and not yet finished.
+   *
+   * A task-start with no matching task-complete is work in progress; anything
+   * else has either not begun or is over. Nothing here guesses: a task whose
+   * agent the events never named is reported without one rather than being
+   * attributed to the lead.
+   */
+  #tasksInFlight(runId: string): Array<{ taskId: string; title: string; agentId?: string; since: number }> {
+    const running = new Map<string, { taskId: string; title: string; agentId?: string; since: number }>();
+    for (const event of this.store.readEvents(runId)) {
+      const payload = (event.payload ?? {}) as { taskId?: string; agentId?: string; message?: string };
+      const taskId = payload.taskId;
+      if (!taskId) continue;
+      if (event.type === "task-start") {
+        running.set(taskId, {
+          taskId,
+          title: payload.message ?? taskId,
+          ...(payload.agentId ? { agentId: payload.agentId } : {}),
+          since: Date.parse(event.timestamp),
+        });
+      } else if (event.type === "task-complete") {
+        running.delete(taskId);
+      }
+    }
+    return [...running.values()];
   }
 
   start(input: StartRunInput): PersistedRun {
