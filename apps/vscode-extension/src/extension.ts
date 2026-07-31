@@ -12,7 +12,7 @@ import {
   type RunEvent,
 } from "./client";
 import { CliNotFoundError, launchCli } from "./cli-launcher";
-import { extractResponse, panelHtml, renderEvent } from "./webview";
+import { assemblePlanChecklist, extractResponse, panelHtml, renderEvent } from "./webview";
 
 let panel: vscode.WebviewPanel | undefined;
 let daemonProcess: ChildProcess | undefined;
@@ -357,6 +357,9 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
           renderEvent({ type: String(event.kind ?? "log"), ...event } as never),
         ),
         response: extractResponse(agentEvents),
+        // Built from the raw events, which still carry `taskId` and the plan
+        // payload — `agentEvents` above has already flattened `data` away.
+        plan: assemblePlanChecklist(events as never),
       };
     }),
   );

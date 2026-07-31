@@ -409,6 +409,96 @@ export function renderLogLine(event: { kind?: string; taskId?: string; message?:
   };
 }
 
+/**
+ * The lead's plan as a checklist (S10-T3).
+ *
+ * Distinct from `assembleTaskLanes`, which builds a lane per task id it has
+ * *seen an event for* — so a task the scheduler has not reached yet does not
+ * exist in it. A checklist has to show those: "three of five done, one running,
+ * one waiting on it" is the whole point, and the two not started are the part
+ * lanes cannot express.
+ *
+ * The plan arrives once, on the `plan` event, carrying every task and the
+ * agent each was assigned to. Status then comes from the task lifecycle events
+ * layered on top. Pure and event-sourced, so a finished turn replays to exactly
+ * what was shown live.
+ */
+export function assemblePlanChecklist(
+  rawEvents: Array<{
+    kind?: string;
+    taskId?: string;
+    agentId?: string;
+    message?: string;
+    data?: unknown;
+  }>,
+): {
+  summary?: string;
+  tasks: Array<{
+    id: string;
+    title: string;
+    agentId?: string;
+    status: "pending" | "running" | "completed" | "failed";
+    dependsOn: string[];
+  }>;
+} {
+  const tasks = new Map<string, {
+    id: string;
+    title: string;
+    agentId?: string;
+    status: "pending" | "running" | "completed" | "failed";
+    dependsOn: string[];
+  }>();
+  let summary: string | undefined;
+
+  for (const event of rawEvents) {
+    const data =
+      typeof event.data === "object" && event.data !== null
+        ? (event.data as Record<string, unknown>)
+        : undefined;
+
+    if (event.kind === "plan" && data?.plan) {
+      const plan = data.plan as {
+        summary?: string;
+        tasks?: Array<{ id?: string; title?: string; dependencies?: string[] }>;
+      };
+      if (plan.summary) summary = plan.summary;
+      const assign = (data.assign ?? {}) as Record<string, string>;
+      for (const task of plan.tasks ?? []) {
+        if (!task.id) continue;
+        tasks.set(task.id, {
+          id: task.id,
+          title: task.title ?? task.id,
+          ...(assign[task.id] ? { agentId: assign[task.id] } : {}),
+          status: "pending",
+          dependsOn: task.dependencies ?? [],
+        });
+      }
+      continue;
+    }
+
+    if (!event.taskId) continue;
+    // A task the plan never mentioned still gets an entry rather than being
+    // dropped: work that happened is work the user should see.
+    const existing = tasks.get(event.taskId) ?? {
+      id: event.taskId,
+      title: event.taskId,
+      status: "pending" as const,
+      dependsOn: [],
+    };
+    if (event.agentId && !existing.agentId) existing.agentId = event.agentId;
+
+    if (event.kind === "task-start") {
+      existing.status = "running";
+      if (event.message) existing.title = event.message;
+    } else if (event.kind === "task-complete") {
+      existing.status = event.message === "completed" ? "completed" : "failed";
+    }
+    tasks.set(event.taskId, existing);
+  }
+
+  return { ...(summary ? { summary } : {}), tasks: [...tasks.values()] };
+}
+
 export function assembleTaskLanes(
   rawEvents: Array<{
     kind?: string;
@@ -806,6 +896,26 @@ pre.log {
 .process summary { cursor: pointer; }
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
+
+/* The lead's plan for a turn. Reporting only — nothing here is clickable. */
+.plan-checklist { margin: 0 0 10px; font-size: 12px; }
+.plan-checklist > summary { cursor: pointer; color: var(--muted); }
+.plan-summary { color: var(--muted); margin: 4px 0 6px; }
+.plan-checklist ul { list-style: none; margin: 0; padding: 0; }
+.plan-item { display: flex; align-items: baseline; gap: 7px; padding: 2px 0; }
+.plan-item.pending .plan-title { color: var(--muted); }
+.plan-item.completed .plan-title { text-decoration: line-through; color: var(--muted); }
+.plan-mark { flex: 0 0 auto; width: 12px; text-align: center; font-size: 11px; }
+.plan-mark.done { color: var(--ok, #3fb950); }
+.plan-mark.failed { color: var(--danger); }
+.plan-mark.running { color: var(--bremio-accent-hover); }
+.plan-mark.pending { color: var(--muted); }
+.plan-title { flex: 1; min-width: 0; }
+.plan-agent {
+  flex: 0 0 auto; font-size: 10px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 4px;
+}
+.plan-dep { flex: 0 0 auto; font-size: 10px; color: var(--muted); }
 
 /* Prompts waiting behind the running turn. */
 .queue { margin-top: 16px; }
@@ -1279,6 +1389,40 @@ function annotateThumbDims() {
 }
 
 /**
+ * The lead's plan for one turn, as a checklist (S10-T3).
+ *
+ * Deliberately not interactive. These are the agent's items, and a checkbox the
+ * user can tick would claim they can change what the agent is doing — they
+ * cannot. The glyphs report; they do not offer.
+ */
+function renderPlanChecklist(plan) {
+  if (!plan || !plan.tasks || plan.tasks.length === 0) return "";
+  const glyph = {
+    completed: '<span class="plan-mark done">\\u2713</span>',
+    failed: '<span class="plan-mark failed">\\u2717</span>',
+    running: '<span class="plan-mark running">\\u25cf</span>',
+    pending: '<span class="plan-mark pending">\\u25cb</span>',
+  };
+  const done = plan.tasks.filter(function(t) { return t.status === "completed"; }).length;
+  const rows = plan.tasks.map(function(task) {
+    const waiting = task.status === "pending" && task.dependsOn && task.dependsOn.length > 0
+      ? '<span class="plan-dep">after ' + escapeHtml(task.dependsOn.join(", ")) + '</span>'
+      : "";
+    return '<li class="plan-item ' + escapeHtml(task.status) + '">'
+      + (glyph[task.status] || glyph.pending)
+      + '<span class="plan-title">' + escapeHtml(task.title) + '</span>'
+      + (task.agentId ? '<span class="plan-agent">' + escapeHtml(task.agentId) + '</span>' : "")
+      + waiting
+      + '</li>';
+  }).join("");
+  return '<details class="plan-checklist" open>'
+    + '<summary>Plan · ' + done + '/' + plan.tasks.length + ' done</summary>'
+    + (plan.summary ? '<div class="plan-summary">' + escapeHtml(plan.summary) + '</div>' : "")
+    + '<ul>' + rows + '</ul>'
+    + '</details>';
+}
+
+/**
  * Prompts waiting behind the running turn (S10-T2).
  *
  * Held prompts get a Run button as well as Remove: the queue does not advance
@@ -1481,6 +1625,8 @@ function renderTranscript(session, turns, contextItems, visionNotice, queued, qu
     out += '<div class="speaker agent">' + escapeHtml(who)
       + (turn.reasoningLevel ? ' <span class="muted">· ' + escapeHtml(turn.reasoningLevel) + "</span>" : "")
       + "</div>";
+
+    out += renderPlanChecklist(turn.plan);
 
     const steps = (turn.events || [])
       .filter((ev) => ev.kind !== "message" && ev.kind !== "completed");

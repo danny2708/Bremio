@@ -2226,3 +2226,27 @@ Rules:
 - Red-check A: removed the `finishedStatus !== "completed"` hold → "holds the queue when the running turn is cancelled" failed with `expected 'completed' to be 'queued'` — the queued prompt ran to completion after the user cancelled, which is the exact failure the task names. Restored.
 - Red-check B: stopped filtering `queued` out of reconciliation → both restart tests failed; the user's un-run prompt was marked `interrupted` and reported as a failure that never happened. Restored.
 - Red-check C: removed the head-of-queue guard from `releaseQueuedRun` → "refuses to release a prompt that is not next in line" failed, i.e. the third prompt jumped ahead of the second. Restored.
+
+### S10-T3 — The lead's plan as a live checklist
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-31T10:45 → 2026-07-31T11:00
+- **branch:** main
+- **task(s):** S10-T3
+- **status:** done
+
+**Did**
+- Added `assemblePlanChecklist(rawEvents)` to `webview.ts` — pure and event-sourced, returning the plan summary plus every task with `status` (pending | running | completed | failed), the agent it was assigned to, and its dependencies.
+- Wired it into `sendSessionDetail`, which already fetches each turn's raw run events, so the checklist rides along on the turn and persists into the transcript.
+- Rendered it per turn as a collapsible "Plan · N/M done" list above the process log.
+
+**Decided**
+- **Did not extend `assembleTaskLanes`.** Lanes are keyed by task ids that have *appeared in an event*, so a task the scheduler has not reached yet does not exist in them — and "two still to do" is most of what a checklist is for. The two answer different questions: lanes are a live activity feed, the checklist is the plan's state.
+- **Read-only, with no control that could be mistaken for one.** No checkbox, no button, no `data-` attribute. These are the agent's items; a tickable box would claim the user can change what the agent is doing, and they cannot. There is a test asserting the absence, because this is the kind of thing a later UI pass adds without thinking.
+- **A task the plan never mentioned still gets a row.** Dropping it would hide work that actually happened, which is worse than a checklist longer than the plan.
+- Computed extension-side from the raw events rather than in the panel: `agentEvents` has already flattened `data` away by the time the webview sees it, and the plan payload lives in `data.plan`.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 1143 passed / 83 files (was 1133 / 82).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.3.0`).
+- Red-check: stopped seeding the checklist from `plan.tasks` (kept only tasks with events) → four tests failed, including "lists every planned task, including ones that have not started" with `expected [ 'TASK-001' ] to deeply equal [ 'TASK-001', 'TASK-002', 'TASK-003' ]`. That is the checklist degenerating into the lane view, which is exactly the thing it exists not to be. Restored.
