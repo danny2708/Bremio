@@ -200,6 +200,15 @@ export class RunRegistry {
   readonly #terminated = new Set<string>();
   /** Reviews awaiting user approval after an isolated-worktree run completed. */
   readonly #pendingReviews = new Map<string, PendingReview>();
+  /**
+   * The arguments a queued prompt was submitted with, until it runs.
+   *
+   * In memory rather than persisted: the run row records what a turn *was*,
+   * not the request that produced it, and half of `StartRunInput` (model,
+   * reasoning level, workspace strategy, control mode) has nowhere to live in
+   * it. A restart therefore loses them, and `#drainQueue` refuses to guess.
+   */
+  readonly #queuedInputs = new Map<string, StartRunInput & { mode: "single" | "team" }>();
   #accepting = true;
   #counter = 0;
 
@@ -235,15 +244,21 @@ export class RunRegistry {
    *
    * A run that was actively executing (`running`) had a child process we were
    * supervising — we lost track of that process, so the status is
-   * `supervision_lost`. A run that was `queued` or `cancelling` (no active
-   * execution) is marked `interrupted`.
+   * `supervision_lost`. A run that was `cancelling` (no active execution) is
+   * marked `interrupted`.
    *
    * Neither is `failed` — the daemon dying says nothing about whether the task
    * itself was going to succeed, and the child process may still be alive.
    * `supervision_lost` is the honest answer: we simply do not know.
+   *
+   * A `queued` run is left alone (S10-T2). It never started, so nothing about
+   * it was interrupted: it is a prompt the user typed and Bremio has not run
+   * yet. Marking it `interrupted` would discard work the user is still owed and
+   * report a failure that did not happen. It stays queued, and stays held —
+   * the turn it was waiting behind did not complete.
    */
   reconcileOnStartup(): PersistedRun[] {
-    const stranded = this.store.nonTerminalRuns();
+    const stranded = this.store.nonTerminalRuns().filter((run) => run.status !== "queued");
     for (const run of stranded) {
       if (run.status === "running") {
         this.store.appendEventWithStatus(
@@ -723,13 +738,47 @@ export class RunRegistry {
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     });
 
+    // A second prompt for a session that is already busy waits its turn rather
+    // than being refused or running concurrently (S10-T2). `createRun` already
+    // writes it as `queued` with the next `turn_index`, so ordering is the
+    // insertion order and needs nothing else. Remember the input: the queued
+    // run has to execute later with the same arguments it was submitted with.
+    if (input.sessionId) {
+      const active = this.store.activeRunForSession(input.sessionId);
+      if (active && active.id !== id) {
+        this.#queuedInputs.set(id, { ...input, mode: resolved.mode });
+        this.#publishSession(input.sessionId, {
+          kind: "session-updated",
+          sessionId: input.sessionId,
+          data: { queuedRunId: id, queueDepth: this.store.queuedRunsForSession(input.sessionId).length },
+        });
+        return this.store.getRun(id) ?? run;
+      }
+    }
+
+    this.#beginExecution(id, { ...input, mode: resolved.mode }, resolved.reason);
+    return this.store.getRun(id) ?? run;
+  }
+
+  /**
+   * Move a created run from `queued` to `running` and start executing it.
+   *
+   * Shared by `start` and by the queue drain so both paths mark the run,
+   * announce it and execute it identically — a queued turn is the same turn,
+   * only later.
+   */
+  #beginExecution(
+    id: string,
+    input: StartRunInput & { mode: "single" | "team" },
+    autoReason?: string,
+  ): void {
     const controller = new AbortController();
     this.#controllers.set(id, controller);
     this.store.updateRun(id, { status: "running", startedAt: new Date().toISOString() });
     // Recorded as an event so the reason survives into history: a user looking
     // at an old run has to be able to see why it ran the way it did.
-    if (resolved.reason) {
-      this.#emit(id, { kind: "status", message: `auto: ${resolved.reason}` });
+    if (autoReason) {
+      this.#emit(id, { kind: "status", message: `auto: ${autoReason}` });
     }
     // Broadcast to session subscribers so a second client refreshes its view.
     if (input.sessionId) {
@@ -740,8 +789,116 @@ export class RunRegistry {
       });
     }
     // Never rejects: #execute records failure as a run outcome.
-    this.#executions.set(id, this.#execute(id, { ...input, mode: resolved.mode }, controller));
-    return this.store.getRun(id) ?? run;
+    this.#executions.set(id, this.#execute(id, input, controller));
+  }
+
+  /** Prompts waiting behind the active turn of a session, oldest first. */
+  queuedRuns(sessionId: string): PersistedRun[] {
+    return this.store.queuedRunsForSession(sessionId);
+  }
+
+  /**
+   * Drop a queued prompt before it runs.
+   *
+   * Only a `queued` run can be dropped — see `deleteQueuedRun`. Returns false
+   * for anything that already executed rather than pretending to remove it.
+   */
+  removeQueuedRun(id: string): boolean {
+    const run = this.store.getRun(id);
+    if (!run || run.status !== "queued") return false;
+    const removed = this.store.deleteQueuedRun(id);
+    if (removed) {
+      this.#queuedInputs.delete(id);
+      if (run.sessionId) {
+        this.#publishSession(run.sessionId, {
+          kind: "session-updated",
+          sessionId: run.sessionId,
+          data: { removedQueuedRunId: id, queueDepth: this.store.queuedRunsForSession(run.sessionId).length },
+        });
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * Start the next queued prompt for a session, if the turn before it earned
+   * that.
+   *
+   * Only a `completed` turn advances the queue. A cancelled, failed or
+   * interrupted turn **holds** it: the queued prompts were written expecting
+   * the previous turn to have worked, and running them against a state the user
+   * just cancelled is precisely the "silently run the queued one" failure
+   * S10-T2 forbids. Held prompts stay queued and visible, so nothing the user
+   * typed is thrown away — they decide whether to release or remove them.
+   */
+  #drainQueue(sessionId: string, finishedStatus: RunStatus): void {
+    if (!this.#accepting) return;
+
+    const next = this.store.queuedRunsForSession(sessionId)[0];
+    if (!next) return;
+
+    if (finishedStatus !== "completed") {
+      this.#publishSession(sessionId, {
+        kind: "session-updated",
+        sessionId,
+        data: {
+          queueHeld: true,
+          reason: `the previous turn ended as ${finishedStatus}; ${this.store.queuedRunsForSession(sessionId).length} queued prompt(s) are waiting for you`,
+        },
+      });
+      return;
+    }
+
+    const input = this.#queuedInputs.get(next.id);
+    if (!input) {
+      // The daemon restarted, so the arguments this prompt was submitted with
+      // are gone. Reconstructing them from the run row would guess at model,
+      // reasoning level and workspace strategy — the substitution this codebase
+      // refuses to make. Hold instead and say why.
+      this.#publishSession(sessionId, {
+        kind: "session-updated",
+        sessionId,
+        data: {
+          queueHeld: true,
+          reason: "queued prompts were submitted before the daemon restarted; release them yourself so their settings are the ones you chose",
+        },
+      });
+      return;
+    }
+
+    this.#queuedInputs.delete(next.id);
+    this.#beginExecution(next.id, input);
+  }
+
+  /** Release a held queued prompt explicitly, using its original arguments. */
+  releaseQueuedRun(id: string): { ok: true } | { ok: false; reason: string } {
+    const run = this.store.getRun(id);
+    if (!run || run.status !== "queued") return { ok: false, reason: `run ${id} is not queued` };
+    if (run.sessionId && this.store.activeRunForSession(run.sessionId)) {
+      return { ok: false, reason: "this session already has a turn in flight" };
+    }
+    // Only the head may go. The panel offers Run on the first entry alone, but
+    // enforcing that in the panel only would leave the route able to reorder a
+    // conversation — and turn order is what makes a transcript mean anything.
+    if (run.sessionId) {
+      const head = this.store.queuedRunsForSession(run.sessionId)[0];
+      if (head && head.id !== id) {
+        return {
+          ok: false,
+          reason: `run ${id} is not next in the queue; release "${head.prompt.slice(0, 40)}" first or remove it`,
+        };
+      }
+    }
+    const input = this.#queuedInputs.get(id);
+    if (!input) {
+      return {
+        ok: false,
+        reason: "the arguments this prompt was submitted with are gone (the daemon restarted); start it as a new turn instead",
+      };
+    }
+    this.#queuedInputs.delete(id);
+    this.#beginExecution(id, input);
+    return { ok: true };
   }
 
   /**
@@ -1128,6 +1285,15 @@ export class RunRegistry {
       this.#terminations.delete(runId);
       this.#executions.delete(runId);
       this.supervisor.release(runId);
+
+      // The session is free again, so the next queued prompt may go — but only
+      // if this turn actually completed. Read the status back from the store
+      // rather than inferring it from which branch above ran: cancellation and
+      // review-drift both land here having written a status of their own.
+      const finished = this.store.closed ? undefined : this.store.getRun(runId);
+      if (finished?.sessionId && isTerminal(finished.status)) {
+        this.#drainQueue(finished.sessionId, finished.status);
+      }
     }
   }
 

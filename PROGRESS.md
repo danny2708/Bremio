@@ -2198,3 +2198,31 @@ Rules:
 - `corepack pnpm vitest run packages/policy` — 134 passed (+29).
 - `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.3.0`).
 - Red-check: reclassified `pull` as `network` only and `force-push` as `network` only → both targeted tests failed (`expected [ 'network' ] to include 'write'`, `expected [ 'network' ] to include 'git-destructive'`). The second is the one that matters: a misclassified force-push is indistinguishable from an ordinary push, which is exactly the substitution §2.4.1 forbids. Restored.
+
+### S10-T2 — Prompt queue per session
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-07-31T10:00 → 2026-07-31T10:45
+- **branch:** main
+- **task(s):** S10-T2
+- **status:** done
+
+**Did**
+- A prompt sent while a session has a turn in flight is now **accepted and queued** rather than run concurrently. `createRun` already inserted with status `queued` and already assigned the next `turn_index`, so ordering is insertion order and needed nothing new — the change is that `start()` no longer flips straight to `running` when `activeRunForSession` finds one.
+- Added `activeRunForSession` (counts `running`, `cancelling` **and** `pending_approval` — a run awaiting review still owns the workspace), `queuedRunsForSession`, and `deleteQueuedRun` scoped to `queued` only.
+- `#drainQueue` starts the next prompt when a turn ends, but **only if it completed**. A cancelled, failed or interrupted turn *holds* the queue: those prompts were written expecting the previous turn to work, and running them against a state the user just cancelled is precisely what the task forbids. Held prompts stay queued and visible, so nothing typed is thrown away.
+- `releaseQueuedRun` lets the user release a held prompt explicitly; `removeQueuedRun` drops one before it runs.
+- Reconciliation no longer touches `queued` runs. Panel: a Queued section with position, prompt, Remove on every entry and Run on the head when held.
+
+**Decided**
+- **Hold rather than cancel on a non-completed turn.** The task only required "must not silently run", so cancelling the rest would have satisfied it — but that discards prompts the user typed. Holding satisfies the requirement and loses nothing; the user decides.
+- **Queued submission arguments live in memory, not the run row.** Half of `StartRunInput` (model, reasoning level, workspace strategy, control mode) has nowhere to live in a run row, which records what a turn *was*, not the request that produced it. So a restart loses them and `#drainQueue` refuses to auto-run, saying why, rather than reconstructing them from defaults — the same refusal-to-guess as S9's proposal provenance. The alternative was a schema change to persist a request; that is a real option but a larger one, and worth doing only if restart-resume of queued prompts turns out to matter.
+- **Ordering is enforced in the daemon, not just the panel.** The panel offers Run on the head alone, but leaving it there would let the route reorder a conversation, and turn order is what makes a transcript mean anything.
+- Rewrote the S4-T7 test `marks a queued run as interrupted`, which asserted the behaviour this task reverses. Before the queue existed, `queued` was a status a run passed through in the same tick as `start`, so finding one after a restart genuinely meant something had gone wrong; now it is where a prompt waits.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 1133 passed / 82 files (was 1129 / 82; +11 queue tests, +3 panel, −1 rewritten).
+- `corepack pnpm release:check` — PASS (build + `PASS clean packed install: bremio 1.3.0`).
+- Red-check A: removed the `finishedStatus !== "completed"` hold → "holds the queue when the running turn is cancelled" failed with `expected 'completed' to be 'queued'` — the queued prompt ran to completion after the user cancelled, which is the exact failure the task names. Restored.
+- Red-check B: stopped filtering `queued` out of reconciliation → both restart tests failed; the user's un-run prompt was marked `interrupted` and reported as a failure that never happened. Restored.
+- Red-check C: removed the head-of-queue guard from `releaseQueuedRun` → "refuses to release a prompt that is not next in line" failed, i.e. the third prompt jumped ahead of the second. Restored.

@@ -751,6 +751,47 @@ export class RunStore {
     }));
   }
 
+  /**
+   * The run currently occupying a session, if any.
+   *
+   * `cancelling` counts as occupied: the process tree is still being torn down,
+   * and starting the next turn on top of it would have two agents in one
+   * workspace.
+   */
+  activeRunForSession(sessionId: string): PersistedRun | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM runs WHERE session_id = ? AND status IN ('running', 'cancelling', 'pending_approval')
+         ORDER BY turn_index DESC LIMIT 1`,
+      )
+      .get(sessionId) as Record<string, unknown> | undefined;
+    return row ? toRun(row) : undefined;
+  }
+
+  /** Prompts waiting behind the active turn, oldest first. */
+  queuedRunsForSession(sessionId: string): PersistedRun[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM runs WHERE session_id = ? AND status = 'queued' ORDER BY turn_index ASC",
+      )
+      .all(sessionId) as Array<Record<string, unknown>>;
+    return rows.map(toRun);
+  }
+
+  /**
+   * Drop a run that has not started.
+   *
+   * Refuses anything past `queued`: a run that executed owns history — events,
+   * artifacts, a report — and deleting it would leave the session's transcript
+   * with a hole, which is the same reason `pruneRuns` keeps sessions whole.
+   */
+  deleteQueuedRun(id: string): boolean {
+    const result = this.db
+      .prepare("DELETE FROM runs WHERE id = ? AND status = 'queued'")
+      .run(id);
+    return Number(result.changes) > 0;
+  }
+
   /** Runs that were mid-flight when the process died. */
   nonTerminalRuns(): PersistedRun[] {
     const rows = this.db

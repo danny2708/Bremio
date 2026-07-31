@@ -313,7 +313,13 @@ describe("startup reconciliation", () => {
     expect(second.store.readEvents("run-supervised").at(-1)?.type).toBe("interrupted");
   });
 
-  it("marks a queued run as interrupted", async () => {
+  it("leaves a queued run queued, because it never started", async () => {
+    // This asserted the opposite until S10-T2. Before the prompt queue existed,
+    // `queued` was a status a run passed through in the same tick as `start`,
+    // so finding one after a restart really did mean something had gone wrong.
+    // Now it is where a prompt waits its turn — the user typed it and Bremio
+    // has not run it yet. Marking it `interrupted` would discard work that is
+    // still owed and report a failure that did not happen.
     const files = await sandbox();
 
     const first = await startDaemon({ version: "test", ...files });
@@ -323,10 +329,10 @@ describe("startup reconciliation", () => {
     const second = await startDaemon({ version: "test", ...files });
     closers.push(() => second.close());
 
-    expect(second.reconciled).toContain("queued-run");
+    expect(second.reconciled).not.toContain("queued-run");
     const recovered = second.store.getRun("queued-run");
-    expect(recovered?.status).toBe("interrupted");
-    expect(recovered?.failureCode).toBe("daemon_restart");
+    expect(recovered?.status).toBe("queued");
+    expect(recovered?.failureCode).toBeUndefined();
   });
 
   it("marks a cancelling run as interrupted, not supervision_lost", async () => {

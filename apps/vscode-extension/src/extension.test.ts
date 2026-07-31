@@ -697,6 +697,24 @@ describe("context items refresh after an add", () => {
   const html = panelHtml("nonce", "vscode-resource:", "icon.png");
   const script = html.split('<script nonce="nonce">')[1]!.split("</script>")[0]!;
 
+  /** Evaluate the real panel script and hand back the named renderers. */
+  function loadPanel<T>(...names: string[]): T {
+    const stub: unknown = new Proxy(function () {}, {
+      get: (_t, prop) => (prop === Symbol.toPrimitive ? () => "" : stub),
+      set: () => true,
+      apply: () => stub,
+      construct: () => stub as object,
+    });
+    const run = new Function(
+      "document",
+      "window",
+      "acquireVsCodeApi",
+      "console",
+      `${script}\nreturn { ${names.join(", ")} };`,
+    ) as (...args: unknown[]) => T;
+    return run(stub, stub, () => stub, console);
+  }
+
   it("parses the refreshed section as markup rather than inserting it as text", () => {
     // `replaceWith(string)` inserts a *text node*, so adding one item printed
     // the section's HTML source into the transcript and destroyed the real
@@ -705,6 +723,49 @@ describe("context items refresh after an add", () => {
     // that path re-renders through `innerHTML`.
     expect(script).not.toMatch(/ctxSection\.replaceWith\(/);
     expect(script).toMatch(/ctxSection\.outerHTML\s*=/);
+  });
+
+  it("renders the prompt queue with a Remove per entry", () => {
+    const { renderQueue } = loadPanel<{
+      renderQueue: (s: string, q: unknown[], held: boolean) => string;
+    }>("renderQueue");
+
+    const out = renderQueue("ses-1", [
+      { id: "run-a", prompt: "first follow-up" },
+      { id: "run-b", prompt: "second follow-up" },
+    ], false);
+
+    expect(out).toContain("Queued (2)");
+    expect(out).toContain("first follow-up");
+    expect(out).toContain('data-queue-remove="run-a"');
+    expect(out).toContain('data-queue-remove="run-b"');
+    // Nothing to release: the queue advances on its own after a completed turn.
+    expect(out).not.toContain("data-queue-release");
+    expect(out).toContain("run in order when the current turn finishes");
+  });
+
+  it("offers Run only on the held head of the queue", () => {
+    const { renderQueue } = loadPanel<{
+      renderQueue: (s: string, q: unknown[], held: boolean) => string;
+    }>("renderQueue");
+
+    const out = renderQueue("ses-1", [
+      { id: "run-a", prompt: "first" },
+      { id: "run-b", prompt: "second" },
+    ], true);
+
+    // Held means a turn was cancelled or failed, so the user decides. Only the
+    // next one can be released — releasing the second would reorder the queue.
+    expect(out).toContain('data-queue-release="run-a"');
+    expect(out).not.toContain('data-queue-release="run-b"');
+    expect(out).toContain("did not complete");
+  });
+
+  it("renders nothing when the queue is empty", () => {
+    const { renderQueue } = loadPanel<{
+      renderQueue: (s: string, q: unknown[], held: boolean) => string;
+    }>("renderQueue");
+    expect(renderQueue("ses-1", [], false)).toBe("");
   });
 
   it("renders an image attachment as a thumbnail and a file as an icon", () => {

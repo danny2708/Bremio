@@ -807,6 +807,24 @@ pre.log {
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
 
+/* Prompts waiting behind the running turn. */
+.queue { margin-top: 16px; }
+.queue-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px; margin-top: 4px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.queue-pos {
+  flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; font-size: 10px;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--muted);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.queue-prompt {
+  flex: 1; min-width: 0; font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.queue-row button { flex: 0 0 auto; font-size: 11px; padding: 2px 8px; }
+
 /* Attachments: one card each, thumbnail for images, icon otherwise. */
 .ctx-cards { display: flex; flex-wrap: wrap; gap: 6px; }
 .ctx-card {
@@ -1081,8 +1099,24 @@ window.addEventListener("message", (event) => {
   if (message.type === "sessionDetail") {
     storedContextItems = message.contextItems || [];
     currentSessionId = message.session.id;
-    $("tab-sessions").innerHTML = renderTranscript(message.session, message.turns, storedContextItems, getVisionNotice());
+    storedQueue = message.queued || [];
+    queueHeld = false;
+    $("tab-sessions").innerHTML = renderTranscript(message.session, message.turns, storedContextItems, getVisionNotice(), storedQueue, queueHeld);
     annotateThumbDims();
+  }
+  if (message.type === "queueUpdated" && message.sessionId === currentSessionId) {
+    storedQueue = message.queued || [];
+    if (typeof message.held === "boolean") queueHeld = message.held;
+    const section = $("tab-sessions").querySelector("#queue-section");
+    const rendered = renderQueue(currentSessionId, storedQueue, queueHeld);
+    if (section) {
+      // outerHTML, not replaceWith(string) — the latter inserts a text node.
+      if (rendered) section.outerHTML = rendered;
+      else section.remove();
+    } else if (rendered) {
+      const ctx = $("tab-sessions").querySelector("#context-items-section");
+      if (ctx) ctx.insertAdjacentHTML("beforebegin", rendered);
+    }
   }
   if (message.type === "contextItemsUpdated") {
     storedContextItems = message.contextItems || [];
@@ -1244,6 +1278,37 @@ function annotateThumbDims() {
   }
 }
 
+/**
+ * Prompts waiting behind the running turn (S10-T2).
+ *
+ * Held prompts get a Run button as well as Remove: the queue does not advance
+ * on its own after a turn that was cancelled or failed, so without it a user
+ * who cancelled would have no way forward except retyping.
+ */
+function renderQueue(sessionId, queued, held) {
+  if (!queued || queued.length === 0) return "";
+  const sid = escapeHtml(sessionId);
+  const rows = queued.map(function(item, idx) {
+    const first = idx === 0;
+    return '<div class="queue-row">'
+      + '<span class="queue-pos">' + (idx + 1) + '</span>'
+      + '<span class="queue-prompt">' + escapeHtml(item.prompt || "") + '</span>'
+      + (held && first
+        ? '<button class="ghost" data-queue-release="' + escapeHtml(item.id) + '" data-session="' + sid + '">Run</button>'
+        : '')
+      + '<button class="ghost" data-queue-remove="' + escapeHtml(item.id) + '" data-session="' + sid + '">Remove</button>'
+      + '</div>';
+  }).join("");
+  return '<div id="queue-section" class="queue">'
+    + '<div class="section-label"><span class="codicon codicon-list-ordered"></span> Queued ('
+    + queued.length + ')</div>'
+    + (held
+      ? '<div class="banner warn" style="font-size:12px">The previous turn did not complete, so these are waiting for you rather than running on their own.</div>'
+      : '<div class="secondary" style="font-size:12px">These run in order when the current turn finishes.</div>')
+    + rows
+    + '</div>';
+}
+
 function renderContextItems(sessionId, items, visionNotice) {
   const sid = escapeHtml(sessionId);
   const notice = visionNotice ? '<div class="banner warn" style="margin-bottom:6px;font-size:12px">' + escapeHtml(visionNotice) + '</div>' : "";
@@ -1401,7 +1466,7 @@ function renderResponseBody(text) {
  * The response is the point. It is rendered undimmed at full width, because a
  * run whose whole value was the reply used to show only "completed · 0 files".
  */
-function renderTranscript(session, turns, contextItems, visionNotice) {
+function renderTranscript(session, turns, contextItems, visionNotice, queued, queueHeld) {
   let out = '<div class="row" style="margin-bottom:10px">'
     + '<button class="ghost" data-action="back-to-sessions">← Sessions</button>'
     + '<strong style="margin-left:8px">' + escapeHtml(session.title || session.id) + "</strong>"
@@ -1436,6 +1501,7 @@ function renderTranscript(session, turns, contextItems, visionNotice) {
     out += "</div>";
   }
 
+  out += renderQueue(session.id, queued, queueHeld);
   out += renderContextItems(session.id, contextItems, visionNotice);
 
   // Continuing a session is the same action as starting a run, aimed at an
@@ -1515,6 +1581,9 @@ function isTerminalStatus(status) {
  */
 let attachments = [];
 let storedContextItems = [];
+let storedQueue = [];
+/** True when the queue is waiting on the user because a turn did not complete. */
+let queueHeld = false;
 let currentSessionId = null;
 
 function getVisionNotice() {
@@ -1562,6 +1631,16 @@ document.addEventListener("click", (event) => {
   const contextFile = event.target.closest("[data-context-file]");
   if (contextFile) {
     vscode.postMessage({ type: "addContextFile", sessionId: contextFile.dataset.session });
+    return;
+  }
+  const queueRemove = event.target.closest("[data-queue-remove]");
+  if (queueRemove) {
+    vscode.postMessage({ type: "removeQueued", sessionId: queueRemove.dataset.session, runId: queueRemove.dataset.queueRemove });
+    return;
+  }
+  const queueRelease = event.target.closest("[data-queue-release]");
+  if (queueRelease) {
+    vscode.postMessage({ type: "releaseQueued", sessionId: queueRelease.dataset.session, runId: queueRelease.dataset.queueRelease });
     return;
   }
   const contextToggle = event.target.closest("[data-context-toggle]");

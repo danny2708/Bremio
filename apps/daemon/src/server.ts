@@ -300,6 +300,31 @@ async function handle(
     }
   }
 
+  // ── Prompt queue (S10-T2) ─────────────────────────────────────────
+  const sessionQueue = /^\/sessions\/([^/]+)\/queue$/.exec(route);
+  if (method === "GET" && sessionQueue) {
+    const id = decodeURIComponent(sessionQueue[1] ?? "");
+    return sendJson(res, 200, { queued: registry.queuedRuns(id) });
+  }
+
+  const queuedRunDelete = /^\/queue\/([^/]+)$/.exec(route);
+  if (method === "DELETE" && queuedRunDelete) {
+    const id = decodeURIComponent(queuedRunDelete[1] ?? "");
+    // 409, not 404: the run exists, it simply is not removable any more.
+    return registry.removeQueuedRun(id)
+      ? sendJson(res, 200, { removed: true })
+      : sendJson(res, 409, { error: `run ${id} is not queued and cannot be removed` });
+  }
+
+  const queuedRunRelease = /^\/queue\/([^/]+)\/release$/.exec(route);
+  if (method === "POST" && queuedRunRelease) {
+    const id = decodeURIComponent(queuedRunRelease[1] ?? "");
+    const result = registry.releaseQueuedRun(id);
+    return result.ok
+      ? sendJson(res, 202, { released: true })
+      : sendJson(res, 409, { error: result.reason });
+  }
+
   const contextItemsList = /^\/sessions\/([^/]+)\/context-items$/.exec(route);
   if (method === "GET" && contextItemsList) {
     const id = decodeURIComponent(contextItemsList[1] ?? "");

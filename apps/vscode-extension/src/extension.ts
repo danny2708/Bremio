@@ -280,6 +280,16 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
           await handlePasteImage(message.sessionId, message.dataUrl, message.fileName);
         }
         return;
+      case "removeQueued":
+        if (typeof message.sessionId === "string" && typeof message.runId === "string") {
+          await removeQueued(message.sessionId, message.runId);
+        }
+        return;
+      case "releaseQueued":
+        if (typeof message.sessionId === "string" && typeof message.runId === "string") {
+          await releaseQueued(message.sessionId, message.runId);
+        }
+        return;
       case "removeContextItem":
         if (typeof message.sessionId === "string" && typeof message.itemId === "string") {
           await removeContextItem(message.sessionId, message.itemId);
@@ -359,7 +369,33 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
     // context items are optional — session may have none
   }
 
-  post({ type: "sessionDetail", session, turns, contextItems });
+  post({ type: "sessionDetail", session, turns, contextItems, queued: await queuedFor(sessionId) });
+}
+
+/** Prompts waiting behind this session's active turn; [] on any failure. */
+async function queuedFor(sessionId: string): Promise<Array<{ id: string; prompt: string }>> {
+  try {
+    return (await client.sessionQueue(sessionId)).queued;
+  } catch {
+    // A daemon too old to know the route must not blank the transcript.
+    return [];
+  }
+}
+
+async function sendQueue(sessionId: string): Promise<void> {
+  post({ type: "queueUpdated", sessionId, queued: await queuedFor(sessionId) });
+}
+
+async function removeQueued(sessionId: string, runId: string): Promise<void> {
+  const result = await client.removeQueuedRun(runId);
+  if (result.error) post({ type: "error", message: result.error });
+  await sendQueue(sessionId);
+}
+
+async function releaseQueued(sessionId: string, runId: string): Promise<void> {
+  const result = await client.releaseQueuedRun(runId);
+  if (result.error) post({ type: "error", message: result.error });
+  await sendQueue(sessionId);
 }
 
 async function sendCapacity(): Promise<void> {
@@ -693,9 +729,10 @@ async function follow(runId: string, repoPath: string, resumeFrom = 0): Promise<
   const fallbackReason = (data as { fallback?: { reason?: string } } | undefined)?.fallback?.reason;
   const autoModeReason = (data as { autoModeReason?: string } | undefined)?.autoModeReason;
 
+  const state = detail.run?.status ?? "completed";
   post({
     type: "runFinished",
-    state: detail.run?.status ?? "completed",
+    state,
     runId,
     recovery: detail.recovery,
     failureMessage: detail.run?.failureMessage,
@@ -704,6 +741,19 @@ async function follow(runId: string, repoPath: string, resumeFrom = 0): Promise<
     autoModeReason,
   });
   await sendRuns();
+
+  // This turn ending is exactly when the queue either advances or is held, so
+  // the panel is told which. `held` mirrors the daemon's rule: only a completed
+  // turn releases the next prompt on its own.
+  const sessionId = (detail.run as { sessionId?: string } | undefined)?.sessionId;
+  if (sessionId) {
+    post({
+      type: "queueUpdated",
+      sessionId,
+      queued: await queuedFor(sessionId),
+      held: state !== "completed",
+    });
+  }
 }
 
 /**

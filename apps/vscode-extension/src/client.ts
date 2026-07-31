@@ -356,6 +356,21 @@ export class BremioClient {
     });
   }
 
+  /** Prompts waiting behind the session's active turn (S10-T2). */
+  sessionQueue(sessionId: string): Promise<{
+    queued: Array<{ id: string; prompt: string; turnIndex: number; leadProvider?: string }>;
+  }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/queue`);
+  }
+
+  removeQueuedRun(runId: string): Promise<{ removed?: boolean; error?: string }> {
+    return this.#call(`/queue/${encodeURIComponent(runId)}`, { method: "DELETE" });
+  }
+
+  releaseQueuedRun(runId: string): Promise<{ released?: boolean; error?: string }> {
+    return this.#call(`/queue/${encodeURIComponent(runId)}/release`, { method: "POST" });
+  }
+
   compactSession(sessionId: string): Promise<{ compact: { id: string; summary: string; tokenCount: number } }> {
     return this.#call(`/sessions/${encodeURIComponent(sessionId)}/compact`, {
       method: "POST",
