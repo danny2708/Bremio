@@ -13,6 +13,13 @@ export {
 export { TaskLog, formatEvent } from "./logs";
 
 export {
+  GitOps,
+  GitOpsError,
+  type WorkingTreeEntry,
+  type WorkingTreeState,
+} from "./git-ops";
+
+export {
   MergeManager,
   ApplyConflictError,
   MergeConflictError,

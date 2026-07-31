@@ -91,6 +91,13 @@ function post(message: Record<string, unknown>): void {
  * An empty string must not become a filePath: the daemon would look for a file
  * called "" in the patch and refuse, when the user meant the whole diff.
  */
+/** The paths a git action names, keeping only real strings. */
+function pathsOf(message: Record<string, unknown>): string[] {
+  return Array.isArray(message.paths)
+    ? (message.paths as unknown[]).filter((p): p is string => typeof p === "string" && p !== "")
+    : [];
+}
+
 function filePathOf(message: Record<string, unknown>): string | undefined {
   const file = typeof message.filePath === "string" ? message.filePath.trim() : "";
   return file === "" ? undefined : file;
@@ -246,10 +253,20 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
           await sendActiveRuns();
         }
         if (message.tab === "sessions") await sendSessions();
+        if (message.tab === "git") await sendGitStatus();
         if (message.tab === "doctor") await sendAdapters();
         return;
       case "refreshActive":
         await sendActiveRuns();
+        return;
+      case "gitRefresh":
+        await sendGitStatus();
+        return;
+      case "gitStage":
+        await gitStage(pathsOf(message), message.unstage === true);
+        return;
+      case "gitCommit":
+        await gitCommit(String(message.message ?? ""));
         return;
       case "openSession":
         if (typeof message.sessionId === "string") await sendSessionDetail(message.sessionId);
@@ -441,6 +458,53 @@ async function sendRuns(): Promise<void> {
   const repoPath = currentRepo();
   if (!repoPath) return post({ type: "runs", runs: { runs: [], legacyReports: [] } });
   post({ type: "runs", runs: await client.runs(repoPath) });
+}
+
+/** Working-tree status for the Git tab (S10-T10). */
+async function sendGitStatus(): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) return post({ type: "gitStatus", git: { entries: [] } });
+  try {
+    post({ type: "gitStatus", git: await client.gitStatus(repoPath) });
+  } catch (err) {
+    post({ type: "gitStatus", git: { entries: [], error: (err as Error).message } });
+  }
+}
+
+/**
+ * Stage or unstage the paths the user selected — and only those (S10-T10).
+ *
+ * `docs/15` §2.4.1 pins the rule this obeys: never `git add -A`. The S5 review
+ * removed exactly that call for flattening a partially staged index, and
+ * staging is where it would be most tempting to bring back.
+ */
+async function gitStage(paths: string[], unstage: boolean): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) throw new Error("no workspace folder is open");
+  if (paths.length === 0) {
+    post({ type: "gitResult", ok: false, detail: "Select at least one file first." });
+    return;
+  }
+  const result = await client.gitStage({ repo: repoPath, paths, unstage });
+  if (!result.ok) post({ type: "gitResult", ok: false, detail: result.error ?? "staging refused" });
+  await sendGitStatus();
+}
+
+async function gitCommit(message: string): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) throw new Error("no workspace folder is open");
+  const result = await client.gitCommit({ repo: repoPath, message });
+  post({
+    type: "gitResult",
+    ok: result.ok,
+    detail: result.ok
+      ? `Committed ${result.hash?.slice(0, 8)} — ${result.summary}`
+      : (result.error ?? "commit refused"),
+  });
+  await sendGitStatus();
+  // A commit does not move the branch pointer to a different branch, but it
+  // does change what the branch is, and the panel shows it.
+  await sendRepoState();
 }
 
 /**

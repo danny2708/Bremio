@@ -2319,3 +2319,31 @@ Rules:
 **Verification**
 - Four route tests: branch, detached, non-repository, missing `repo` (400).
 - Red-check: reported `branch` verbatim → "says a detached HEAD is detached rather than calling it a branch" failed with `expected undefined to be true`.
+
+### S10-T10 — Git: stage and commit
+- **agent:** Claude Opus 5 (head tech review)
+- **time:** 2026-08-01T20:05 → 2026-08-01T20:40
+- **branch:** main
+- **task(s):** S10-T10
+- **status:** done
+
+**Did**
+- New `GitOps` in `@bremio/workspace`: `status()`, `stage()`, `unstage()`, `commit()`.
+- Daemon routes `/git/status`, `/git/stage`, `/git/commit`; a Git tab in the panel with a checkbox per file, Stage/Unstage selected, and a commit box.
+- 11 tests in `git-ops.test.ts` against a real repository.
+
+**Decided**
+- **`stage()` takes explicit paths and refuses an empty list.** Never `git add -A`. The S5 review removed exactly that call from the diff computation for flattening a partially staged index; staging is where it would be most tempting to bring back, and the damage would be identical. Red-checked by swapping in `add -A`: two tests fail, one showing an unrelated file swept into the index.
+- **`status()` reports a file that is staged *and* modified again as two entries.** Collapsing them would make the panel offer to commit content the user has already superseded.
+- **`commit()` refuses an empty index** rather than writing an empty commit — a commit recording nothing is a lie in the history — and refuses a blank message.
+- **No control-mode gate on these routes.** They are user-initiated: a person acting on their own repository, the same footing apply and revert have always been on. `docs/15` §2.4.1's classification governs an *agent* performing them, and `gitActionClasses()` is the table that path must consult. Said plainly here rather than adding a permissive stub that would look like a gate.
+- Parsed `--porcelain=v1 -z` directly rather than using simple-git's summary, because the index and worktree columns must stay distinct, and a rename's second NUL-separated path has to be consumed or it reads as a bogus entry.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm test` — 1171 passed / 86 files (was 1160 / 85).
+- `corepack pnpm release:check` — PASS.
+- Red-check: replaced explicit staging with `git add -A` → "stages only the paths it was given" failed with `expected 'a.txt\nb.txt' to be 'a.txt'`, and the empty-list guard stopped rejecting. Restored.
+
+**Note — repository root wiped mid-task**
+All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.json`, `pnpm-lock.yaml`, …) were deleted from the working tree by something outside this session, between a passing test run and the next typecheck. Nothing under `apps/` or `packages/` was touched. Restored path-by-path from HEAD so in-flight edits survived; nothing was lost, since deleted files hold no uncommitted content. **This is the second occurrence** — the same state appears in the git snapshot at the start of this session. Worth finding the cause: if it lands while files are staged, recovery is messier.

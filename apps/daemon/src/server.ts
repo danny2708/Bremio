@@ -14,7 +14,7 @@ import {
   refreshAqtIfAvailable,
   toAqtCapacitySnapshots,
 } from "@bremio/quota";
-import { MergeManager, getCurrentBranch } from "@bremio/workspace";
+import { GitOps, MergeManager, getCurrentBranch } from "@bremio/workspace";
 import { RunRegistry, createDefaultPluginManager, type SessionEvent } from "./runs";
 import { isTerminal, type CreateContextItemInput, type PersistedContextItem } from "./storage";
 import { mergeRun } from "./merge";
@@ -222,6 +222,49 @@ async function handle(
   // another window is exactly the one a user does not otherwise know about.
   if (method === "GET" && route === "/active") {
     return sendJson(res, 200, { active: registry.activeRuns() });
+  }
+
+  // Working-tree status: what is changed, staged and unstaged (S10-T10).
+  if (method === "GET" && route === "/git/status") {
+    const repoPath = url.searchParams.get("repo");
+    if (!repoPath) return sendJson(res, 400, { error: "repo is required" });
+    try {
+      return sendJson(res, 200, await new GitOps(repoPath).status());
+    } catch (err) {
+      return sendJson(res, 200, { error: (err as Error).message, entries: [], detached: false });
+    }
+  }
+
+  // Stage, unstage and commit (S10-T10). User-initiated: the person is acting
+  // on their own repository, so there is no control mode to evaluate — the
+  // same footing apply and revert have always been on. `gitActionClasses()`
+  // is what an *agent* performing these must consult (`docs/15` §2.4.1).
+  if (method === "POST" && route === "/git/stage") {
+    const body = (await readJsonBody(req)) as { repo?: string; paths?: string[]; unstage?: boolean };
+    if (!body.repo) return sendJson(res, 400, { error: "repo is required" });
+    const paths = Array.isArray(body.paths) ? body.paths.filter((p) => typeof p === "string") : [];
+    try {
+      const ops = new GitOps(body.repo);
+      if (body.unstage) await ops.unstage(paths);
+      else await ops.stage(paths);
+      return sendJson(res, 200, { ok: true, ...(await ops.status()) });
+    } catch (err) {
+      return sendJson(res, 200, { ok: false, error: (err as Error).message });
+    }
+  }
+
+  if (method === "POST" && route === "/git/commit") {
+    const body = (await readJsonBody(req)) as { repo?: string; message?: string };
+    if (!body.repo) return sendJson(res, 400, { error: "repo is required" });
+    try {
+      const ops = new GitOps(body.repo);
+      const commit = await ops.commit(String(body.message ?? ""));
+      return sendJson(res, 200, { ok: true, ...commit, ...(await ops.status()) });
+    } catch (err) {
+      // "nothing is staged" and "a message is required" are answers the panel
+      // renders, not server faults.
+      return sendJson(res, 200, { ok: false, error: (err as Error).message });
+    }
   }
 
   // The repository's current git state (S10-T9). Apply, revert and merge all

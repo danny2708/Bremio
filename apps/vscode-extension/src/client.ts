@@ -321,6 +321,42 @@ export class BremioClient {
     return this.#call("/active");
   }
 
+  /** Working-tree status: what is changed, staged and unstaged. */
+  gitStatus(repoPath: string): Promise<{
+    branch?: string;
+    detached?: boolean;
+    error?: string;
+    entries: Array<{ path: string; staged: boolean; status: string; untracked: boolean }>;
+  }> {
+    return this.#call(`/git/status?repo=${encodeURIComponent(repoPath)}`);
+  }
+
+  gitStage(request: { repo: string; paths: string[]; unstage?: boolean }): Promise<{
+    ok: boolean;
+    error?: string;
+    entries?: Array<{ path: string; staged: boolean; status: string; untracked: boolean }>;
+  }> {
+    return this.#call("/git/stage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
+  gitCommit(request: { repo: string; message: string }): Promise<{
+    ok: boolean;
+    hash?: string;
+    summary?: string;
+    error?: string;
+    entries?: Array<{ path: string; staged: boolean; status: string; untracked: boolean }>;
+  }> {
+    return this.#call("/git/commit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
   /** The repository's current git state — branch, or a named reason there is none. */
   repoState(repoPath: string): Promise<{
     repoPath: string;

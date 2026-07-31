@@ -947,6 +947,21 @@ pre.log {
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
 
+/* Working-tree changes, staged and unstaged. */
+.git-list { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.git-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+.git-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.git-row + .git-row { border-top: 1px solid var(--border); }
+.git-status {
+  flex: 0 0 auto; width: 68px; font-size: 10px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .03em;
+}
+.git-status.modified { color: var(--bremio-accent-hover); }
+.git-status.deleted { color: var(--danger); }
+.git-status.untracked, .git-status.added { color: var(--ok, #3fb950); }
+.git-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); }
+#git-message { width: 100%; }
+
 /* The checked-out branch. Apply and merge act relative to it, so it belongs
  * where the user can see it without going looking. */
 .branch-label {
@@ -1070,6 +1085,7 @@ pre.log {
   <button data-tab="run" class="active">Run</button>
   <button data-tab="sessions">Sessions</button>
   <button data-tab="runs">Runs</button>
+  <button data-tab="git">Git</button>
   <button data-tab="capacity">Capacity</button>
   <button data-tab="doctor">Doctor</button>
 </nav>
@@ -1134,6 +1150,7 @@ pre.log {
 
   <section id="tab-sessions"><div class="empty">Loading sessions…</div></section>
   <section id="tab-runs"><div id="active-runs"></div><div id="runs-list"><div class="empty">Loading runs…</div></div></section>
+  <section id="tab-git"><div class="empty">Loading changes…</div></section>
   <section id="tab-capacity"><div class="empty">Loading capacity…</div></section>
   <section id="tab-doctor"><div class="empty">Checking adapters…</div></section>
 </main>
@@ -1310,6 +1327,16 @@ window.addEventListener("message", (event) => {
   }
   if (message.type === "activeRuns") {
     $("active-runs").innerHTML = renderActiveRuns(message.active);
+  }
+  if (message.type === "gitStatus") {
+    $("tab-git").innerHTML = renderGitPanel(message.git);
+  }
+  if (message.type === "gitResult") {
+    const host = $("git-result");
+    if (host) {
+      host.innerHTML = '<div class="banner ' + (message.ok ? "ok" : "bad") + '">'
+        + escapeHtml(message.detail) + "</div>";
+    }
   }
   if (message.type === "repoState") {
     const state = message.repoState || {};
@@ -1527,6 +1554,55 @@ function annotateThumbDims() {
     if (img.complete) fill();
     else img.addEventListener("load", fill, { once: true });
   }
+}
+
+/**
+ * Staged and unstaged changes, with commit (S10-T10).
+ *
+ * Every file carries its own checkbox and the buttons act on the checked set,
+ * because the one rule this feature must not break is that Bremio stages what
+ * the user chose and nothing else — docs/15 §2.4.1, and the S5 review that
+ * removed an add-everything call for flattening a partially staged index.
+ */
+function renderGitPanel(git) {
+  if (!git) return '<div class="empty">Loading changes…</div>';
+  if (git.error) return '<div class="banner bad">' + escapeHtml(git.error) + "</div>";
+
+  const entries = git.entries || [];
+  const staged = entries.filter(function(e) { return e.staged; });
+  const unstaged = entries.filter(function(e) { return !e.staged; });
+
+  const row = (entry, idx) => '<label class="git-row">'
+    + '<input type="checkbox" data-git-path="' + escapeHtml(entry.path) + '" id="git-' + (entry.staged ? "s" : "u") + idx + '">'
+    + '<span class="git-status ' + escapeHtml(entry.status) + '">' + escapeHtml(entry.status) + "</span>"
+    + '<span class="git-path">' + escapeHtml(entry.path) + "</span>"
+    + "</label>";
+
+  const section = (title, list, action, label) => {
+    if (list.length === 0) {
+      return '<div class="section-label">' + title + '</div><div class="secondary">Nothing ' + (action === "stage" ? "to stage" : "staged") + ".</div>";
+    }
+    return '<div class="section-label">' + title + " (" + list.length + ")</div>"
+      + '<div class="git-list" data-git-group="' + action + '">' + list.map(row).join("") + "</div>"
+      + '<div class="row" style="margin:6px 0 12px">'
+      + '<button class="ghost" data-action="git-' + action + '">' + label + "</button>"
+      + '<button class="ghost" data-action="git-select-all" data-group="' + action + '">Select all</button>'
+      + "</div>";
+  };
+
+  return '<div class="row" style="margin-bottom:10px">'
+    + '<span class="section-label">Changes on ' + escapeHtml(git.branch || (git.detached ? "detached HEAD" : "?")) + "</span>"
+    + '<div class="spacer"></div>'
+    + '<button class="ghost" data-action="git-refresh">Refresh</button>'
+    + "</div>"
+    + section("Staged", staged, "unstage", "Unstage selected")
+    + section("Changes", unstaged, "stage", "Stage selected")
+    + '<div class="section-label">Commit</div>'
+    + '<textarea id="git-message" rows="3" placeholder="commit message"></textarea>'
+    + '<div class="row" style="margin-top:8px">'
+    + '<button class="primary" data-action="git-commit">Commit staged</button>'
+    + "</div>"
+    + '<div id="git-result"></div>';
 }
 
 /**
@@ -2036,6 +2112,38 @@ document.addEventListener("click", (event) => {
       sessionId: button.dataset.session,
       attachments: [],
     });
+    return;
+  }
+  if (button.dataset.action === "git-refresh") {
+    vscode.postMessage({ type: "gitRefresh" });
+    return;
+  }
+  if (button.dataset.action === "git-select-all") {
+    const group = $("tab-git").querySelector('[data-git-group="' + button.dataset.group + '"]');
+    if (group) {
+      const boxes = [...group.querySelectorAll("input[data-git-path]")];
+      // Toggle: a second press clears, so "select all" cannot strand the user
+      // with a selection they have to undo one box at a time.
+      const turnOn = boxes.some((box) => !box.checked);
+      for (const box of boxes) box.checked = turnOn;
+    }
+    return;
+  }
+  if (button.dataset.action === "git-stage" || button.dataset.action === "git-unstage") {
+    const unstage = button.dataset.action === "git-unstage";
+    const group = $("tab-git").querySelector('[data-git-group="' + (unstage ? "unstage" : "stage") + '"]');
+    const paths = group
+      ? [...group.querySelectorAll("input[data-git-path]")]
+          .filter((box) => box.checked)
+          .map((box) => box.dataset.gitPath)
+      : [];
+    vscode.postMessage({ type: "gitStage", paths, unstage });
+    return;
+  }
+  if (button.dataset.action === "git-commit") {
+    const box = $("git-message");
+    vscode.postMessage({ type: "gitCommit", message: box ? box.value : "" });
+    if (box) box.value = "";
     return;
   }
   if (button.dataset.action === "apply-diff" || button.dataset.action === "revert-diff"
