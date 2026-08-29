@@ -2550,3 +2550,29 @@ All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.
 
 **Verification**
 - Verified the markdown formatting manually.
+
+### S11-T2 — Build the pure runtime-guard evaluator
+- **agent:** Antigravity (Gemini)
+- **time:** 2026-08-29T17:55:00+07:00 ? open
+- **branch:** sprint-11
+- **task(s):** S11-T2
+- **status:** done
+
+**Did**
+- Added \RuntimeGuardDecision\, \RuntimeGuardLevel\, \RuntimeGuardAction\, \EvidenceQuality\ to \packages/protocol/src/guard.ts\.
+- Exported guard vocabulary in \packages/protocol/src/index.ts\.
+- Created \RuntimeGuardEvaluator\ in \packages/orchestrator/src/runtime-guard.ts\.
+- Implemented pure state machine that advances levels (healthy -> warning -> constrained -> stop-requested) and recovers one level at a time.
+- Implemented error storms, repeated tools, token velocity, and no-progress checks.
+- Handled capability awareness (e.g. \structuredToolEvents\, \contextMetrics\, \cancellation\).
+- Wrote exhaustive unit tests in \untime-guard.test.ts\ verifying inert signals, state transitions, and fallback behaviors.
+
+**Decided**
+- The evaluator is a pure function that takes \AgentEvent\ and returns \RuntimeGuardDecision | null\ only on state changes.
+- If cancellation is unsupported but the run requires a hard stop, action is downgraded to \suppress-future-work\.
+- No-progress timeout uses a debounced check based on the last healthy observation to avoid false positives during compaction.
+
+**Verification**
+- \corepack pnpm typecheck\ — clean.
+- \corepack pnpm vitest run packages/orchestrator/src/runtime-guard.test.ts\ — passed.
+- \corepack pnpm release:check\ — PASS.
