@@ -33,7 +33,7 @@ export class MemoryInjector {
     for (const scope of scopes) {
       const entries = await this.store.list(scope);
       for (const entry of entries) {
-        if (entry.source.kind === "proposal") continue;
+        if (entry.review?.state !== "approved") continue;
         if (entry.expiresAt && new Date(entry.expiresAt) <= new Date()) continue;
         candidates.push(entry);
       }

@@ -1026,12 +1026,12 @@ describe("session_config (S1-T1/T2)", () => {
     expect(s.listSessions("/tmp/repo")).toHaveLength(1);
   });
 
-  it("pristine and migrated stores both report user_version = 14", async () => {
+  it("pristine and migrated stores both report user_version = 15", async () => {
     const fresh = await store();
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(14);
+    expect(freshVer).toBe(15);
 
     // Fresh store has session_compacts table and lineage columns on sessions
     const freshCols = fresh["db"].prepare("PRAGMA table_info(session_compacts)").all() as Array<{ name: string }>;
@@ -1051,7 +1051,7 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(14);
+    expect(migratedVer).toBe(15);
 
     // Migrated store also has session_compacts table and lineage columns
     const migratedCols = migrated["db"].prepare("PRAGMA table_info(session_compacts)").all() as Array<{ name: string }>;
