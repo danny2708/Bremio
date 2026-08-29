@@ -207,4 +207,65 @@ describe("assembleTaskLanes (A4-T1)", () => {
   });
 });
 
+describe("guard_decision", () => {
+  it("renders a healthy observe-only guard decision", () => {
+    const ts = new Date("2026-08-29T12:00:00Z").getTime();
+    expect(
+      renderEvent({
+        type: "guard_decision",
+        ts,
+        decision: {
+          level: "tool",
+          action: "observe_only",
+          reasonCode: "clean_history",
+          evidenceQuality: "high",
+        },
+      }),
+    ).toEqual({
+      kind: "guard",
+      summary: "guard [tool] observe-only",
+      detail: "reason: clean_history\nevidence: high\ntime: 2026-08-29T12:00:00.000Z",
+      severity: "notice",
+    });
+  });
+
+  it("renders an unknown guard decision as warning", () => {
+    expect(
+      renderEvent({
+        type: "guard_decision",
+        decision: {
+          level: "unknown",
+          action: "observe_only",
+          reasonCode: "no_data",
+          evidenceQuality: "low",
+        },
+      }),
+    ).toEqual({
+      kind: "guard",
+      summary: "guard [unknown] observe-only",
+      detail: "reason: no_data\nevidence: low",
+      severity: "warn",
+    });
+  });
+
+  it("renders a blocking guard decision as error", () => {
+    expect(
+      renderEvent({
+        type: "guard_decision",
+        decision: {
+          level: "session",
+          action: "block",
+          reasonCode: "max_cost_exceeded",
+          evidenceQuality: "high",
+        },
+      }),
+    ).toEqual({
+      kind: "guard",
+      summary: "guard [session] block",
+      detail: "reason: max_cost_exceeded\nevidence: high",
+      severity: "error",
+    });
+  });
+});
+
 

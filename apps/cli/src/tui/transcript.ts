@@ -69,8 +69,8 @@ export function assembleTranscript(
       const seq = typeof ev.seq === "number" ? ev.seq : 0;
       const agentEv =
         typeof ev.data === "object" && ev.data !== null
-          ? { type: ev.kind ?? "log", ...ev.data }
-          : { type: ev.kind ?? "log", text: ev.message, message: ev.message };
+          ? { type: ev.kind ?? "log", ts: ev.ts, ...ev.data }
+          : { type: ev.kind ?? "log", ts: ev.ts, text: ev.message, message: ev.message };
 
       const view = renderEvent(agentEv as any);
       const isCollapsible = view.kind === "thinking" || view.kind === "tool_use" || view.kind === "tool_result";

@@ -211,6 +211,13 @@ export function renderEvent(event: {
   level?: string;
   model?: string;
   reasoningLevel?: string;
+  decision?: {
+    level: string;
+    action: string;
+    reasonCode: string;
+    evidenceQuality: string;
+  };
+  ts?: number;
 }): { kind: string; summary: string; detail?: string; severity: string } {
   switch (event.type) {
     case "started":
@@ -258,6 +265,21 @@ export function renderEvent(event: {
       return { kind: "error", summary: "✗ " + (event.message ?? ""), severity: "error" };
     case "completed":
       return { kind: "completed", summary: "✓ completed", severity: "success" };
+    case "guard_decision": {
+      if (!event.decision) {
+        return { kind: "guard", summary: "guard [unknown]", severity: "warn" };
+      }
+      const isObserveOnly = event.decision.action === "observe_only";
+      const isUnknown = event.decision.level === "unknown";
+      const actionLabel = isObserveOnly ? "observe-only" : event.decision.action;
+      const severity = isUnknown ? "warn" : event.decision.action === "block" ? "error" : "notice";
+      return {
+        kind: "guard",
+        summary: "guard [" + event.decision.level + "] " + actionLabel,
+        detail: "reason: " + event.decision.reasonCode + "\nevidence: " + event.decision.evidenceQuality + (event.ts ? "\ntime: " + new Date(event.ts).toISOString() : ""),
+        severity,
+      };
+    }
     default: {
       const label = String(event.type);
       return { kind: label, summary: "[" + label + "]", detail: JSON.stringify(event), severity: "info" };
@@ -439,7 +461,7 @@ export function renderDiffViewer(diff: { stat: string; patch: string }): string 
     + "</div></div>";
 }
 
-export function renderLogLine(event: { kind?: string; taskId?: string; message?: string; data?: unknown }): {
+export function renderLogLine(event: { kind?: string; taskId?: string; message?: string; data?: unknown; ts?: number }): {
   summary: string;
   detail?: string;
   kind: string;
@@ -447,8 +469,8 @@ export function renderLogLine(event: { kind?: string; taskId?: string; message?:
 } {
   const agentEv =
     typeof event.data === "object" && event.data !== null
-      ? Object.assign({ type: event.kind || "log" }, event.data)
-      : { type: event.kind || "log", text: event.message, message: event.message };
+      ? Object.assign({ type: event.kind || "log", ts: event.ts }, event.data)
+      : { type: event.kind || "log", ts: event.ts, text: event.message, message: event.message };
   const view = renderEvent(agentEv as any);
   return {
     summary: view.summary,
@@ -630,8 +652,8 @@ export function assembleTaskLanes(
           ? "message"
           : rawEv.kind;
     const agentEv = dataObj
-      ? Object.assign({ type: evType }, dataObj)
-      : { type: evType, text: rawEv.message, message: rawEv.message };
+      ? Object.assign({ type: evType, ts: (rawEv as any).ts }, dataObj)
+      : { type: evType, ts: (rawEv as any).ts, text: rawEv.message, message: rawEv.message };
     const view = renderEvent(agentEv as any);
 
     lane.events.push({

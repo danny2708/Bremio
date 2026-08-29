@@ -22,6 +22,13 @@ export function renderEvent(event: {
   level?: string;
   model?: string;
   reasoningLevel?: string;
+  decision?: {
+    level: string;
+    action: string;
+    reasonCode: string;
+    evidenceQuality: string;
+  };
+  ts?: number;
 }): EventView {
   switch (event.type) {
     case "started":
@@ -83,6 +90,24 @@ export function renderEvent(event: {
 
     case "completed":
       return { kind: "completed", summary: "✓ completed", severity: "success" };
+
+    case "guard_decision": {
+      if (!event.decision) {
+        return { kind: "guard", summary: "guard [unknown]", severity: "warn" };
+      }
+      const isObserveOnly = event.decision.action === "observe_only";
+      const isUnknown = event.decision.level === "unknown";
+      
+      const actionLabel = isObserveOnly ? "observe-only" : event.decision.action;
+      const severity = isUnknown ? "warn" : event.decision.action === "block" ? "error" : "notice";
+      
+      return {
+        kind: "guard",
+        summary: `guard [${event.decision.level}] ${actionLabel}`,
+        detail: `reason: ${event.decision.reasonCode}\nevidence: ${event.decision.evidenceQuality}${event.ts ? `\ntime: ${new Date(event.ts).toISOString()}` : ""}`,
+        severity,
+      };
+    }
 
     default: {
       const label = String(event.type);
