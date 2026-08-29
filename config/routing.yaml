@@ -56,3 +56,7 @@ tiers:
     codex: gpt-5.6-zeus
     antigravity: claude-opus-4-20250514
     opencode: deepseek-reasoner
+
+# Guard controls whether runtime decisions observe-only or enforce constraints.
+guard:
+  enforce: false

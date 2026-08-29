@@ -25,6 +25,7 @@ describe("RuntimeGuardEvaluator", () => {
       maxConsecutiveSameTool: 3,
       maxTokensPerMinute: 1000,
       noProgressTimeoutMs: 10000,
+      enforce: true,
       ...configOverrides,
     });
   };
@@ -134,6 +135,16 @@ describe("RuntimeGuardEvaluator", () => {
     expect(decision?.level).toBe("stop-requested");
     // Action should be downgraded to suppress-future-work because cancel is false
     expect(decision?.action).toBe("suppress-future-work");
+  });
+
+  it("should return observe_only when enforce is false", () => {
+    const evaluator = createEvaluator({ enforce: false, maxConsecutiveErrors: 2 });
+    evaluator.evaluate({ type: "error", message: "err", fatal: false, ts: 10, runId: "run1" });
+    const decision = evaluator.evaluate({ type: "error", message: "err", fatal: false, ts: 20, runId: "run1" });
+    
+    expect(decision).toBeDefined();
+    expect(decision?.level).toBe("warning");
+    expect(decision?.action).toBe("observe_only");
   });
 
   it("should trigger no-progress after timeout without healthy observations", () => {

@@ -6,6 +6,8 @@ import {
   runBremio,
   runSingleAgent,
   RuntimeGuardEvaluator,
+  loadRoutingConfig,
+  getDefaultRoutingConfig,
   type BremioRunReport,
 } from "@bremio/orchestrator";
 import type { ReasoningLevel, AgentEvent } from "@bremio/protocol";
@@ -1168,6 +1170,8 @@ export class RunRegistry {
     input: StartRunInput,
     controller: AbortController,
   ): Promise<void> {
+    const routingConfig = await loadRoutingConfig().catch(() => getDefaultRoutingConfig());
+    if (this.#storeIsGone()) return;
     const registry = createRegistry(this.executableAdapters());
 
     // Construct Sprint 8 tools wired to real policy evaluation and the S3
@@ -1208,7 +1212,9 @@ export class RunRegistry {
     const getEvaluator = (agentId: string) => {
       let evaluator = evaluators.get(agentId);
       if (!evaluator) {
-         evaluator = new RuntimeGuardEvaluator(runId, agentId, capabilities.get(agentId)!);
+         evaluator = new RuntimeGuardEvaluator(runId, agentId, capabilities.get(agentId)!, {
+           enforce: routingConfig.guard.enforce,
+         });
          evaluators.set(agentId, evaluator);
       }
       return evaluator;
@@ -1228,6 +1234,15 @@ export class RunRegistry {
             decision,
           },
         });
+
+        if (decision.action === "cancel") {
+          this.cancel(runId);
+        } else if (decision.action === "suppress-future-work") {
+          if (!controller.signal.aborted) {
+            this.#emit(runId, { kind: "status", message: `constrained — suppressing future work: ${decision.reason}` });
+            controller.abort();
+          }
+        }
       }
     };
 

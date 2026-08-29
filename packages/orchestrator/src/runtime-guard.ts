@@ -6,6 +6,7 @@ export interface GuardConfig {
   maxConsecutiveSameTool: number;
   maxTokensPerMinute: number;
   noProgressTimeoutMs: number;
+  enforce: boolean;
 }
 
 export const DEFAULT_GUARD_CONFIG: GuardConfig = {
@@ -13,6 +14,7 @@ export const DEFAULT_GUARD_CONFIG: GuardConfig = {
   maxConsecutiveSameTool: 5,
   maxTokensPerMinute: 100000,
   noProgressTimeoutMs: 300000, // 5 minutes
+  enforce: false,
 };
 
 // Deep equality check without lodash
@@ -142,10 +144,14 @@ export class RuntimeGuardEvaluator {
       this.level = newLevel;
       
       let action: RuntimeGuardAction = "none";
-      if (newLevel === "warning") action = "warn";
-      else if (newLevel === "constrained") action = "suppress-future-work";
-      else if (newLevel === "stop-requested") {
-        action = this.capabilities.cancellation ? "cancel" : "suppress-future-work";
+      if (!this.config.enforce) {
+        if (newLevel !== "healthy") action = "observe_only";
+      } else {
+        if (newLevel === "warning") action = "warn";
+        else if (newLevel === "constrained") action = "suppress-future-work";
+        else if (newLevel === "stop-requested") {
+          action = this.capabilities.cancellation ? "cancel" : "suppress-future-work";
+        }
       }
 
       if (!isViolation && newLevel === "healthy") {

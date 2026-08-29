@@ -13,6 +13,7 @@ export type RuntimeGuardLevel = z.infer<typeof RuntimeGuardLevelSchema>;
 
 export const RuntimeGuardActionSchema = z.enum([
   "none",
+  "observe_only",
   "warn",
   "suppress-future-work",
   "cancel",
