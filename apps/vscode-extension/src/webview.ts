@@ -694,6 +694,11 @@ export function panelHtml(nonce: string, cspSource: string, iconUri = ""): strin
   --hover: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.12));
   --success: var(--vscode-testing-iconPassed, #3fb950);
   --danger: var(--vscode-errorForeground, #f85149);
+
+  /* Convenience aliases */
+  --fg: var(--text);
+  --muted: var(--text-muted);
+  --ok: var(--success);
 }
 
 * { box-sizing: border-box; }
@@ -839,14 +844,20 @@ section.active { display: block; }
 .window { margin: 8px 0; }
 .window-label { display: flex; justify-content: space-between; font-size: 11px; }
 
-label { display: block; font-size: 11px; color: var(--text-muted); margin: 10px 0 4px; }
-input, select, textarea {
+label:not(.git-row) { display: block; font-size: 11px; color: var(--text-muted); margin: 10px 0 4px; }
+input:not([type="checkbox"]):not([type="radio"]), select, textarea {
   width: 100%;
   background: var(--vscode-input-background, transparent);
   color: var(--vscode-input-foreground, var(--text));
   border: 1px solid var(--vscode-input-border, var(--border));
   border-radius: 6px;
   padding: 7px 9px; font-family: inherit; font-size: 12px;
+}
+input[type="checkbox"], input[type="radio"] {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--bremio-primary);
 }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--bremio-primary); }
 textarea { resize: vertical; min-height: 72px; }
@@ -947,20 +958,120 @@ pre.log {
 .process div { white-space: pre-wrap; word-break: break-all; }
 .turn-foot { font-size: 11px; color: var(--muted); }
 
-/* Working-tree changes, staged and unstaged. */
-.git-list { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-.git-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
-.git-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
-.git-row + .git-row { border-top: 1px solid var(--border); }
-.git-status {
-  flex: 0 0 auto; width: 68px; font-size: 10px; color: var(--muted);
-  text-transform: uppercase; letter-spacing: .03em;
+/* Working-tree changes, staged and unstaged (Git tab). */
+.git-container { display: flex; flex-direction: column; gap: 12px; }
+.git-card { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+.git-header-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; background: var(--surface-raised); border: 1px solid var(--border);
+  border-radius: 8px; margin-bottom: 4px;
 }
-.git-status.modified { color: var(--bremio-accent-hover); }
-.git-status.deleted { color: var(--danger); }
-.git-status.untracked, .git-status.added { color: var(--ok, #3fb950); }
-.git-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); }
-#git-message { width: 100%; }
+.git-branch-info { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.git-branch-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: color-mix(in srgb, var(--bremio-primary) 16%, transparent);
+  color: var(--bremio-primary-hover);
+  border: 1px solid color-mix(in srgb, var(--bremio-primary) 32%, transparent);
+  padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.git-branch-badge.detached {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+}
+.git-section { display: flex; flex-direction: column; gap: 6px; }
+.git-section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-muted);
+}
+.git-count-badge {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text); font-size: 10px; padding: 1px 6px;
+  border-radius: 10px; font-weight: 700; margin-left: 4px;
+}
+.git-list {
+  border: 1px solid var(--border); border-radius: 6px;
+  overflow: hidden; background: var(--surface);
+}
+.git-row {
+  display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+  font-size: 12px; cursor: pointer; margin: 0 !important;
+  transition: background 0.12s ease; user-select: none;
+}
+.git-row:hover { background: var(--hover); }
+.git-row + .git-row { border-top: 1px solid var(--border); }
+.git-checkbox {
+  flex: none; width: 14px !important; height: 14px !important;
+  margin: 0 !important; cursor: pointer;
+}
+.git-status-badge {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 4px; font-size: 10px;
+  font-weight: 800; text-transform: uppercase; line-height: 1; font-family: var(--vscode-editor-font-family, monospace);
+}
+.git-status-badge.modified {
+  background: color-mix(in srgb, var(--bremio-accent) 22%, transparent);
+  color: var(--bremio-accent-hover);
+  border: 1px solid color-mix(in srgb, var(--bremio-accent) 45%, transparent);
+}
+.git-status-badge.deleted {
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+}
+.git-status-badge.untracked,
+.git-status-badge.added {
+  background: color-mix(in srgb, var(--success) 22%, transparent);
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 45%, transparent);
+}
+.git-file-info {
+  flex: 1; min-width: 0; display: flex; align-items: baseline;
+  gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.git-file-name {
+  font-weight: 600; color: var(--text); font-family: var(--vscode-editor-font-family, monospace);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px;
+}
+.git-file-dir {
+  font-size: 11px; color: var(--text-muted); font-family: var(--vscode-editor-font-family, monospace);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.8;
+}
+.git-status-label {
+  flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; opacity: 0.85; margin-left: auto;
+}
+.git-status-label.modified { color: var(--bremio-accent-hover); }
+.git-status-label.deleted { color: var(--danger); }
+.git-status-label.untracked, .git-status-label.added { color: var(--success); }
+
+.git-actions-row { display: flex; align-items: center; gap: 6px; }
+.git-empty-hint {
+  padding: 10px 12px; color: var(--text-muted); font-size: 11px;
+  font-style: italic; border: 1px dashed var(--border); border-radius: 6px;
+  text-align: center; background: color-mix(in srgb, var(--text-muted) 5%, transparent);
+}
+.git-commit-container {
+  background: var(--surface-raised); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.git-commit-textarea {
+  min-height: 60px !important; font-family: inherit; font-size: 12px; resize: vertical;
+}
+.git-pr-card {
+  border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; background: var(--surface-raised); margin-top: 4px;
+}
+.git-pr-card summary {
+  cursor: pointer; padding: 9px 12px; font-size: 12px; font-weight: 600;
+  color: var(--text); display: flex; align-items: center; gap: 6px; user-select: none;
+}
+.git-pr-card summary:hover { background: var(--hover); }
+.git-pr-body {
+  padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 8px;
+}
 
 /* The checked-out branch. Apply and merge act relative to it, so it belongs
  * where the user can see it without going looking. */
@@ -1599,66 +1710,101 @@ function renderGitPanel(git) {
   const staged = entries.filter(function(e) { return e.staged; });
   const unstaged = entries.filter(function(e) { return !e.staged; });
 
-  const row = (entry, idx) => '<label class="git-row">'
-    + '<input type="checkbox" data-git-path="' + escapeHtml(entry.path) + '" id="git-' + (entry.staged ? "s" : "u") + idx + '">'
-    + '<span class="git-status ' + escapeHtml(entry.status) + '">' + escapeHtml(entry.status) + "</span>"
-    + '<span class="git-path">' + escapeHtml(entry.path) + "</span>"
-    + "</label>";
+  const row = (entry, idx) => {
+    const fullPath = entry.path || "";
+    const lastSlash = Math.max(fullPath.lastIndexOf("/"), fullPath.lastIndexOf(String.fromCharCode(92)));
+    const dir = lastSlash >= 0 ? fullPath.slice(0, lastSlash + 1) : "";
+    const file = lastSlash >= 0 ? fullPath.slice(lastSlash + 1) : fullPath;
+    const statusLetter = (entry.status || "M").charAt(0).toUpperCase();
+    const statusClass = (entry.status || "").toLowerCase();
+
+    return '<label class="git-row" title="' + escapeHtml(fullPath) + '">'
+      + '<input type="checkbox" class="git-checkbox" data-git-path="' + escapeHtml(fullPath) + '" id="git-' + (entry.staged ? "s" : "u") + idx + '">'
+      + '<span class="git-status-badge ' + escapeHtml(statusClass) + '" title="' + escapeHtml(entry.status) + '">' + escapeHtml(statusLetter) + '</span>'
+      + '<span class="git-file-info">'
+      + '<span class="git-file-name">' + escapeHtml(file) + '</span>'
+      + (dir ? '<span class="git-file-dir">' + escapeHtml(dir) + '</span>' : '')
+      + '</span>'
+      + '<span class="git-status-label ' + escapeHtml(statusClass) + '">' + escapeHtml(entry.status) + '</span>'
+      + '</label>';
+  };
 
   const section = (title, list, action, label) => {
     if (list.length === 0) {
-      return '<div class="section-label">' + title + '</div><div class="secondary">Nothing ' + (action === "stage" ? "to stage" : "staged") + ".</div>";
+      return '<div class="git-section">'
+        + '<div class="git-section-header"><span>' + title + '</span></div>'
+        + '<div class="git-empty-hint">Nothing ' + (action === "stage" ? "to stage" : "staged") + '.</div>'
+        + '</div>';
     }
-    return '<div class="section-label">' + title + " (" + list.length + ")</div>"
-      + '<div class="git-list" data-git-group="' + action + '">' + list.map(row).join("") + "</div>"
-      + '<div class="row" style="margin:6px 0 12px">'
-      + '<button class="ghost" data-action="git-' + action + '">' + label + "</button>"
-      + '<button class="ghost" data-action="git-select-all" data-group="' + action + '">Select all</button>'
-      + "</div>";
+    return '<div class="git-section">'
+      + '<div class="git-section-header">'
+      + '<span>' + title + ' <span class="git-count-badge">' + list.length + '</span></span>'
+      + '<div class="git-actions-row">'
+      + '<button class="ghost" style="padding:2px 8px;font-size:11px" data-action="git-' + action + '">' + label + '</button>'
+      + '<button class="ghost" style="padding:2px 8px;font-size:11px" data-action="git-select-all" data-group="' + action + '">Select all</button>'
+      + '</div>'
+      + '</div>'
+      + '<div class="git-list" data-git-group="' + action + '">' + list.map(row).join("") + '</div>'
+      + '</div>';
   };
 
   const branches = git.branches || [];
   const options = branches
     .map(function(b) {
-      return '<option value="' + escapeHtml(b.name) + '"' + (b.current ? " selected" : "") + ">"
-        + escapeHtml(b.name) + "</option>";
+      return '<option value="' + escapeHtml(b.name) + '"' + (b.current ? " selected" : "") + '>'
+        + escapeHtml(b.name) + '</option>';
     })
     .join("");
-  const branchBar = branches.length > 0
-    ? '<div class="section-label">Branch</div>'
-      + '<div class="row" style="margin-bottom:12px">'
-      + '<select id="git-branch-select">' + options + "</select>"
-      + '<button class="ghost" data-action="git-switch">Switch</button>'
-      + '<input id="git-branch-new" type="text" placeholder="new branch name">'
-      + '<button class="ghost" data-action="git-create-branch">Create</button>'
-      + "</div>"
-    : "";
 
-  return '<div class="row" style="margin-bottom:10px">'
-    + '<span class="section-label">Changes on ' + escapeHtml(git.branch || (git.detached ? "detached HEAD" : "?")) + "</span>"
-    + '<div class="spacer"></div>'
-    + '<button class="ghost" data-action="git-refresh">Refresh</button>'
-    + "</div>"
+  const branchBar = branches.length > 0
+    ? '<div class="git-card" style="padding:10px 12px">'
+      + '<div class="git-section-header" style="margin-bottom:6px"><span>Switch or Create Branch</span></div>'
+      + '<div class="row" style="gap:6px">'
+      + '<select id="git-branch-select" style="flex:1">' + options + '</select>'
+      + '<button class="ghost" data-action="git-switch">Switch</button>'
+      + '<input id="git-branch-new" type="text" placeholder="new branch name" style="flex:1">'
+      + '<button class="ghost" data-action="git-create-branch">Create</button>'
+      + '</div>'
+      + '</div>'
+    : '';
+
+  const branchName = git.branch || (git.detached ? "detached HEAD" : "?");
+  const branchClass = git.detached ? "detached" : "";
+
+  return '<div class="git-container">'
+    + '<div class="git-header-bar">'
+    + '<div class="git-branch-info">'
+    + '<span class="muted" style="font-size:12px">Branch:</span>'
+    + '<span class="git-branch-badge ' + branchClass + '">' + escapeHtml(branchName) + '</span>'
+    + '</div>'
+    + '<button class="ghost" style="padding:3px 10px;font-size:11px" data-action="git-refresh">&#8635; Refresh</button>'
+    + '</div>'
     + branchBar
-    + section("Staged", staged, "unstage", "Unstage selected")
-    + section("Changes", unstaged, "stage", "Stage selected")
-    + '<div class="section-label">Commit & Sync</div>'
-    + '<textarea id="git-message" rows="3" placeholder="commit message"></textarea>'
-    + '<div class="row" style="margin-top:8px">'
+    + section("Staged Changes", staged, "unstage", "Unstage selected")
+    + section("Working Tree Changes", unstaged, "stage", "Stage selected")
+    + '<div class="git-commit-container">'
+    + '<div class="git-section-header"><span>Commit &amp; Sync</span></div>'
+    + '<textarea id="git-message" class="git-commit-textarea" rows="2" placeholder="Commit message (Ctrl+Enter to commit)"></textarea>'
+    + '<div class="row" style="justify-content:space-between;align-items:center">'
     + '<button class="primary" data-action="git-commit">Commit staged</button>'
-    + '<button class="ghost" data-action="git-pull">Pull</button>'
-    + '<button class="ghost" data-action="git-push">Push</button>'
-    + "</div>"
-    + '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted);font-weight:600">Open Pull Request via gh</summary>'
-    + '<input id="git-pr-title" type="text" placeholder="pull request title" style="margin-top:6px">'
-    + '<textarea id="git-pr-body" rows="2" placeholder="description (optional)" style="margin-top:6px"></textarea>'
-    + '<div class="row" style="margin-top:6px;align-items:center">'
-    + '<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;margin:0"><input type="checkbox" id="git-pr-draft" style="width:auto"> Draft</label>'
-    + '<div class="spacer"></div>'
+    + '<div class="row" style="gap:6px">'
+    + '<button class="ghost" data-action="git-pull">&#8595; Pull</button>'
+    + '<button class="ghost" data-action="git-push">&#8593; Push</button>'
+    + '</div>'
+    + '</div>'
+    + '</div>'
+    + '<details class="git-pr-card"><summary>&#10555; Open Pull Request via gh</summary>'
+    + '<div class="git-pr-body">'
+    + '<input id="git-pr-title" type="text" placeholder="Pull request title">'
+    + '<textarea id="git-pr-body" rows="2" placeholder="Description (optional)"></textarea>'
+    + '<div class="row" style="align-items:center;justify-content:space-between">'
+    + '<label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;margin:0"><input type="checkbox" id="git-pr-draft" style="width:auto"> Draft PR</label>'
     + '<button class="ghost" data-action="git-create-pr">Create PR</button>'
-    + "</div>"
-    + "</details>"
-    + '<div id="git-result"></div>';
+    + '</div>'
+    + '</div>'
+    + '</details>'
+    + '<div id="git-result"></div>'
+    + '</div>';
 }
 
 /**
@@ -2336,6 +2482,19 @@ document.addEventListener("drop", (event) => {
       });
     };
     reader.readAsDataURL(file);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    if (document.activeElement && document.activeElement.id === "git-message") {
+      event.preventDefault();
+      const box = $("git-message");
+      if (box && box.value.trim()) {
+        vscode.postMessage({ type: "gitCommit", message: box.value });
+        box.value = "";
+      }
+    }
   }
 });
 
