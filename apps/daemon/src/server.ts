@@ -293,6 +293,62 @@ async function handle(
     }
   }
 
+  // Remotes, push and pull (S10-T12).
+  // Force-push is git-destructive (docs/15 §2.4.1) and refused by GitOps.
+  if (method === "GET" && route === "/git/remotes") {
+    const repoPath = url.searchParams.get("repo");
+    if (!repoPath) return sendJson(res, 400, { error: "repo is required" });
+    try {
+      return sendJson(res, 200, { remotes: await new GitOps(repoPath).remotes() });
+    } catch (err) {
+      return sendJson(res, 200, { remotes: [], error: (err as Error).message });
+    }
+  }
+
+  if (method === "POST" && route === "/git/push") {
+    const body = (await readJsonBody(req)) as {
+      repo?: string;
+      remote?: string;
+      branch?: string;
+      setUpstream?: boolean;
+      force?: boolean;
+    };
+    if (!body.repo) return sendJson(res, 400, { error: "repo is required" });
+    try {
+      const ops = new GitOps(body.repo);
+      const result = await ops.push({
+        remote: body.remote,
+        branch: body.branch,
+        setUpstream: body.setUpstream,
+        force: body.force,
+      });
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      return sendJson(res, 200, { ok: false, error: (err as Error).message });
+    }
+  }
+
+  if (method === "POST" && route === "/git/pull") {
+    const body = (await readJsonBody(req)) as {
+      repo?: string;
+      remote?: string;
+      branch?: string;
+      rebase?: boolean;
+    };
+    if (!body.repo) return sendJson(res, 400, { error: "repo is required" });
+    try {
+      const ops = new GitOps(body.repo);
+      const result = await ops.pull({
+        remote: body.remote,
+        branch: body.branch,
+        rebase: body.rebase,
+      });
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      return sendJson(res, 200, { ok: false, error: (err as Error).message });
+    }
+  }
+
   // The repository's current git state (S10-T9). Apply, revert and merge all
   // act relative to the checked-out branch, so the panel has to be able to
   // show which one that is rather than leaving the user to assume.

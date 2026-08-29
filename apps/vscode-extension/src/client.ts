@@ -376,6 +376,52 @@ export class BremioClient {
     });
   }
 
+  gitRemotes(repoPath: string): Promise<{
+    remotes: Array<{ name: string; refs: { fetch?: string; push?: string } }>;
+    error?: string;
+  }> {
+    return this.#call(`/git/remotes?repo=${encodeURIComponent(repoPath)}`);
+  }
+
+  gitPush(request: {
+    repo: string;
+    remote?: string;
+    branch?: string;
+    setUpstream?: boolean;
+    force?: boolean;
+  }): Promise<{
+    ok: boolean;
+    remote?: string;
+    branch?: string;
+    summary?: string;
+    error?: string;
+  }> {
+    return this.#call("/git/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
+  gitPull(request: {
+    repo: string;
+    remote?: string;
+    branch?: string;
+    rebase?: boolean;
+  }): Promise<{
+    ok: boolean;
+    remote?: string;
+    branch?: string;
+    summary?: string;
+    error?: string;
+  }> {
+    return this.#call("/git/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
   /** The repository's current git state — branch, or a named reason there is none. */
   repoState(repoPath: string): Promise<{
     repoPath: string;

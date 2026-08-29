@@ -271,6 +271,12 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
       case "gitBranch":
         await gitBranch(String(message.name ?? ""), message.create === true);
         return;
+      case "gitPush":
+        await gitPush(message.setUpstream === true);
+        return;
+      case "gitPull":
+        await gitPull(message.rebase === true);
+        return;
       case "openSession":
         if (typeof message.sessionId === "string") await sendSessionDetail(message.sessionId);
         return;
@@ -537,6 +543,36 @@ async function gitCommit(message: string): Promise<void> {
   await sendGitStatus();
   // A commit does not move the branch pointer to a different branch, but it
   // does change what the branch is, and the panel shows it.
+  await sendRepoState();
+}
+
+async function gitPush(setUpstream: boolean): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) throw new Error("no workspace folder is open");
+  const result = await client.gitPush({ repo: repoPath, setUpstream });
+  post({
+    type: "gitResult",
+    ok: result.ok,
+    detail: result.ok
+      ? (result.summary ?? `Pushed ${result.branch} to ${result.remote}`)
+      : (result.error ?? "push refused"),
+  });
+  await sendGitStatus();
+  await sendRepoState();
+}
+
+async function gitPull(rebase: boolean): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) throw new Error("no workspace folder is open");
+  const result = await client.gitPull({ repo: repoPath, rebase });
+  post({
+    type: "gitResult",
+    ok: result.ok,
+    detail: result.ok
+      ? (result.summary ?? `Pulled ${result.branch} from ${result.remote}`)
+      : (result.error ?? "pull refused"),
+  });
+  await sendGitStatus();
   await sendRepoState();
 }
 

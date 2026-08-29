@@ -1615,10 +1615,12 @@ function renderGitPanel(git) {
     + branchBar
     + section("Staged", staged, "unstage", "Unstage selected")
     + section("Changes", unstaged, "stage", "Stage selected")
-    + '<div class="section-label">Commit</div>'
+    + '<div class="section-label">Commit & Sync</div>'
     + '<textarea id="git-message" rows="3" placeholder="commit message"></textarea>'
     + '<div class="row" style="margin-top:8px">'
     + '<button class="primary" data-action="git-commit">Commit staged</button>'
+    + '<button class="ghost" data-action="git-pull">Pull</button>'
+    + '<button class="ghost" data-action="git-push">Push</button>'
     + "</div>"
     + '<div id="git-result"></div>';
 }
@@ -2173,6 +2175,14 @@ document.addEventListener("click", (event) => {
     const box = $("git-message");
     vscode.postMessage({ type: "gitCommit", message: box ? box.value : "" });
     if (box) box.value = "";
+    return;
+  }
+  if (button.dataset.action === "git-push") {
+    vscode.postMessage({ type: "gitPush", setUpstream: true });
+    return;
+  }
+  if (button.dataset.action === "git-pull") {
+    vscode.postMessage({ type: "gitPull", rebase: false });
     return;
   }
   if (button.dataset.action === "apply-diff" || button.dataset.action === "revert-diff"

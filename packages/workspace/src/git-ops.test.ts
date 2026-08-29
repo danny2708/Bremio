@@ -202,3 +202,121 @@ describe("GitOps.commit", () => {
     await expect(new GitOps(repo).commit("   ")).rejects.toThrow(/message is required/);
   });
 });
+
+describe("GitOps.remotes", () => {
+  it("lists configured remotes with URLs", async () => {
+    const remoteRepo = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-bare-"));
+    try {
+      execFileSync("git", ["init", "-q", "--bare"], { cwd: remoteRepo, stdio: "pipe" });
+      git(["remote", "add", "origin", remoteRepo]);
+
+      const remotes = await new GitOps(repo).remotes();
+      expect(remotes).toHaveLength(1);
+      expect(remotes[0]?.name).toBe("origin");
+    } finally {
+      await fs.rm(remoteRepo, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("returns an empty array when no remotes are configured", async () => {
+    const remotes = await new GitOps(repo).remotes();
+    expect(remotes).toEqual([]);
+  });
+});
+
+describe("GitOps.push", () => {
+  it("pushes commits to a remote repository", async () => {
+    const remoteRepo = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-bare-"));
+    try {
+      execFileSync("git", ["init", "-q", "--bare"], { cwd: remoteRepo, stdio: "pipe" });
+      git(["remote", "add", "origin", remoteRepo]);
+
+      const result = await new GitOps(repo).push({ remote: "origin", branch: "main", setUpstream: true });
+      expect(result.remote).toBe("origin");
+      expect(result.branch).toBe("main");
+
+      const remoteHead = execFileSync("git", ["rev-parse", "main"], { cwd: remoteRepo, encoding: "utf8" });
+      const localHead = execFileSync("git", ["rev-parse", "main"], { cwd: repo, encoding: "utf8" });
+      expect(remoteHead.trim()).toBe(localHead.trim());
+    } finally {
+      await fs.rm(remoteRepo, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("refuses force-push by name as git-destructive (docs/15 §2.4.1)", async () => {
+    const remoteRepo = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-bare-"));
+    try {
+      execFileSync("git", ["init", "-q", "--bare"], { cwd: remoteRepo, stdio: "pipe" });
+      git(["remote", "add", "origin", remoteRepo]);
+
+      await expect(new GitOps(repo).push({ force: true })).rejects.toThrow(
+        /force-push is git-destructive and denied under autopilot/,
+      );
+    } finally {
+      await fs.rm(remoteRepo, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("refuses to push when no remote is configured", async () => {
+    await expect(new GitOps(repo).push()).rejects.toThrow(/no remote repository configured/);
+  });
+
+  it("refuses to push in detached HEAD state without explicit branch", async () => {
+    const remoteRepo = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-bare-"));
+    try {
+      execFileSync("git", ["init", "-q", "--bare"], { cwd: remoteRepo, stdio: "pipe" });
+      git(["remote", "add", "origin", remoteRepo]);
+
+      git(["checkout", "-q", "--detach", "HEAD"]);
+      await expect(new GitOps(repo).push()).rejects.toThrow(/detached HEAD/);
+    } finally {
+      await fs.rm(remoteRepo, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+});
+
+describe("GitOps.pull", () => {
+  it("pulls changes from a remote repository", async () => {
+    const remoteRepo = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-bare-"));
+    const otherRepo = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-other-"));
+    try {
+      execFileSync("git", ["init", "-q", "--bare", "-b", "main"], { cwd: remoteRepo, stdio: "pipe" });
+      git(["remote", "add", "origin", remoteRepo]);
+      await new GitOps(repo).push({ remote: "origin", branch: "main", setUpstream: true });
+
+      // Clone or push a new commit from another clone
+      execFileSync("git", ["clone", "-q", remoteRepo, otherRepo], { stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "other@bremio.local"], { cwd: otherRepo });
+      execFileSync("git", ["config", "user.name", "Other"]);
+      await fs.writeFile(path.join(otherRepo, "other.txt"), "hello from other\n");
+      execFileSync("git", ["add", "other.txt"], { cwd: otherRepo });
+      execFileSync("git", ["commit", "-q", "-m", "other commit"], { cwd: otherRepo });
+      execFileSync("git", ["push", "-q", "origin", "main"], { cwd: otherRepo });
+
+      const result = await new GitOps(repo).pull({ remote: "origin", branch: "main" });
+      expect(result.summary).toContain("file(s) updated");
+      await expect(fs.readFile(path.join(repo, "other.txt"), "utf8")).resolves.toBe("hello from other\n");
+    } finally {
+      await fs.rm(remoteRepo, { recursive: true, force: true }).catch(() => {});
+      await fs.rm(otherRepo, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("refuses to pull when no remote is configured", async () => {
+    await expect(new GitOps(repo).pull()).rejects.toThrow(/no remote repository configured/);
+  });
+
+  it("refuses to pull in detached HEAD state without explicit branch", async () => {
+    const remoteRepo = await fs.mkdtemp(path.join(os.tmpdir(), "bremio-bare-"));
+    try {
+      execFileSync("git", ["init", "-q", "--bare"], { cwd: remoteRepo, stdio: "pipe" });
+      git(["remote", "add", "origin", remoteRepo]);
+
+      git(["checkout", "-q", "--detach", "HEAD"]);
+      await expect(new GitOps(repo).pull()).rejects.toThrow(/detached HEAD/);
+    } finally {
+      await fs.rm(remoteRepo, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+});
+

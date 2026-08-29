@@ -215,4 +215,103 @@ export class GitOps {
       summary: `${result.summary.changes} file(s), +${result.summary.insertions} -${result.summary.deletions}`,
     };
   }
+
+  /** List configured remotes with their fetch and push URLs. */
+  async remotes(): Promise<Array<{ name: string; refs: { fetch?: string; push?: string } }>> {
+    const remotes = await this.git.getRemotes(true);
+    return remotes.map((r) => ({
+      name: r.name,
+      refs: {
+        fetch: r.refs.fetch,
+        push: r.refs.push,
+      },
+    }));
+  }
+
+  /**
+   * Push changes to a remote repository.
+   *
+   * **Force-push is git-destructive** (`docs/15` §2.4.1): denied under
+   * autopilot and there is no grant mechanism left to override it. A force-push
+   * must be refused with a named reason, never quietly downgraded to a normal push.
+   */
+  async push(options: {
+    remote?: string;
+    branch?: string;
+    setUpstream?: boolean;
+    force?: boolean;
+  } = {}): Promise<{ remote: string; branch: string; summary: string }> {
+    if (options.force) {
+      throw new GitOpsError("force-push is git-destructive and denied under autopilot");
+    }
+
+    const branch = options.branch ?? (await this.status()).branch;
+    if (!branch) {
+      throw new GitOpsError("cannot push in detached HEAD state without an explicit branch");
+    }
+
+    const remotes = await this.remotes();
+    if (remotes.length === 0) {
+      throw new GitOpsError("no remote repository configured to push to");
+    }
+
+    const remote = options.remote ?? remotes[0]!.name;
+    const args = [remote, branch];
+    if (options.setUpstream) {
+      args.unshift("-u");
+    }
+
+    try {
+      const result = await this.git.push(args);
+      return {
+        remote,
+        branch,
+        summary: result.pushed.length > 0 ? `Pushed ${branch} to ${remote}` : "Everything up-to-date",
+      };
+    } catch (err) {
+      throw new GitOpsError((err as Error).message);
+    }
+  }
+
+  /**
+   * Pull changes from a remote repository.
+   *
+   * Classified as `network` and `write` (`docs/15` §2.4.1) because it can
+   * fast-forward or modify the working tree.
+   */
+  async pull(options: {
+    remote?: string;
+    branch?: string;
+    rebase?: boolean;
+  } = {}): Promise<{ remote: string; branch: string; summary: string }> {
+    const branch = options.branch ?? (await this.status()).branch;
+    if (!branch) {
+      throw new GitOpsError("cannot pull in detached HEAD state without an explicit branch");
+    }
+
+    const remotes = await this.remotes();
+    if (remotes.length === 0) {
+      throw new GitOpsError("no remote repository configured to pull from");
+    }
+
+    const remote = options.remote ?? remotes[0]!.name;
+    const pullOptions: Record<string, string | null> = {};
+    if (options.rebase) {
+      pullOptions["--rebase"] = null;
+    }
+
+    try {
+      const result = await this.git.pull(remote, branch, pullOptions);
+      return {
+        remote,
+        branch,
+        summary: result.summary.changes > 0
+          ? `${result.summary.changes} file(s) updated (+${result.summary.insertions} -${result.summary.deletions})`
+          : "Already up to date.",
+      };
+    } catch (err) {
+      throw new GitOpsError((err as Error).message);
+    }
+  }
 }
+

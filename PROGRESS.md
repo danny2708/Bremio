@@ -1,4 +1,4 @@
-﻿# Bremio progress log
+# Bremio progress log
 
 Narrative record of parallel agent work. The task board ([`TASKS.md`](TASKS.md))
 says *what* and *whether done*; this file says *how it went* — what was decided,
@@ -2371,3 +2371,29 @@ All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.
 - `corepack pnpm release:check` — PASS.
 - Red-check: disabled the dirty-tree guard → "refuses to switch with uncommitted changes, and names them" failed with `expected undefined to be an instance of GitOpsError`. Restored.
 - **Bug found and fixed while testing.** `branchExists` used `rev-parse --verify --quiet`, which reports a missing ref by exit code alone and writes nothing to stderr — simple-git does not surface that as a rejection, so the check answered "exists" for *every* name, and creating any new branch was refused. It now asks `branches()`. Caught by "creates a branch and switches to it", which failed on a branch that had just been created for the first time.
+
+### S10-T12 — Git: push and pull
+- **agent:** Antigravity (Gemini 3.7 Flash)
+- **time:** 2026-08-29T15:23 → 2026-08-29T15:34
+- **branch:** feat/s10-t12-git-push-pull
+- **task(s):** S10-T12
+- **status:** done
+
+**Did**
+- Added `GitOps.remotes()`, `GitOps.push()`, and `GitOps.pull()` to `packages/workspace/src/git-ops.ts`.
+- Added daemon routes `GET /git/remotes`, `POST /git/push`, and `POST /git/pull` in `apps/daemon/src/server.ts`.
+- Added `gitRemotes`, `gitPush`, `gitPull` to extension client and wired Push & Pull buttons in the Git tab of `apps/vscode-extension`.
+- Added 9 unit tests for remotes, push, pull, and force-push refusal in `packages/workspace/src/git-ops.test.ts`.
+
+**Decided**
+- **Force-push is refused with a named reason by GitOps (`docs/15` §2.4.1).** Force-push belongs to `git-destructive` and has no approval grant override mechanism. It must never be silently downgraded to a normal push.
+- Push and pull require an explicit branch if in detached HEAD state, and refuse cleanly with a named reason if no remote is configured.
+- Push with `--set-upstream` (`-u`) is supported so newly created branches can be published in one click.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/workspace/src/git-ops.test.ts` — 27 tests passed (+9 new).
+- `corepack pnpm test` — 1187 passed / 86 files (was 1178 / 87).
+- `corepack pnpm release:check` — PASS (build + packed install clean).
+- Red-check: disabled the `options.force` guard → "refuses force-push by name as git-destructive (docs/15 §2.4.1)" failed with `promise resolved instead of rejecting`. Restored.
+
