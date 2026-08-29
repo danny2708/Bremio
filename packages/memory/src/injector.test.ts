@@ -14,6 +14,7 @@ function makeEntry(overrides?: Partial<MemoryEntry>): MemoryEntry {
     createdAt: "2026-07-30T00:00:00.000Z",
     updatedAt: "2026-07-30T00:00:00.000Z",
     metadata: {},
+    review: { state: "approved" },
     ...overrides,
   };
 }

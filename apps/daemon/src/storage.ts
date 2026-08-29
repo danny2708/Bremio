@@ -1748,6 +1748,19 @@ export class RunStore {
     return u.changes > 0;
   }
 
+  reviewMemory(id: string, decision: { state: "approved" | "rejected"; reviewer: string; note?: string }): boolean {
+    const now = new Date().toISOString();
+    const p = this.db.prepare(
+      "UPDATE project_memory SET review_state = ?, reviewer = ?, reviewed_at = ?, review_note = ? WHERE id = ?"
+    ).run(decision.state, decision.reviewer, now, decision.note ?? null, id);
+    if (p.changes > 0) return true;
+
+    const u = this.db.prepare(
+      "UPDATE user_memory SET review_state = ?, reviewer = ?, reviewed_at = ?, review_note = ? WHERE id = ?"
+    ).run(decision.state, decision.reviewer, now, decision.note ?? null, id);
+    return u.changes > 0;
+  }
+
   queryMemory(filter: MemoryQuery & { repository?: string }): MemoryEntry[] {
     const scopes = filter.scopes ?? ["project", "user"];
     const results: MemoryEntry[] = [];

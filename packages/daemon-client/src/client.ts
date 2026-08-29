@@ -241,6 +241,13 @@ export class DaemonClient {
     return this.#call<{ ok: boolean }>(`/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
+  async reviewMemory(
+    id: string,
+    decision: { state: "approved" | "rejected"; reviewer: string; note?: string },
+  ): Promise<{ ok: boolean }> {
+    return this.post<{ ok: boolean }>(`/memory/${encodeURIComponent(id)}/review`, decision);
+  }
+
   async queryMemory(filter: MemoryQuery & { repository?: string }): Promise<{ memory: MemoryEntry[] }> {
     const params = new URLSearchParams();
     if (filter.scopes) filter.scopes.forEach(s => params.append("scope", s));

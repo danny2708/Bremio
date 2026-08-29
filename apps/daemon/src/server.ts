@@ -147,13 +147,30 @@ async function handleMemory(
     }
   }
 
-  if (method === "POST" && route === "/memory") {
-    try {
-      const body = (await readJsonBody(req)) as MemoryEntry;
-      store.storeMemory(body);
-      return sendJson(res, 201, { ok: true });
-    } catch (err) {
-      return sendJson(res, 400, { error: (err as Error).message });
+  if (method === "POST") {
+    if (route === "/memory") {
+      try {
+        const body = (await readJsonBody(req)) as MemoryEntry;
+        store.storeMemory(body);
+        return sendJson(res, 201, { ok: true });
+      } catch (err) {
+        return sendJson(res, 400, { error: (err as Error).message });
+      }
+    }
+    const reviewMatch = route.match(/^\/memory\/([^/]+)\/review$/);
+    if (reviewMatch) {
+      try {
+        const id = reviewMatch[1]!;
+        const body = (await readJsonBody(req)) as { state: "approved" | "rejected"; reviewer: string; note?: string };
+        if (!body.state || !body.reviewer) {
+          return sendJson(res, 400, { error: "state and reviewer are required" });
+        }
+        const ok = store.reviewMemory(id, body);
+        if (!ok) return sendJson(res, 404, { error: "not found" });
+        return sendJson(res, 200, { ok: true });
+      } catch (err) {
+        return sendJson(res, 400, { error: (err as Error).message });
+      }
     }
   }
 

@@ -47,6 +47,7 @@ import { approvalCommandFromCli } from "./approval";
 import { mcpCommandFromCli } from "./mcp";
 import { sessionCommandFromCli } from "./session";
 import { statsCommand } from "./stats";
+import { memoryCommandFromCli } from "./memory";
 import { canUseTui, startTui } from "./tui";
 import { createCLIPluginManager, KNOWN_ADAPTER_IDS } from "./tui/data";
 import { renderEvent } from "@bremio/event-view";
@@ -249,6 +250,9 @@ async function main(): Promise<void> {
     case "compare":
       process.exitCode = await compareCommandFromCli(values, positionals);
       return;
+    case "memory":
+      process.exitCode = await memoryCommandFromCli(values, positionals);
+      return;
     case "session":
       process.exitCode = await sessionCommandFromCli(values, positionals);
       return;
@@ -260,7 +264,7 @@ async function main(): Promise<void> {
       process.exitCode = await applyCommandFromCli(values, positionals, command);
       return;
     case "stats":
-      process.exitCode = await statsCommandFromCli(values);
+      process.exitCode = await statsCommand(values);
       return;
     case "capacity":
     case "quota":
