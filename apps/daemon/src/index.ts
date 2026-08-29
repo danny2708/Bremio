@@ -43,6 +43,9 @@ export {
   type PersistedArtifact,
   type PersistedContextItem,
   type ContextItemType,
+  type SessionDetail,
+  type PersistedSession,
+  type SessionTurn,
 } from "./storage";
 export { startDaemonServer, type DaemonHandle, type DaemonServerOptions } from "./server";
 export { mergeRun, type MergeRequest, type MergeOutcome, type MergeTaskOutcome } from "./merge";

@@ -371,6 +371,11 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
           await compactSession(message.sessionId);
         }
         return;
+      case "forkSession":
+        if (typeof message.sessionId === "string" && typeof message.turnIndex === "number") {
+          await forkSession(message.sessionId, message.turnIndex);
+        }
+        return;
     }
   } catch (err) {
     post({ type: "error", message: (err as Error).message });
@@ -477,6 +482,14 @@ async function releaseQueued(sessionId: string, runId: string): Promise<void> {
   const result = await client.releaseQueuedRun(runId);
   if (result.error) post({ type: "error", message: result.error });
   await sendQueue(sessionId);
+}
+
+async function forkSession(sessionId: string, turnIndex: number): Promise<void> {
+  const result = await client.forkSession(sessionId, turnIndex);
+  if (result.session) {
+    await sendSessions();
+    await sendSessionDetail(result.session.id);
+  }
 }
 
 async function sendCapacity(): Promise<void> {

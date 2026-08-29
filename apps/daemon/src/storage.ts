@@ -24,7 +24,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -177,6 +177,8 @@ export interface PersistedSession {
   updatedAt: string;
   turnCount: number;
   status?: RunStatus;
+  parentSessionId?: string;
+  forkedFromTurn?: number;
 }
 
 export interface ProjectSessionGroup {
@@ -222,6 +224,8 @@ export interface SessionDetail {
   turns: SessionTurn[];
   config?: SessionConfig;
   repositoryIdentity?: RepositoryIdentity;
+  parentSessionId?: string;
+  forkedFromTurn?: number;
 }
 
 export interface PersistedRunEvent {
@@ -887,6 +891,10 @@ export class RunStore {
       updatedAt: String(row.updated_at),
       turnCount: Number(row.turn_count),
       ...(row.status ? { status: String(row.status) as RunStatus } : {}),
+      ...(row.parent_session_id ? { parentSessionId: String(row.parent_session_id) } : {}),
+      ...(row.forked_from_turn !== null && row.forked_from_turn !== undefined
+        ? { forkedFromTurn: Number(row.forked_from_turn) }
+        : {}),
     }));
   }
 
@@ -972,7 +980,189 @@ export class RunStore {
       turns,
       ...(cfg ? { config: cfg } : {}),
       ...(repositoryIdentity ? { repositoryIdentity } : {}),
+      ...(session.parent_session_id ? { parentSessionId: String(session.parent_session_id) } : {}),
+      ...(session.forked_from_turn !== null && session.forked_from_turn !== undefined
+        ? { forkedFromTurn: Number(session.forked_from_turn) }
+        : {}),
     };
+  }
+
+  /**
+   * Fork a new session from a specific turn of an existing session (S10-T14).
+   *
+   * Lineage: records parent_session_id and forked_from_turn in the sessions table.
+   * History: copies turns 0...forkedFromTurn into the new session with fresh run IDs,
+   * preserving prompt, mode, lead_provider, worker_providers, status, turn_index, events, and artifacts.
+   * Config: copies all session config revisions from the parent session.
+   * Fresh binding: starts with NO provider session bindings (docs/15 §4.3.1) to prevent
+   * crosstalk and contaminated provider-side conversation state.
+   */
+  forkSession(sessionId: string, forkedFromTurn: number): SessionDetail {
+    const parent = this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!parent) {
+      throw new Error(`parent session not found: ${sessionId}`);
+    }
+
+    const runs = this.db
+      .prepare("SELECT * FROM runs WHERE session_id = ? ORDER BY turn_index ASC")
+      .all(sessionId) as Array<Record<string, unknown>>;
+
+    if (runs.length === 0) {
+      throw new Error(`cannot fork session ${sessionId}: it has no turns`);
+    }
+
+    if (forkedFromTurn < 0 || forkedFromTurn >= runs.length) {
+      throw new Error(
+        `invalid turn index ${forkedFromTurn}: session ${sessionId} has ${runs.length} turn(s) (indices 0..${runs.length - 1})`,
+      );
+    }
+
+    const forkedSessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const title = `Fork of ${parent.title} (turn ${forkedFromTurn})`;
+
+    this.db
+      .prepare(
+        `INSERT INTO sessions
+           (id, repository_path, repository_id, title, created_at, updated_at, parent_session_id, forked_from_turn)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        forkedSessionId,
+        String(parent.repository_path),
+        parent.repository_id ? String(parent.repository_id) : null,
+        title,
+        now,
+        now,
+        sessionId,
+        forkedFromTurn,
+      );
+
+    // Copy session config revisions
+    const configs = this.db
+      .prepare("SELECT * FROM session_config WHERE session_id = ? ORDER BY revision ASC")
+      .all(sessionId) as Array<Record<string, unknown>>;
+
+    for (const cfg of configs) {
+      this.db
+        .prepare(
+          `INSERT INTO session_config
+             (session_id, revision, mode, lead_agent_id, worker_agent_id, model, reasoning_level,
+              permission, approval_mode, cwd, base_branch, provenance, completeness, missing_fields,
+              changed_by, change_reason, collaboration_state, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          forkedSessionId,
+          Number(cfg.revision),
+          cfg.mode ? String(cfg.mode) : null,
+          cfg.lead_agent_id ? String(cfg.lead_agent_id) : null,
+          cfg.worker_agent_id ? String(cfg.worker_agent_id) : null,
+          cfg.model ? String(cfg.model) : null,
+          cfg.reasoning_level ? String(cfg.reasoning_level) : null,
+          cfg.permission ? String(cfg.permission) : null,
+          cfg.approval_mode ? String(cfg.approval_mode) : null,
+          cfg.cwd ? String(cfg.cwd) : null,
+          cfg.base_branch ? String(cfg.base_branch) : null,
+          cfg.provenance ? String(cfg.provenance) : "native",
+          cfg.completeness ? String(cfg.completeness) : "complete",
+          cfg.missing_fields ? String(cfg.missing_fields) : "[]",
+          "fork",
+          `Forked from session ${sessionId} at turn ${forkedFromTurn}`,
+          cfg.collaboration_state ? String(cfg.collaboration_state) : null,
+          now,
+        );
+    }
+
+    // Copy turns 0...forkedFromTurn with fresh run IDs
+    const truncatedRuns = runs.slice(0, forkedFromTurn + 1);
+    for (const r of truncatedRuns) {
+      const originalRunId = String(r.id);
+      const freshRunId = `run-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 6)}`;
+
+      this.db
+        .prepare(
+          `INSERT INTO runs (id, mode, status, repository_path, prompt, base_branch, started_at, completed_at,
+                             created_at, updated_at, lead_provider, worker_providers, orchestrator_run_id,
+                             final_summary, failure_code, failure_message, retry_of_run_id, session_id, turn_index)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          freshRunId,
+          String(r.mode),
+          String(r.status),
+          String(r.repository_path),
+          String(r.prompt),
+          r.base_branch ? String(r.base_branch) : null,
+          r.started_at ? String(r.started_at) : null,
+          r.completed_at ? String(r.completed_at) : null,
+          String(r.created_at),
+          String(r.updated_at),
+          r.lead_provider ? String(r.lead_provider) : null,
+          r.worker_providers ? String(r.worker_providers) : null,
+          r.orchestrator_run_id ? String(r.orchestrator_run_id) : null,
+          r.final_summary ? String(r.final_summary) : null,
+          r.failure_code ? String(r.failure_code) : null,
+          r.failure_message ? String(r.failure_message) : null,
+          r.retry_of_run_id ? String(r.retry_of_run_id) : null,
+          forkedSessionId,
+          Number(r.turn_index),
+        );
+
+      // Copy run_events for the turn
+      const events = this.db
+        .prepare("SELECT * FROM run_events WHERE run_id = ? ORDER BY seq ASC")
+        .all(originalRunId) as Array<Record<string, unknown>>;
+      for (const ev of events) {
+        this.db
+          .prepare(
+            "INSERT INTO run_events (run_id, seq, type, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(freshRunId, Number(ev.seq), String(ev.type), String(ev.timestamp), String(ev.payload));
+      }
+
+      // Copy artifacts
+      const artifacts = this.db
+        .prepare("SELECT * FROM artifacts WHERE run_id = ?")
+        .all(originalRunId) as Array<Record<string, unknown>>;
+      for (const a of artifacts) {
+        this.db
+          .prepare(
+            "INSERT INTO artifacts (run_id, kind, path, task_id, created_at) VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(freshRunId, String(a.kind), String(a.path), a.task_id ? String(a.task_id) : null, String(a.created_at));
+      }
+    }
+
+    // Copy context items (session-scoped items)
+    const ctxItems = this.db
+      .prepare("SELECT * FROM context_items WHERE session_id = ?")
+      .all(sessionId) as Array<Record<string, unknown>>;
+    for (const item of ctxItems) {
+      const freshItemId = crypto.randomUUID();
+      this.db
+        .prepare(
+          `INSERT INTO context_items (id, session_id, type, source, added_at, scope, tokens_estimated, enabled, measurement_method)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          freshItemId,
+          forkedSessionId,
+          String(item.type),
+          String(item.source),
+          now,
+          item.scope ? String(item.scope) : "session",
+          item.tokens_estimated !== null && item.tokens_estimated !== undefined ? Number(item.tokens_estimated) : null,
+          item.enabled !== null && item.enabled !== undefined ? Number(item.enabled) : 1,
+          item.measurement_method ? String(item.measurement_method) : "estimated",
+        );
+    }
+
+    // Note: ProviderSessionBinding is NOT copied. The forked session starts fresh (docs/15 §4.3.1).
+
+    return this.sessionDetail(forkedSessionId)!;
   }
 
   saveSessionContext(input: SaveSessionContextInput): PersistedSessionContext {
@@ -1826,6 +2016,12 @@ function migrate(db: Database): void {
         );
         CREATE INDEX IF NOT EXISTS idx_session_compacts_session ON session_compacts(session_id);
       `);
+    }
+
+    if (Number(current) < 14) {
+      addColumnIfMissing(db, "sessions", "parent_session_id", "TEXT");
+      addColumnIfMissing(db, "sessions", "forked_from_turn", "INTEGER");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)");
     }
 
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);

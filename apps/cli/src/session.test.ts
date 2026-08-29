@@ -165,6 +165,26 @@ describe("A3-T1: bremio session list and bremio session show", () => {
     expect(errorLogs.join("\n")).toContain("session not found: unknown-session-id");
   });
 
+  it("CLI session fork subcommand forks session and outputs JSON (S10-T14)", async () => {
+    const s = await RunStore.open(dbPath);
+    const r0 = s.createRun({ id: "cli-fork-r0", mode: "single", repositoryPath: "/tmp/repo", prompt: "turn 0" });
+    s.createRun({ id: "cli-fork-r1", mode: "single", repositoryPath: "/tmp/repo", prompt: "turn 1", sessionId: r0.sessionId! });
+    s.close();
+
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((msg) => logs.push(String(msg)));
+
+    const code = await sessionCommandFromCli(
+      { json: true, db: dbPath, turn: "0" },
+      ["session", "fork", r0.sessionId!],
+    );
+    expect(code).toBe(0);
+    const parsed = JSON.parse(logs[0]!);
+    expect(parsed.parentSessionId).toBe(r0.sessionId!);
+    expect(parsed.forkedFromTurn).toBe(0);
+    expect(parsed.turns).toHaveLength(1);
+  });
+
   describe("S6-T3: bremio session config-set (change config mid-session)", () => {
     let tmpDir: string;
     let dbPath: string;

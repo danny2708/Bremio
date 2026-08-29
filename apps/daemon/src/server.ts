@@ -443,6 +443,27 @@ async function handle(
     return sendJson(res, 200, { session });
   }
 
+  const sessionForkPost = /^\/sessions\/([^/]+)\/fork$/.exec(route);
+  if (method === "POST" && sessionForkPost) {
+    const id = decodeURIComponent(sessionForkPost[1] ?? "");
+    try {
+      const body = (await readJsonBody(req)) as { turnIndex?: number; forkedFromTurn?: number };
+      const turnIndex =
+        typeof body.turnIndex === "number"
+          ? body.turnIndex
+          : typeof body.forkedFromTurn === "number"
+            ? body.forkedFromTurn
+            : undefined;
+      if (turnIndex === undefined) {
+        return sendJson(res, 400, { error: "turnIndex is required" });
+      }
+      const session = registry.forkSession(id, turnIndex);
+      return sendJson(res, 201, { session });
+    } catch (err) {
+      return sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
   const sessionConfigGet = /^\/sessions\/([^/]+)\/config$/.exec(route);
   if (method === "GET" && sessionConfigGet) {
     const id = decodeURIComponent(sessionConfigGet[1] ?? "");

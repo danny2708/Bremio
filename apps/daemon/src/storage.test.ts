@@ -1026,19 +1026,24 @@ describe("session_config (S1-T1/T2)", () => {
     expect(s.listSessions("/tmp/repo")).toHaveLength(1);
   });
 
-  it("pristine and migrated stores both report user_version = 13", async () => {
+  it("pristine and migrated stores both report user_version = 14", async () => {
     const fresh = await store();
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(13);
+    expect(freshVer).toBe(14);
 
-    // Fresh store has session_compacts table
+    // Fresh store has session_compacts table and lineage columns on sessions
     const freshCols = fresh["db"].prepare("PRAGMA table_info(session_compacts)").all() as Array<{ name: string }>;
     const freshNames = freshCols.map((c) => c.name).sort();
     expect(freshNames).toContain("session_id");
     expect(freshNames).toContain("turn_range_start");
     expect(freshNames).toContain("summary");
+
+    const sessionCols = fresh["db"].prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+    const sessionNames = sessionCols.map((c) => c.name);
+    expect(sessionNames).toContain("parent_session_id");
+    expect(sessionNames).toContain("forked_from_turn");
 
     const file = await createV3Fixture();
     const migrated = await RunStore.open(file);
@@ -1046,11 +1051,15 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: migratedVer } = migrated["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(migratedVer).toBe(13);
+    expect(migratedVer).toBe(14);
 
-    // Migrated store also has session_compacts table
+    // Migrated store also has session_compacts table and lineage columns
     const migratedCols = migrated["db"].prepare("PRAGMA table_info(session_compacts)").all() as Array<{ name: string }>;
     expect(migratedCols.length).toBeGreaterThan(0);
+    const migratedSessionCols = migrated["db"].prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+    const migratedSessionNames = migratedSessionCols.map((c) => c.name);
+    expect(migratedSessionNames).toContain("parent_session_id");
+    expect(migratedSessionNames).toContain("forked_from_turn");
   });
 
   it("re-running migration on v5 is a no-op", async () => {
@@ -1369,6 +1378,98 @@ describe("ProviderSessionBinding (S1-T4)", () => {
       expect(metrics.measurementMethod).toBe("estimated");
       expect(metrics.enabledItemCount).toBe(1);
       expect(metrics.totalItemCount).toBe(2);
+    });
+  });
+
+  describe("forkSession (S10-T14)", () => {
+    it("forks a session up to a specific turn, records lineage, carries configs, and gives fresh bindings", async () => {
+      const s = await store();
+      stores.push(s);
+
+      // Create a 3-turn parent session
+      const run0 = s.createRun({
+        id: "fork-parent-r0",
+        mode: "single",
+        repositoryPath: "/tmp/repo",
+        prompt: "Turn 0 prompt",
+        leadProvider: "claude",
+      });
+      const parentSessionId = run0.sessionId!;
+
+      s.createRun({
+        id: "fork-parent-r1",
+        mode: "single",
+        repositoryPath: "/tmp/repo",
+        prompt: "Turn 1 prompt",
+        leadProvider: "codex",
+        sessionId: parentSessionId,
+      });
+
+      s.createRun({
+        id: "fork-parent-r2",
+        mode: "team",
+        repositoryPath: "/tmp/repo",
+        prompt: "Turn 2 prompt",
+        leadProvider: "claude",
+        workerProviders: ["codex"],
+        sessionId: parentSessionId,
+      });
+
+      // Context item on parent
+      s.saveContextItem({
+        sessionId: parentSessionId,
+        type: "note",
+        source: "Parent notes",
+      });
+
+      // Bindings on parent exist
+      expect(s.getBindings(parentSessionId).length).toBeGreaterThan(0);
+
+      // Fork from turn 1 (includes turn 0 and turn 1, omits turn 2)
+      const forked = s.forkSession(parentSessionId, 1);
+
+      expect(forked.id).not.toBe(parentSessionId);
+      expect(forked.parentSessionId).toBe(parentSessionId);
+      expect(forked.forkedFromTurn).toBe(1);
+      expect(forked.turns).toHaveLength(2);
+      expect(forked.turns[0]?.prompt).toBe("Turn 0 prompt");
+      expect(forked.turns[1]?.prompt).toBe("Turn 1 prompt");
+      expect(forked.turns[0]?.runId).not.toBe("fork-parent-r0");
+      expect(forked.turns[1]?.runId).not.toBe("fork-parent-r1");
+
+      // Config carried over
+      expect(forked.config).toBeDefined();
+
+      // Context items carried over
+      const ctxItems = s.listContextItems(forked.id);
+      expect(ctxItems).toHaveLength(1);
+      expect(ctxItems[0]?.source).toBe("Parent notes");
+
+      // ProviderSessionBindings must NOT be inherited (docs/15 §4.3.1)
+      const forkedBindings = s.getBindings(forked.id);
+      expect(forkedBindings).toHaveLength(0);
+
+      // listSessions shows lineage
+      const listed = s.listSessions().find((entry) => entry.id === forked.id);
+      expect(listed?.parentSessionId).toBe(parentSessionId);
+      expect(listed?.forkedFromTurn).toBe(1);
+      expect(listed?.turnCount).toBe(2);
+    });
+
+    it("refuses out-of-range turn indices", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run0 = s.createRun({
+        id: "fork-err-r0",
+        mode: "single",
+        repositoryPath: "/tmp/repo",
+        prompt: "Turn 0",
+      });
+
+      expect(() => s.forkSession(run0.sessionId!, -1)).toThrow(/invalid turn index/);
+      expect(() => s.forkSession(run0.sessionId!, 5)).toThrow(/invalid turn index/);
+      expect(() => s.forkSession("unknown-session-id", 0)).toThrow(/parent session not found/);
     });
   });
 });

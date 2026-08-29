@@ -525,6 +525,14 @@ export class BremioClient {
     return this.#call(`/sessions/${encodeURIComponent(sessionId)}/queue`);
   }
 
+  forkSession(sessionId: string, turnIndex: number): Promise<{ session: SessionDetail }> {
+    return this.#call(`/sessions/${encodeURIComponent(sessionId)}/fork`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turnIndex }),
+    });
+  }
+
   removeQueuedRun(runId: string): Promise<{ removed?: boolean; error?: string }> {
     return this.#call(`/queue/${encodeURIComponent(runId)}`, { method: "DELETE" });
   }

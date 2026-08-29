@@ -4,7 +4,7 @@ import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
 import { OpenCodeAdapter } from "@bremio/adapter-opencode";
-import { daemonStatus, defaultDatabasePath, RunStore, type ContextItemType, type PersistedContextItem } from "@bremio/daemon";
+import { daemonStatus, defaultDatabasePath, RunStore, type ContextItemType, type PersistedContextItem, type SessionDetail } from "@bremio/daemon";
 import { extractResponse, renderEvent } from "@bremio/event-view";
 import { createRegistry, runBremio, runSingleAgent } from "@bremio/orchestrator";
 import { effectiveMode, type CollaborationState } from "@bremio/policy";
@@ -825,8 +825,26 @@ export async function sessionCommandFromCli(
     }
     return listCompactsCommand({ id, json: values.json === true, ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}) });
   }
+  if (subCommand === "fork") {
+    const id = positionals[2];
+    if (!id) {
+      console.error(c.red("error: session id is required for 'bremio session fork <id> --turn <index>'"));
+      return 2;
+    }
+    const turnVal = values.turn !== undefined ? Number(values.turn) : undefined;
+    if (turnVal === undefined || !Number.isInteger(turnVal) || turnVal < 0) {
+      console.error(c.red("error: --turn <index> is required and must be a non-negative integer"));
+      return 2;
+    }
+    return forkSessionCommand({
+      id,
+      forkedFromTurn: turnVal,
+      json: values.json === true,
+      ...(values.db ? { databasePath: path.resolve(values.db as string) } : {}),
+    });
+  }
   console.error(
-    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', 'continue', 'config-set', or 'context'`),
+    c.red(`error: unknown session subcommand '${subCommand ?? ""}'; expected 'list', 'show', 'continue', 'config-set', 'context', 'compact', or 'fork'`),
   );
   return 2;
 }
@@ -1075,6 +1093,62 @@ async function listCompactsCommand(opts: ListCompactsOptions): Promise<number> {
       console.log(`  ${c.id}: turns ${c.turnRangeStart}–${c.turnRangeEnd} (${c.tokenCount} tokens, ${c.measurementMethod}, ${c.createdBy})`);
     }
     return 0;
+  } finally {
+    store.close();
+  }
+}
+
+export interface ForkSessionOptions {
+  id: string;
+  forkedFromTurn: number;
+  json?: boolean;
+  databasePath?: string;
+}
+
+export async function forkSessionCommand(opts: ForkSessionOptions): Promise<number> {
+  const status = await daemonStatus();
+  if (status.running) {
+    const res = await fetch(
+      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/fork`,
+      {
+        method: "POST",
+        headers: {
+          "x-bremio-token": status.endpoint.token,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ turnIndex: opts.forkedFromTurn }),
+      },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { session: SessionDetail };
+      if (opts.json) {
+        console.log(JSON.stringify(data.session, null, 2));
+      } else {
+        console.log(
+          c.green(`Forked session created: ${c.bold(data.session.id)} (parent: ${data.session.parentSessionId}, turn: ${data.session.forkedFromTurn})`),
+        );
+      }
+      return 0;
+    }
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    console.error(c.red(`error: ${body.error ?? res.statusText}`));
+    return 1;
+  }
+
+  const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());
+  try {
+    const session = store.forkSession(opts.id, opts.forkedFromTurn);
+    if (opts.json) {
+      console.log(JSON.stringify(session, null, 2));
+    } else {
+      console.log(
+        c.green(`Forked session created: ${c.bold(session.id)} (parent: ${session.parentSessionId}, turn: ${session.forkedFromTurn})`),
+      );
+    }
+    return 0;
+  } catch (err) {
+    console.error(c.red(`error: ${(err as Error).message}`));
+    return 1;
   } finally {
     store.close();
   }

@@ -493,6 +493,28 @@ describe("sessions", () => {
     const body = (await response.json()) as { error: string };
     expect(body.error).toContain("unknown session");
   });
+
+  it("POST /sessions/:id/fork forks a session at a specified turn (S10-T14)", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+
+    const r0 = store.createRun({ id: "fork-d-r0", mode: "single", repositoryPath: "/tmp/repo", prompt: "turn 0" });
+    const sid = r0.sessionId!;
+    store.createRun({ id: "fork-d-r1", mode: "single", repositoryPath: "/tmp/repo", prompt: "turn 1", sessionId: sid });
+
+    const handle = await daemon(registry);
+    const response = await call(handle, `/sessions/${sid}/fork`, {
+      method: "POST",
+      body: JSON.stringify({ turnIndex: 0 }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { session: SessionDetail };
+    expect(body.session.parentSessionId).toBe(sid);
+    expect(body.session.forkedFromTurn).toBe(0);
+    expect(body.session.turns).toHaveLength(1);
+    expect(body.session.turns[0]?.prompt).toBe("turn 0");
+  });
 });
 
 describe("session config", () => {

@@ -382,6 +382,10 @@ export class RunRegistry {
     return this.store.sessionDetail(id);
   }
 
+  forkSession(sessionId: string, forkedFromTurn: number): SessionDetail {
+    return this.store.forkSession(sessionId, forkedFromTurn);
+  }
+
   getSessionConfig(sessionId: string): SessionConfig | undefined {
     return this.store.getSessionConfig(sessionId);
   }

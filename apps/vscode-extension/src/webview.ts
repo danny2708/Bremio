@@ -1992,7 +1992,9 @@ function renderTranscript(session, turns, contextItems, visionNotice, queued, qu
       ? '<div class="bubble response md">' + renderResponseBody(turn.response) + "</div>"
       : '<div class="bubble muted">(no response recorded)</div>';
 
-    out += '<div class="turn-foot">' + escapeHtml(turn.status) + " · run " + escapeHtml(turn.runId) + "</div>";
+    out += '<div class="turn-foot">' + escapeHtml(turn.status) + " · run " + escapeHtml(turn.runId)
+      + ' <button class="ghost" style="margin-left:8px;padding:2px 6px;font-size:11px" data-action="fork-turn" data-session="' + escapeHtml(session.id) + '" data-turn="' + turn.turnIndex + '">Fork</button>'
+      + "</div>";
     out += "</div>";
   }
 
@@ -2167,6 +2169,14 @@ document.addEventListener("click", (event) => {
   if (!button) return;
   if (button.dataset.action === "back-to-sessions") {
     vscode.postMessage({ type: "tab", tab: "sessions" });
+    return;
+  }
+  if (button.dataset.action === "fork-turn") {
+    vscode.postMessage({
+      type: "forkSession",
+      sessionId: button.dataset.session,
+      turnIndex: Number(button.dataset.turn),
+    });
     return;
   }
   if (button.dataset.action === "back-to-gate") {

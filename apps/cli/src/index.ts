@@ -174,6 +174,7 @@ function parseCli() {
       "workspace-strategy": { type: "string" },
       "workspace": { type: "string" },
       session: { type: "string" },
+      turn: { type: "string" },
       reason: { type: "string" },
       "lead-agent": { type: "string" },
       "worker-agent": { type: "string" },

@@ -2490,9 +2490,37 @@ All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.
 **Verification**
 - `corepack pnpm typecheck` — clean.
 - `corepack pnpm vitest run packages/orchestrator/src/router.test.ts packages/orchestrator/src/run.integration.test.ts apps/daemon/src/daemon.test.ts apps/cli/src/session.test.ts` — 111 tests passed.
-- `corepack pnpm test` — 1201 passed / 87 files (was 1197 / 87).
-- `corepack pnpm release:check` — PASS (build + packed install clean).
 - Red-check: changed controlMode check in `run.ts` to check only the first worker → test "refuses if any worker in workerIds cannot back the control mode" failed with expected exception not thrown. Restored.
+
+### S10-T14 — Fork a session from one of its turns
+- **agent:** Antigravity (Gemini 3.7 Flash)
+- **time:** 2026-08-29T16:11 → 2026-08-29T16:24
+- **branch:** feat/s10-t14-fork-session
+- **task(s):** S10-T14
+- **status:** done
+
+**Did**
+- Added migration 14 in `apps/daemon/src/storage.ts`, adding `parent_session_id` and `forked_from_turn` columns and indexes to the `sessions` table.
+- Implemented `forkSession(sessionId, forkedFromTurn)` in `RunStore` and `RunRegistry`:
+  - Records lineage (`parent_session_id` and `forked_from_turn`).
+  - Copies turns $0 \dots \text{forkedFromTurn}$ into the new session with fresh run IDs (preserving prompt, status, turn index, events, artifacts, and summaries).
+  - Copies session config revisions and session-scoped context items.
+  - Enforces `docs/15` §4.3.1: does **NOT** copy or inherit `ProviderSessionBinding` records — the forked session starts fresh with zero bindings to prevent conversation crosstalk.
+- Added `POST /sessions/:id/fork` endpoint in `apps/daemon/src/server.ts`.
+- Added `forkSession()` to `BremioClient` and wired up webview Fork buttons per turn in `apps/vscode-extension/src/`.
+- Added `bremio session fork <id> --turn <index>` CLI subcommand in `apps/cli/src/session.ts` and `apps/cli/src/index.ts`.
+- Added unit and integration tests in `storage.test.ts`, `daemon.test.ts`, and `session.test.ts`.
+
+**Decided**
+- A forked session gets its own independent provider bindings upon running, strictly fulfilling the contract in `docs/15` §4.3.1 that prevents two sessions from concurrently mutating the same provider conversation.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts apps/daemon/src/daemon.test.ts apps/cli/src/session.test.ts` — 158 tests passed (+4 new).
+- `corepack pnpm test` — 1205 passed / 87 files (was 1201 / 87).
+- `corepack pnpm release:check` — PASS (build + packed install clean).
+- Red-check: temporarily copied parent bindings into forked session → test "ProviderSessionBindings must NOT be inherited (docs/15 §4.3.1)" failed with expected length 0 but got 2. Restored.
+
 
 
 
