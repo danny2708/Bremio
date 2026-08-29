@@ -1,6 +1,6 @@
 # 16 — Selective Munder Difflin integration plan
 
-**Status:** proposed; review is required before S11-T1 is claimed.
+**Status:** approved; invariants locked in `docs/15` (S11-T1).
 **Bremio snapshot reviewed:** `main` at `c0768ae`, with unrelated local panel
 changes left untouched.
 **Munder Difflin snapshot reviewed:** upstream `main` at `b91a49fc`

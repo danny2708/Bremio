@@ -234,7 +234,7 @@ running `git add -A`.
 
 ---
 
-## Sprint 11 — Runtime guard ⛔ needs review
+## Sprint 11 — Runtime guard
 
 Selective Munder integration starts with the highest-ROI mechanism: an
 evidence-only circuit breaker over Bremio's existing normalized events. This is
@@ -243,7 +243,7 @@ Design and acceptance criteria: [`docs/16`](docs/16-munder-difflin-integration-p
 
 | ✓ | ID | Task | Size | Depends on | Parallel? |
 |---|---|---|---|---|---|
-| [ ] | S11-T1 | **Lock guard and collaboration invariants.** Promote the approved MD-1…MD-6 decisions from `docs/16` into `docs/15`: daemon/orchestrator authority, task-boundary delivery, evidence-only guard signals, unknown-is-inert, reviewed memory, and bounded expansion. Distinguish observe, boundary restriction, cancellation, and verified live input. | S | — | — |
+| [x] | S11-T1 | **Lock guard and collaboration invariants.** Promote the approved MD-1…MD-6 decisions from `docs/16` into `docs/15`: daemon/orchestrator authority, task-boundary delivery, evidence-only guard signals, unknown-is-inert, reviewed memory, and bounded expansion. Distinguish observe, boundary restriction, cancellation, and verified live input. | S | — | — |
 | [ ] | S11-T2 | **Build the pure runtime-guard evaluator.** Add a provider-agnostic state machine for repeated structured tool calls, error storms, provider-reported token velocity, debounced no-progress, one-level recovery, and compaction grace. No side effects; missing/estimated inputs stay inert. | M | S11-T1 | — |
 | [ ] | S11-T3 | **Persist observe-only guard decisions.** Feed normalized task events into the evaluator and append state changes to `run_events` with reason and evidence quality. Preserve store-then-publish/SSE replay, and do not pretend in-memory counters survive daemon restart. | M | S11-T2 | — |
 | [ ] | S11-T4 | **Surface guard state and reasons.** Render the same canonical event in CLI/TUI and panel: level, proposed action, evidence quality, reason and update time. Observe-only must be labelled; unknown must not render as healthy. | M | S11-T3 | — |

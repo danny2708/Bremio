@@ -2526,3 +2526,27 @@ All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.
 
 
 
+
+---
+
+## Sprint 11 — Runtime guard
+
+### S11-T1 — Lock guard and collaboration invariants
+- **agent:** Antigravity (Gemini)
+- **time:** 2026-08-29T17:51:27+07:00 ? open
+- **branch:** sprint-11
+- **task(s):** S11-T1
+- **status:** done
+
+**Did**
+- Promoted MD-1 through MD-6 from \docs/16-munder-difflin-integration-plan.md\ into \docs/15-architecture-lock.md\ as section 11.
+- Explicitly distinguished observe, boundary restriction, cancellation, and live steering.
+- Documented that unknown evidence is explicitly inert and cannot trigger action.
+- Added clarification that the runtime guard and the Sprint 3 planning-cost fallback are distinct and cannot be confused.
+- Updated \docs/16-munder-difflin-integration-plan.md\ status to approved and invariants locked.
+
+**Decided**
+- Appended the new invariants to the end of \docs/15\ rather than interleaving them, preserving the original flow and clearly demarcating the Sprint 11 decisions.
+
+**Verification**
+- Verified the markdown formatting manually.

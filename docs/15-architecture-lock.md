@@ -643,3 +643,66 @@ M2-*    approval lifecycle, change attribution, diff review
 - `contextMetrics` / `manualCompact` / `mcp` / `webSearch` for every adapter.
 - Whether Codex's app-server transport exposes an interception seam the CLI does
   not — the case that motivates transport-level capabilities in the first place.
+
+---
+
+## 11. Munder Difflin Integration Invariants
+
+The following decisions lock the integration semantics for the Munder Difflin capabilities, ensuring Bremio's control model remains intact. These were reviewed and approved as part of Sprint 11.
+
+### 11.1 Bremio remains the only control plane (MD-1)
+
+The lead may propose plans, messages, blockers, and microtasks. Only the orchestrator/scheduler may validate them, mutate run state, assign work, or request an adapter action. Provider output is untrusted input. Munder's GOD agent and prompt-owned escalation policies are excluded.
+
+### 11.2 Daemon SQLite is authoritative (MD-2)
+
+Guard decisions, durable memory, run-context entries, messages, and artifact metadata live beside the rest of Bremio's durable state. The daemon remains the sole writer and migration owner. Repo-local files are not authoritative because they duplicate across worktrees and create multi-writer conflict semantics.
+
+### 11.3 Collaboration is task-boundary first (MD-3)
+
+V1 collaboration is asynchronous and bounded:
+1. A worker completes or pauses with a structured blocker/artifact request.
+2. The orchestrator validates and persists the request.
+3. The scheduler resolves it from known artifacts or creates an approved follow-up task.
+4. A later `startRun`/`resumeRun` receives the resolved context.
+
+No UI or API may imply live delivery to a running provider process unless that adapter reports a separately verified interactive-input capability (**live steering**).
+
+### 11.4 Runtime guard decisions are evidence-only (MD-4)
+
+The runtime guard is an evidence-only circuit breaker. It distinguishes explicitly between:
+- **Observe:** The default state. Records decisions without changing execution flow.
+- **Boundary restriction:** Constrained runs may stop receiving retries/escalations/new tasks at a meaningful boundary. Opt-in only.
+- **Cancellation:** Hard stop is opt-in and requires confirmed cancellation support from the adapter.
+- **Live steering:** Unsupported until verified per adapter.
+
+The guard consumes a signal only when its source is known. **Unknown evidence is explicitly inert.** Missing inputs produce `unknown` and cannot trigger action or a numeric threshold.
+
+**Crucially, the runtime guard and the planning-cost fallback cannot be confused:**
+- **Cost fallback (Sprint 3):** Evaluated once, after planning and before worker execution; it may switch Team to Single.
+- **Runtime guard:** Evaluated during active execution; it may warn, suppress future coordination, or request cancellation. It never restarts the original prompt after workers have begun.
+
+### 11.5 Memory is reviewed knowledge, blackboard is run evidence (MD-5)
+
+- **Memory** crosses turns/runs and follows the existing proposal-review-provenance lifecycle. Project memory is keyed by canonical repository identity.
+- **Run context** is immutable evidence for one run: facts, decisions, blockers, open questions, and artifacts.
+- **Messages** are delivery records that may reference run-context entries.
+
+### 11.6 Dynamic expansion is bounded and reversible (MD-6)
+
+The lead may propose a microtask, but the scheduler rejects it unless all of the following hold:
+- No duplicate id and no dependency cycle.
+- Maximum depth, children per task, and total added tasks remain within config.
+- The target adapter and control/workspace modes are valid.
+- Lead-capacity reserve and quota policy still permit the assignment.
+- The originating run is not cancelled, terminal, or guard-constrained.
+- The feature flag is enabled.
+
+Every accepted proposal creates an auditable event and coordination ledger entry. Unknown or non-positive net gain keeps automatic expansion disabled.
+
+### 11.7 Locked Capability Vocabulary
+
+- `RuntimeGuardDecision`: Requires `level` (`healthy` \| `warning` \| `constrained` \| `stop-requested`), `action` (`none` \| `warn` \| `suppress-future-work` \| `cancel`), and `evidenceQuality` (`reported` \| `observed` \| `unknown`).
+- `RunContextEntry`: Requires `kind` (`fact` \| `decision` \| `blocker` \| `open-question` \| `artifact`).
+- `CoordinationMessage`: Requires `act` (`request-artifact` \| `inform` \| `blocker` \| `done`).
+
