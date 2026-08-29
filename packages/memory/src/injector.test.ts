@@ -133,7 +133,7 @@ describe("MemoryInjector", () => {
     it("excludes proposals from selection", async () => {
       const store = new InMemoryStore();
       await store.store(makeEntry({ id: "a" }));
-      await store.store(makeEntry({ id: "prop", source: { kind: "proposal" } }));
+      await store.store(makeEntry({ id: "prop", source: { kind: "proposal" }, review: { state: "pending" } }));
       const injector = new MemoryInjector(store);
       const result = await injector.select({ maxTokens: 100 });
       expect(result).toHaveLength(1);
