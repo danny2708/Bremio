@@ -20,6 +20,7 @@ import { isTerminal, type CreateContextItemInput, type PersistedContextItem } fr
 import { mergeRun } from "./merge";
 import { applyRunPatch, revertRunPatch } from "./apply";
 import { loadReportByRunId } from "@bremio/orchestrator";
+import type { MemoryEntry } from "@bremio/memory";
 
 /** Requests carry a prompt at most; anything larger is malformed or hostile. */
 const MAX_BODY_BYTES = 256 * 1024;
@@ -113,6 +114,61 @@ export async function startDaemonServer(options: DaemonServerOptions): Promise<D
   };
 }
 
+async function handleMemory(
+  req: IncomingMessage,
+  res: ServerResponse,
+  route: string,
+  method: string,
+  registry: RunRegistry,
+): Promise<void> {
+  const store = registry.store;
+
+  if (method === "GET") {
+    if (route === "/memory") {
+      const url = new URL(req.url ?? "/", `http://localhost`);
+      const ids = url.searchParams.getAll("id");
+      const scopes = url.searchParams.getAll("scope") as any[];
+      const tags = url.searchParams.getAll("tag");
+      const repo = url.searchParams.get("repo") ?? undefined;
+      const results = store.queryMemory({
+        ids: ids.length > 0 ? ids : undefined,
+        scopes: scopes.length > 0 ? scopes : undefined,
+        tags: tags.length > 0 ? tags : undefined,
+        repository: repo,
+      });
+      return sendJson(res, 200, { memory: results });
+    }
+    const match = route.match(/^\/memory\/([^/]+)$/);
+    if (match) {
+      const id = match[1]!;
+      const entry = store.getMemory(id);
+      if (!entry) return sendJson(res, 404, { error: "not found" });
+      return sendJson(res, 200, { memory: entry });
+    }
+  }
+
+  if (method === "POST" && route === "/memory") {
+    try {
+      const body = (await readJsonBody(req)) as MemoryEntry;
+      store.storeMemory(body);
+      return sendJson(res, 201, { ok: true });
+    } catch (err) {
+      return sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
+  if (method === "DELETE") {
+    const match = route.match(/^\/memory\/([^/]+)$/);
+    if (match) {
+      const id = match[1]!;
+      const ok = store.deleteMemory(id);
+      return sendJson(res, 200, { ok });
+    }
+  }
+
+  return sendJson(res, 404, { error: "not found" });
+}
+
 async function handle(
   req: IncomingMessage,
   res: ServerResponse,
@@ -132,6 +188,10 @@ async function handle(
   const url = new URL(req.url ?? "/", `http://${host}`);
   const route = url.pathname;
   const method = req.method ?? "GET";
+
+  if (route.startsWith("/memory")) {
+    return handleMemory(req, res, route, method, registry);
+  }
 
   if (method === "GET" && route === "/health") {
     return sendJson(res, 200, { app: "bremio-daemon", version: options.version, pid: process.pid });

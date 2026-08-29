@@ -234,7 +234,7 @@ export class RunRegistry {
   #counter = 0;
 
   constructor(
-    private readonly store: RunStore,
+    readonly store: RunStore,
     private readonly supervisor: ProcessSupervisor = processSupervisor,
     /** Overridden only by tests, so the review path can run without a provider. */
     private readonly adapters: () => AgentAdapter[] = defaultAdapters,

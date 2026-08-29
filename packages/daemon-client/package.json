@@ -9,6 +9,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "dependencies": {
+    "@bremio/memory": "workspace:*",
     "@bremio/protocol": "workspace:*"
   }
 }

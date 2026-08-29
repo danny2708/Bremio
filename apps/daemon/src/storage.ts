@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { MemoryEntry, MemoryQuery, MemoryScope } from "@bremio/memory";
 
 // Vite does not recognize node:sqlite as a builtin yet; require keeps it
 // external at test time, matching how packages/quota loads it.
@@ -24,7 +25,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -1652,6 +1653,147 @@ export class RunStore {
     results.sort((a, b) => b.eventAt.localeCompare(a.eventAt));
     return results.slice(0, limit);
   }
+
+  // --- Memory ---
+
+  storeMemory(entry: MemoryEntry): void {
+    if (entry.scope === "session") {
+      throw new Error("Session memory must not be persisted to the daemon");
+    }
+
+    const isProject = entry.scope === "project";
+    const table = isProject ? "project_memory" : "user_memory";
+    
+    // repository field is only on project_memory
+    if (isProject) {
+      this.db.prepare(
+        `INSERT INTO ${table} (
+          id, repository, source_kind, source_session_id, source_run_id, title, content,
+          tags, created_at, updated_at, expires_at, visibility, review_state, reviewer,
+          reviewed_at, review_note, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title, content = excluded.content, tags = excluded.tags,
+          updated_at = excluded.updated_at, expires_at = excluded.expires_at,
+          visibility = excluded.visibility, review_state = excluded.review_state,
+          reviewer = excluded.reviewer, reviewed_at = excluded.reviewed_at,
+          review_note = excluded.review_note, metadata = excluded.metadata`
+      ).run(
+        entry.id,
+        entry.repository ?? "",
+        entry.source.kind,
+        "sessionId" in entry.source ? (entry.source as any).sessionId : null,
+        "runId" in entry.source ? (entry.source as any).runId : null,
+        entry.title,
+        entry.content,
+        JSON.stringify(entry.tags),
+        entry.createdAt,
+        entry.updatedAt,
+        entry.expiresAt ?? null,
+        entry.visibility ?? (isProject ? "shared" : "private"),
+        entry.review?.state ?? "pending",
+        entry.review?.reviewer ?? null,
+        entry.review?.reviewedAt ?? null,
+        entry.review?.note ?? null,
+        JSON.stringify(entry.metadata)
+      );
+    } else {
+      this.db.prepare(
+        `INSERT INTO ${table} (
+          id, source_kind, source_session_id, source_run_id, title, content,
+          tags, created_at, updated_at, expires_at, visibility, review_state, reviewer,
+          reviewed_at, review_note, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title, content = excluded.content, tags = excluded.tags,
+          updated_at = excluded.updated_at, expires_at = excluded.expires_at,
+          visibility = excluded.visibility, review_state = excluded.review_state,
+          reviewer = excluded.reviewer, reviewed_at = excluded.reviewed_at,
+          review_note = excluded.review_note, metadata = excluded.metadata`
+      ).run(
+        entry.id,
+        entry.source.kind,
+        "sessionId" in entry.source ? (entry.source as any).sessionId : null,
+        "runId" in entry.source ? (entry.source as any).runId : null,
+        entry.title,
+        entry.content,
+        JSON.stringify(entry.tags),
+        entry.createdAt,
+        entry.updatedAt,
+        entry.expiresAt ?? null,
+        entry.visibility ?? "private",
+        entry.review?.state ?? "pending",
+        entry.review?.reviewer ?? null,
+        entry.review?.reviewedAt ?? null,
+        entry.review?.note ?? null,
+        JSON.stringify(entry.metadata)
+      );
+    }
+  }
+
+  getMemory(id: string): MemoryEntry | undefined {
+    let row = this.db.prepare("SELECT * FROM project_memory WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    if (row) return toMemoryEntry(row, "project");
+
+    row = this.db.prepare("SELECT * FROM user_memory WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    if (row) return toMemoryEntry(row, "user");
+
+    return undefined;
+  }
+
+  deleteMemory(id: string): boolean {
+    const p = this.db.prepare("DELETE FROM project_memory WHERE id = ?").run(id);
+    if (p.changes > 0) return true;
+    const u = this.db.prepare("DELETE FROM user_memory WHERE id = ?").run(id);
+    return u.changes > 0;
+  }
+
+  queryMemory(filter: MemoryQuery & { repository?: string }): MemoryEntry[] {
+    const scopes = filter.scopes ?? ["project", "user"];
+    const results: MemoryEntry[] = [];
+
+    const handleQuery = (scope: MemoryScope, table: string) => {
+      let sql = `SELECT * FROM ${table} WHERE 1=1`;
+      const params: any[] = [];
+
+      if (scope === "project" && filter.repository) {
+        sql += ` AND repository = ?`;
+        params.push(filter.repository);
+      }
+
+      if (filter.sourceKinds && filter.sourceKinds.length > 0) {
+        sql += ` AND source_kind IN (${filter.sourceKinds.map(() => "?").join(",")})`;
+        params.push(...filter.sourceKinds);
+      }
+
+      if (filter.ids && filter.ids.length > 0) {
+        sql += ` AND id IN (${filter.ids.map(() => "?").join(",")})`;
+        params.push(...filter.ids);
+      }
+
+      let rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+
+      // tags filter is implemented in JS for simplicity as SQLite JSON is complicated
+      if (filter.tags && filter.tags.length > 0) {
+        rows = rows.filter((r) => {
+          const tags = parseJson(r.tags) as string[];
+          return filter.tags!.some((t) => tags.includes(t));
+        });
+      }
+
+      for (const row of rows) {
+        results.push(toMemoryEntry(row, scope));
+      }
+    };
+
+    if (scopes.includes("project")) handleQuery("project", "project_memory");
+    if (scopes.includes("user")) handleQuery("user", "user_memory");
+
+    if (filter.limit !== undefined && filter.limit >= 0) {
+      return results.slice(0, filter.limit);
+    }
+    return results;
+  }
 }
 
 export interface AuditEvent {
@@ -1669,6 +1811,33 @@ export function truncateTitle(prompt: string, maxLen = 80): string {
   const firstLine = prompt.split("\n")[0] ?? prompt;
   if (firstLine.length <= maxLen) return firstLine;
   return firstLine.slice(0, maxLen - 3) + "...";
+}
+
+export function toMemoryEntry(row: Record<string, unknown>, scope: MemoryScope): MemoryEntry {
+  return {
+    id: String(row.id),
+    scope,
+    source: {
+      kind: String(row.source_kind) as any,
+      ...(row.source_session_id ? { sessionId: String(row.source_session_id) } : {}),
+      ...(row.source_run_id ? { runId: String(row.source_run_id) } : {}),
+    } as any,
+    title: String(row.title),
+    content: String(row.content),
+    tags: parseJson(row.tags) as string[],
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    ...(row.expires_at ? { expiresAt: String(row.expires_at) } : {}),
+    metadata: parseJson(row.metadata) as Record<string, unknown>,
+    ...(row.repository ? { repository: String(row.repository) } : {}),
+    visibility: String(row.visibility) as any,
+    review: {
+      state: String(row.review_state) as any,
+      ...(row.reviewer ? { reviewer: String(row.reviewer) } : {}),
+      ...(row.reviewed_at ? { reviewedAt: String(row.reviewed_at) } : {}),
+      ...(row.review_note ? { note: String(row.review_note) } : {}),
+    },
+  };
 }
 
 /** Derive a `RunStatus` from a legacy report's contents. */
@@ -2022,6 +2191,60 @@ function migrate(db: Database): void {
       addColumnIfMissing(db, "sessions", "parent_session_id", "TEXT");
       addColumnIfMissing(db, "sessions", "forked_from_turn", "INTEGER");
       db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)");
+    }
+
+    if (Number(current) < 15) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_memory (
+          id TEXT PRIMARY KEY,
+          repository TEXT NOT NULL,
+          source_kind TEXT NOT NULL,
+          source_session_id TEXT,
+          source_run_id TEXT,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          expires_at TEXT,
+          visibility TEXT NOT NULL DEFAULT 'shared',
+          review_state TEXT NOT NULL DEFAULT 'pending',
+          reviewer TEXT,
+          reviewed_at TEXT,
+          review_note TEXT,
+          metadata TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_project_memory_repo ON project_memory(repository);
+
+        CREATE TABLE IF NOT EXISTS user_memory (
+          id TEXT PRIMARY KEY,
+          source_kind TEXT NOT NULL,
+          source_session_id TEXT,
+          source_run_id TEXT,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          expires_at TEXT,
+          visibility TEXT NOT NULL DEFAULT 'private',
+          review_state TEXT NOT NULL DEFAULT 'pending',
+          reviewer TEXT,
+          reviewed_at TEXT,
+          review_note TEXT,
+          metadata TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS run_blackboard (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          metadata TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_blackboard_run ON run_blackboard(run_id);
+      `);
     }
 
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);

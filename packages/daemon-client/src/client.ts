@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PROTOCOL_VERSION, checkProtocolCompatibility } from "@bremio/protocol";
+import type { MemoryEntry, MemoryQuery } from "@bremio/memory";
 
 export interface DaemonEndpoint {
   port: number;
@@ -217,6 +218,36 @@ export class DaemonClient {
 
   async startRun(request: StartRunRequest): Promise<{ run: { id: string } }> {
     return this.post<{ run: { id: string } }>("/runs", request);
+  }
+
+  async cancelApprovalRequest(id: string, cancelledBy?: string): Promise<{ request: unknown }> {
+    return this.post<{ request: unknown }>(`/approvals/${encodeURIComponent(id)}/cancel`, { cancelledBy });
+  }
+
+  async getMemory(id: string): Promise<{ memory: MemoryEntry } | undefined> {
+    try {
+      return await this.get<{ memory: MemoryEntry }>(`/memory/${encodeURIComponent(id)}`);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("404")) return undefined;
+      throw err;
+    }
+  }
+
+  async storeMemory(entry: MemoryEntry): Promise<{ ok: boolean }> {
+    return this.post<{ ok: boolean }>("/memory", entry);
+  }
+
+  async deleteMemory(id: string): Promise<{ ok: boolean }> {
+    return this.#call<{ ok: boolean }>(`/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async queryMemory(filter: MemoryQuery & { repository?: string }): Promise<{ memory: MemoryEntry[] }> {
+    const params = new URLSearchParams();
+    if (filter.scopes) filter.scopes.forEach(s => params.append("scope", s));
+    if (filter.tags) filter.tags.forEach(t => params.append("tag", t));
+    if (filter.ids) filter.ids.forEach(id => params.append("id", id));
+    if (filter.repository) params.append("repo", filter.repository);
+    return this.get<{ memory: MemoryEntry[] }>(`/memory?${params.toString()}`);
   }
 
   async cancelRun(id: string): Promise<{ cancelled: boolean }> {
