@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ReasoningLevelSchema, TaskStatusSchema } from "./result";
+import { RuntimeGuardDecisionSchema } from "./guard";
 
 /**
  * AgentEvent — the normalized streaming protocol every adapter emits from
@@ -109,6 +110,13 @@ export const RunCompletedEventSchema = z.object({
   outcome: RunOutcomeSchema,
 });
 
+/** An evaluation emitted by the Runtime Guard. */
+export const GuardDecisionEventSchema = z.object({
+  type: z.literal("guard_decision"),
+  ...base,
+  decision: RuntimeGuardDecisionSchema,
+});
+
 export const AgentEventSchema = z.discriminatedUnion("type", [
   RunStartedEventSchema,
   MessageEventSchema,
@@ -119,6 +127,7 @@ export const AgentEventSchema = z.discriminatedUnion("type", [
   UsageEventSchema,
   ErrorEventSchema,
   RunCompletedEventSchema,
+  GuardDecisionEventSchema,
 ]);
 export type AgentEvent = z.infer<typeof AgentEventSchema>;
 

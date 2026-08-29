@@ -35,6 +35,8 @@ export function formatEvent(e: AgentEvent): string {
       return `[${t}] ERROR${e.fatal ? " (fatal)" : ""}: ${clip(e.message)}`;
     case "completed":
       return `[${t}] ══ completed status=${e.outcome.status}${e.outcome.error ? ` error=${clip(e.outcome.error)}` : ""}`;
+    case "guard_decision":
+      return `[${t}] guard [${e.decision.level}] action=${e.decision.action} reason=${e.decision.reasonCode}`;
   }
 }
 

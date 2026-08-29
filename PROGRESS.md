@@ -2576,3 +2576,28 @@ All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.
 - \corepack pnpm typecheck\ — clean.
 - \corepack pnpm vitest run packages/orchestrator/src/runtime-guard.test.ts\ — passed.
 - \corepack pnpm release:check\ — PASS.
+
+### S11-T3 — Persist observe-only guard decisions
+- **agent:** Antigravity (Gemini)
+- **time:** 2026-08-29T18:02:00+07:00 ? open
+- **branch:** sprint-11
+- **task(s):** S11-T3
+- **status:** done
+
+**Did**
+- Added \GuardDecisionEventSchema\ to \AgentEventSchema\ in \packages/protocol/src/event.ts\.
+- Exported guard schemas from \packages/protocol\ and \packages/orchestrator\.
+- Wired \RuntimeGuardEvaluator\ inside \RunRegistry.#execute\ (\pps/daemon/src/runs.ts\).
+- Resolved capabilities for each agent using \getRuntimeCapabilities\ with a safe fallback.
+- Evaluated guard for each \AgentEvent\ emitted by Single and Team mode hooks.
+- Emitted any guard decision as a \guard_decision\ task-event, saving it to \un_events\ for SSE replay and restart resilience.
+- Added \guard_decision\ formatting to \packages/workspace/src/logs.ts\.
+
+**Decided**
+- Rebuilding capabilities upfront inside \#execute\ instead of during the event loop keeps the event loop fast and purely synchronous.
+- The evaluator is instantiated per-agent (lead and workers independently), avoiding token accounting crossover.
+
+**Verification**
+- \corepack pnpm typecheck\ — clean.
+- \corepack pnpm vitest run apps/daemon/src/\ — 10 files, 234 tests passed.
+- \corepack pnpm release:check\ — PASS.

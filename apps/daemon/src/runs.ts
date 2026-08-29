@@ -5,9 +5,10 @@ import {
   resolveAutoMode,
   runBremio,
   runSingleAgent,
+  RuntimeGuardEvaluator,
   type BremioRunReport,
 } from "@bremio/orchestrator";
-import type { ReasoningLevel } from "@bremio/protocol";
+import type { ReasoningLevel, AgentEvent } from "@bremio/protocol";
 import { createHash } from "node:crypto";
 import {
   classifyAgentError,
@@ -1183,6 +1184,53 @@ export class RunRegistry {
       : undefined;
     const priorTurns = input.sessionId ? this.buildPriorTurns(input.sessionId) : undefined;
 
+    // Resolve capabilities for guard evaluation
+    const agentIds = input.mode === "single" 
+      ? [input.agentId] 
+      : [input.agentId, ...(input.workerIds ?? (input.workerId ? [input.workerId] : []))];
+    const capabilities = new Map<string, import("@bremio/adapter-sdk").AdapterRuntimeCapabilities>();
+    for (const agentId of new Set(agentIds)) {
+      try {
+        const adapter = registry.get(agentId);
+        if (!adapter) throw new Error("adapter not found");
+        const caps = await adapter.getRuntimeCapabilities();
+        capabilities.set(agentId, caps);
+      } catch (err) {
+        capabilities.set(agentId, {
+          adapterId: agentId, transport: "sdk", approval: "none",
+          structuredToolEvents: false, contextMetrics: "none",
+          manualCompact: false, mcp: false, webSearch: false, cancellation: false,
+        });
+      }
+    }
+
+    const evaluators = new Map<string, RuntimeGuardEvaluator>();
+    const getEvaluator = (agentId: string) => {
+      let evaluator = evaluators.get(agentId);
+      if (!evaluator) {
+         evaluator = new RuntimeGuardEvaluator(runId, agentId, capabilities.get(agentId)!);
+         evaluators.set(agentId, evaluator);
+      }
+      return evaluator;
+    };
+
+    const processGuard = (agentId: string, event: AgentEvent) => {
+      const decision = getEvaluator(agentId).evaluate(event);
+      if (decision) {
+        this.#emit(runId, {
+          kind: "task-event",
+          message: `Guard decision: ${decision.level} (${decision.reasonCode})`,
+          agentId,
+          data: {
+            type: "guard_decision",
+            runId,
+            ts: Date.now(),
+            decision,
+          },
+        });
+      }
+    };
+
     try {
       const report: BremioRunReport = input.mode === "single"
         ? await runSingleAgent({
@@ -1203,8 +1251,10 @@ export class RunRegistry {
             hooks: {
               onStart: (id) =>
                 this.#emit(runId, { kind: "status", message: `${id} started`, agentId: id }),
-              onEvent: (event) =>
-                this.#emit(runId, { kind: "task-event", message: describe(event), data: event }),
+              onEvent: (event) => {
+                this.#emit(runId, { kind: "task-event", message: describe(event), data: event });
+                processGuard(input.agentId, event);
+              }
             },
           })
         : await runBremio({
@@ -1226,8 +1276,10 @@ export class RunRegistry {
             hooks: {
               onLeadStart: (id) =>
                 this.#emit(runId, { kind: "lead", message: `lead ${id} planning`, agentId: id }),
-              onLeadEvent: (event) =>
-                this.#emit(runId, { kind: "lead", message: describe(event), data: event }),
+              onLeadEvent: (event) => {
+                this.#emit(runId, { kind: "lead", message: describe(event), data: event });
+                processGuard(input.agentId, event);
+              },
               onPlan: (plan, assign) =>
                 this.#emit(runId, {
                   kind: "plan",
@@ -1247,14 +1299,16 @@ export class RunRegistry {
                   taskId: task.id,
                   agentId,
                 }),
-              onEvent: (task, agentId, event) =>
+              onEvent: (task, agentId, event) => {
                 this.#emit(runId, {
                   kind: "task-event",
                   message: describe(event),
                   taskId: task.id,
                   agentId,
                   data: event,
-                }),
+                });
+                processGuard(agentId, event);
+              },
               onTaskComplete: (result) =>
                 this.#emit(runId, {
                   kind: "task-complete",

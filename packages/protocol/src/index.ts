@@ -61,6 +61,7 @@ export {
   UsageEventSchema,
   ErrorEventSchema,
   RunCompletedEventSchema,
+  GuardDecisionEventSchema,
   type AgentEvent,
   type AgentEventType,
   type RunOutcome,

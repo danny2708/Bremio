@@ -126,5 +126,9 @@ export {
   findTaskAcrossReports,
   type StoredReport,
   type StoredTeamReport,
-  type TaskMatch,
 } from "./reports";
+
+export {
+  RuntimeGuardEvaluator,
+  type GuardConfig,
+} from "./runtime-guard";
