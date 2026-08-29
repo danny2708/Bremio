@@ -1106,33 +1106,35 @@ export interface ForkSessionOptions {
 }
 
 export async function forkSessionCommand(opts: ForkSessionOptions): Promise<number> {
-  const status = await daemonStatus();
-  if (status.running) {
-    const res = await fetch(
-      `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/fork`,
-      {
-        method: "POST",
-        headers: {
-          "x-bremio-token": status.endpoint.token,
-          "content-type": "application/json",
+  if (!opts.databasePath) {
+    const status = await daemonStatus();
+    if (status.running) {
+      const res = await fetch(
+        `http://127.0.0.1:${status.endpoint.port}/sessions/${encodeURIComponent(opts.id)}/fork`,
+        {
+          method: "POST",
+          headers: {
+            "x-bremio-token": status.endpoint.token,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ turnIndex: opts.forkedFromTurn }),
         },
-        body: JSON.stringify({ turnIndex: opts.forkedFromTurn }),
-      },
-    );
-    if (res.ok) {
-      const data = (await res.json()) as { session: SessionDetail };
-      if (opts.json) {
-        console.log(JSON.stringify(data.session, null, 2));
-      } else {
-        console.log(
-          c.green(`Forked session created: ${c.bold(data.session.id)} (parent: ${data.session.parentSessionId}, turn: ${data.session.forkedFromTurn})`),
-        );
+      );
+      if (res.ok) {
+        const data = (await res.json()) as { session: SessionDetail };
+        if (opts.json) {
+          console.log(JSON.stringify(data.session, null, 2));
+        } else {
+          console.log(
+            c.green(`Forked session created: ${c.bold(data.session.id)} (parent: ${data.session.parentSessionId}, turn: ${data.session.forkedFromTurn})`),
+          );
+        }
+        return 0;
       }
-      return 0;
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      console.error(c.red(`error: ${body.error ?? res.statusText}`));
+      return 1;
     }
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    console.error(c.red(`error: ${body.error ?? res.statusText}`));
-    return 1;
   }
 
   const store = await RunStore.open(opts.databasePath ?? defaultDatabasePath());

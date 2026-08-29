@@ -1410,6 +1410,12 @@ function escapeHtml(value) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+let gitMessageText = "";
+let gitPrTitleText = "";
+let gitPrBodyText = "";
+let gitNewBranchText = "";
+let lastGitResult = null;
+
 window.addEventListener("message", (event) => {
   const message = event.data;
   if (message.type === "daemon") {
@@ -1424,16 +1430,20 @@ window.addEventListener("message", (event) => {
   if (message.type === "adapters") {
     adapters = message.adapters;
     renderAgentOptions();
-    $("tab-doctor").innerHTML = message.adapters.map((a) => \`
-      <div class="card">
-        <div class="card-head">
-          <span class="agent" data-agent="\${escapeHtml(a.id)}"><span class="card-title">\${escapeHtml(a.id)}</span></span>
-          <span class="badge \${a.health.status === "ok" ? "ok" : a.health.status === "degraded" ? "warn" : "bad"}">\${escapeHtml(a.health.status)}</span>
-          \${a.leadEligible ? '<span class="badge lead">lead</span>' : ""}
-        </div>
-        <div class="secondary">\${escapeHtml(a.health.detail ?? "")}</div>
-        \${a.leadEligible ? "" : '<div class="muted">Not lead-eligible: needs planning + structured output.</div>'}
-      </div>\`).join("");
+    $("tab-doctor").innerHTML = message.adapters.map(function(a) {
+      const statusClass = a.health.status === "ok" ? "ok" : a.health.status === "degraded" ? "warn" : "bad";
+      const leadBadge = a.leadEligible ? '<span class="badge lead">lead</span>' : "";
+      const leadNote = a.leadEligible ? "" : '<div class="muted">Not lead-eligible: needs planning + structured output.</div>';
+      return '<div class="card">'
+        + '<div class="card-head">'
+        + '<span class="agent" data-agent="' + escapeHtml(a.id) + '"><span class="card-title">' + escapeHtml(a.id) + '</span></span>'
+        + '<span class="badge ' + statusClass + '">' + escapeHtml(a.health.status) + '</span>'
+        + leadBadge
+        + '</div>'
+        + '<div class="secondary">' + escapeHtml(a.health.detail ?? "") + '</div>'
+        + leadNote
+        + '</div>';
+    }).join("");
   }
   if (message.type === "capacity") {
     $("tab-capacity").innerHTML = renderCapacityCards(message.capacity);
@@ -1445,9 +1455,41 @@ window.addEventListener("message", (event) => {
     $("active-runs").innerHTML = renderActiveRuns(message.active);
   }
   if (message.type === "gitStatus") {
+    const msgBox = $("git-message");
+    if (msgBox && msgBox.value) gitMessageText = msgBox.value;
+    const prTitleBox = $("git-pr-title");
+    if (prTitleBox && prTitleBox.value) gitPrTitleText = prTitleBox.value;
+    const prBodyBox = $("git-pr-body");
+    if (prBodyBox && prBodyBox.value) gitPrBodyText = prBodyBox.value;
+    const newBranchBox = $("git-branch-new");
+    if (newBranchBox && newBranchBox.value) gitNewBranchText = newBranchBox.value;
+
     $("tab-git").innerHTML = renderGitPanel(message.git);
+
+    const newMsgBox = $("git-message");
+    if (newMsgBox && gitMessageText) newMsgBox.value = gitMessageText;
+    const newPrTitleBox = $("git-pr-title");
+    if (newPrTitleBox && gitPrTitleText) newPrTitleBox.value = gitPrTitleText;
+    const newPrBodyBox = $("git-pr-body");
+    if (newPrBodyBox && gitPrBodyText) newPrBodyBox.value = gitPrBodyText;
+    const newBranchInput = $("git-branch-new");
+    if (newBranchInput && gitNewBranchText) newBranchInput.value = gitNewBranchText;
+
+    if (lastGitResult) {
+      const host = $("git-result");
+      if (host) {
+        host.innerHTML = '<div class="banner ' + (lastGitResult.ok ? "ok" : "bad") + '">'
+          + escapeHtml(lastGitResult.detail) + "</div>";
+      }
+    }
   }
   if (message.type === "gitResult") {
+    lastGitResult = message;
+    if (message.ok) {
+      gitMessageText = "";
+      const box = $("git-message");
+      if (box) box.value = "";
+    }
     const host = $("git-result");
     if (host) {
       host.innerHTML = '<div class="banner ' + (message.ok ? "ok" : "bad") + '">'
@@ -2371,6 +2413,13 @@ document.addEventListener("click", (event) => {
           .filter((box) => box.checked)
           .map((box) => box.dataset.gitPath)
       : [];
+    if (paths.length === 0) {
+      const host = $("git-result");
+      if (host) {
+        host.innerHTML = '<div class="banner warn">Please check at least one file to ' + (unstage ? "unstage" : "stage") + '.</div>';
+      }
+      return;
+    }
     vscode.postMessage({ type: "gitStage", paths, unstage });
     return;
   }
@@ -2381,14 +2430,39 @@ document.addEventListener("click", (event) => {
   }
   if (button.dataset.action === "git-create-branch") {
     const box = $("git-branch-new");
-    vscode.postMessage({ type: "gitBranch", name: box ? box.value : "", create: true });
+    const name = box ? box.value.trim() : "";
+    if (!name) {
+      const host = $("git-result");
+      if (host) {
+        host.innerHTML = '<div class="banner warn">Please enter a new branch name.</div>';
+      }
+      if (box) box.focus();
+      return;
+    }
+    vscode.postMessage({ type: "gitBranch", name, create: true });
     if (box) box.value = "";
     return;
   }
   if (button.dataset.action === "git-commit") {
     const box = $("git-message");
-    vscode.postMessage({ type: "gitCommit", message: box ? box.value : "" });
-    if (box) box.value = "";
+    const msg = box ? box.value.trim() : "";
+    const host = $("git-result");
+    if (!msg) {
+      if (host) {
+        host.innerHTML = '<div class="banner warn">Please enter a commit message before committing.</div>';
+      }
+      if (box) box.focus();
+      return;
+    }
+    const stagedGroup = $("tab-git").querySelector('[data-git-group="unstage"]');
+    const hasStaged = stagedGroup && stagedGroup.querySelectorAll(".git-row").length > 0;
+    if (!hasStaged) {
+      if (host) {
+        host.innerHTML = '<div class="banner warn">Nothing is staged. Select files in Working Tree Changes and click "Stage selected" first.</div>';
+      }
+      return;
+    }
+    vscode.postMessage({ type: "gitCommit", message: box.value });
     return;
   }
   if (button.dataset.action === "git-push") {
@@ -2401,11 +2475,20 @@ document.addEventListener("click", (event) => {
   }
   if (button.dataset.action === "git-create-pr") {
     const titleBox = $("git-pr-title");
+    const title = titleBox ? titleBox.value.trim() : "";
+    if (!title) {
+      const host = $("git-result");
+      if (host) {
+        host.innerHTML = '<div class="banner warn">Please enter a pull request title.</div>';
+      }
+      if (titleBox) titleBox.focus();
+      return;
+    }
     const bodyBox = $("git-pr-body");
     const draftBox = $("git-pr-draft");
     vscode.postMessage({
       type: "gitCreatePr",
-      title: titleBox ? titleBox.value : "",
+      title,
       body: bodyBox ? bodyBox.value : "",
       draft: draftBox ? draftBox.checked : false,
     });
@@ -2489,11 +2572,8 @@ document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
     if (document.activeElement && document.activeElement.id === "git-message") {
       event.preventDefault();
-      const box = $("git-message");
-      if (box && box.value.trim()) {
-        vscode.postMessage({ type: "gitCommit", message: box.value });
-        box.value = "";
-      }
+      const commitBtn = $("tab-git")?.querySelector('[data-action="git-commit"]');
+      if (commitBtn) commitBtn.click();
     }
   }
 });
