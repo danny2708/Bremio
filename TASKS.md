@@ -317,3 +317,5 @@ by unknown/non-positive evidence; `corepack pnpm release:check` passes.
 | — | Schedules, webhooks, Slack/GitHub ingress | Needs authentication, replay protection, rate limits, repository authorization, secret handling and an emergency disable path. |
 | — | Live mid-run agent messaging | S13-T5 must verify an acknowledged interactive-input seam per adapter. A message row without delivery is not collaboration. |
 | — | Munder runtime, GOD agent, personas or office UI | **Rejected for Bremio.** They create a second authority or add product surface without improving measured orchestration outcomes. |
+
+# Updated S11-T5
