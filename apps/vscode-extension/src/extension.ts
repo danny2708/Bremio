@@ -267,7 +267,10 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
         await gitStage(pathsOf(message), message.unstage === true);
         return;
       case "gitCommit":
-        await gitCommit(String(message.message ?? ""));
+        await gitCommit(
+          String(message.message ?? ""),
+          Array.isArray(message.stagePaths) ? (message.stagePaths as string[]).map(String) : undefined,
+        );
         return;
       case "gitBranch":
         await gitBranch(String(message.name ?? ""), message.create === true);
@@ -562,9 +565,21 @@ async function gitStage(paths: string[], unstage: boolean): Promise<void> {
   await sendGitStatus();
 }
 
-async function gitCommit(message: string): Promise<void> {
+async function gitCommit(message: string, stagePaths?: string[]): Promise<void> {
   const repoPath = currentRepo();
   if (!repoPath) throw new Error("no workspace folder is open");
+  if (stagePaths && stagePaths.length > 0) {
+    const stageResult = await client.gitStage({ repo: repoPath, paths: stagePaths, unstage: false });
+    if (!stageResult.ok) {
+      post({
+        type: "gitResult",
+        ok: false,
+        detail: stageResult.error ?? "staging before commit failed",
+      });
+      await sendGitStatus();
+      return;
+    }
+  }
   const result = await client.gitCommit({ repo: repoPath, message });
   post({
     type: "gitResult",

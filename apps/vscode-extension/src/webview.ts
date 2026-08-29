@@ -1828,7 +1828,7 @@ function renderGitPanel(git) {
     + '<div class="git-section-header"><span>Commit &amp; Sync</span></div>'
     + '<textarea id="git-message" class="git-commit-textarea" rows="2" placeholder="Commit message (Ctrl+Enter to commit)"></textarea>'
     + '<div class="row" style="justify-content:space-between;align-items:center">'
-    + '<button class="primary" data-action="git-commit">Commit staged</button>'
+    + '<button class="primary" data-action="git-commit">Commit</button>'
     + '<div class="row" style="gap:6px">'
     + '<button class="ghost" data-action="git-pull">&#8595; Pull</button>'
     + '<button class="ghost" data-action="git-push">&#8593; Push</button>'
@@ -2454,15 +2454,42 @@ document.addEventListener("click", (event) => {
       if (box) box.focus();
       return;
     }
+
     const stagedGroup = $("tab-git").querySelector('[data-git-group="unstage"]');
     const hasStaged = stagedGroup && stagedGroup.querySelectorAll(".git-row").length > 0;
+
+    const unstagedGroup = $("tab-git").querySelector('[data-git-group="stage"]');
+    const checkedUnstaged = unstagedGroup
+      ? [...unstagedGroup.querySelectorAll("input[data-git-path]:checked")].map(function(b) { return b.dataset.gitPath; }).filter(Boolean)
+      : [];
+
+    let stagePaths = [];
     if (!hasStaged) {
-      if (host) {
-        host.innerHTML = '<div class="banner warn">Nothing is staged. Select files in Working Tree Changes and click "Stage selected" first.</div>';
+      if (checkedUnstaged.length > 0) {
+        stagePaths = checkedUnstaged;
+      } else {
+        const allUnstaged = unstagedGroup
+          ? [...unstagedGroup.querySelectorAll("input[data-git-path]")].map(function(b) { return b.dataset.gitPath; }).filter(Boolean)
+          : [];
+        if (allUnstaged.length === 1) {
+          stagePaths = allUnstaged;
+        } else if (allUnstaged.length > 1) {
+          if (host) {
+            host.innerHTML = '<div class="banner warn">Please select the files in "Working Tree Changes" you want to commit.</div>';
+          }
+          return;
+        } else {
+          if (host) {
+            host.innerHTML = '<div class="banner warn">No changes to commit. Working tree is clean.</div>';
+          }
+          return;
+        }
       }
-      return;
+    } else if (checkedUnstaged.length > 0) {
+      stagePaths = checkedUnstaged;
     }
-    vscode.postMessage({ type: "gitCommit", message: box.value });
+
+    vscode.postMessage({ type: "gitCommit", message: box.value, stagePaths: stagePaths });
     return;
   }
   if (button.dataset.action === "git-push") {
