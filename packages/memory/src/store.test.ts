@@ -143,6 +143,14 @@ describe("FsMemoryStore", () => {
     expect(retrieved!.title).toBe("test entry");
   });
 
+  it("rejects transient session scope memory", async () => {
+    const store = await makeFsStore();
+    const entry = makeEntry({ id: "fs-sess", scope: "session" });
+    await expect(store.store(entry)).rejects.toThrow(
+      "FsMemoryStore cannot persist session-scoped memory",
+    );
+  });
+
   it("creates nested directories on store", async () => {
     const store = await makeFsStore();
     await store.store(makeEntry({ id: "nested", scope: "project" }));

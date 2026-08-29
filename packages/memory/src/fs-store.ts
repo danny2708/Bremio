@@ -45,6 +45,9 @@ export class FsMemoryStore implements MemoryStore {
   }
 
   async store(entry: MemoryEntry): Promise<void> {
+    if (entry.scope === "session") {
+      throw new Error("FsMemoryStore cannot persist session-scoped memory");
+    }
     const filePath = this.resolvePath(entry.scope, entry.id);
     await this.ensureDir(filePath);
     await fs.writeFile(filePath, JSON.stringify(entry, null, 2), "utf-8");
