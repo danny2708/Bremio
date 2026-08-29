@@ -48,6 +48,15 @@ export function resolveStorageDir(scope: MemoryScope): string {
   return getScopeConfig(scope).storageDir;
 }
 
+export type MemoryReviewState = "pending" | "approved" | "rejected";
+
+export interface MemoryReviewInfo {
+  state: MemoryReviewState;
+  reviewer?: string;
+  reviewedAt?: string;
+  note?: string;
+}
+
 export interface MemoryEntry {
   id: string;
   scope: MemoryScope;
@@ -59,4 +68,7 @@ export interface MemoryEntry {
   updatedAt: string;
   expiresAt?: string;
   metadata: Record<string, unknown>;
+  repository?: string;
+  visibility?: MemoryVisibility;
+  review?: MemoryReviewInfo;
 }

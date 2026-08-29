@@ -114,6 +114,9 @@ importers:
       '@bremio/adapter-sdk':
         specifier: workspace:*
         version: link:../../packages/adapter-sdk
+      '@bremio/memory':
+        specifier: workspace:*
+        version: link:../../packages/memory
       '@bremio/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
@@ -216,6 +219,9 @@ importers:
 
   packages/daemon-client:
     dependencies:
+      '@bremio/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@bremio/protocol':
         specifier: workspace:*
         version: link:../protocol
