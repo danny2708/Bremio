@@ -2422,4 +2422,29 @@ All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.
 - `corepack pnpm release:check` — PASS (build + packed install clean).
 - Red-check: disabled the `hasGitHubRemote` check → "refuses when repository has no GitHub remote configured" failed with `expected /no GitHub remote configured/ but got 'GitHub CLI (\`gh\`) is not installed...'`. Restored.
 
+### S10-T6 — Turn inspector: what this turn actually did
+- **agent:** Antigravity (Gemini 3.7 Flash)
+- **time:** 2026-08-29T15:42 → 2026-08-29T15:46
+- **branch:** feat/s10-t6-turn-inspector
+- **task(s):** S10-T6
+- **status:** done
+
+**Did**
+- Created `assembleTurnInspection()` in `apps/vscode-extension/src/turn-inspector.ts` extracting worktree path, commands run, and files modified from each turn's raw events and run record.
+- Wired turn inspection payload into `sendSessionDetail` in `apps/vscode-extension/src/extension.ts`.
+- Added expandable "Inspect turn (N files, M cmds)" UI in `renderTranscript` in `apps/vscode-extension/src/webview.ts` displaying worktree path, files changed, commands run, and a "View turn diff" button linking straight to the diff viewer.
+- Added unit tests in `apps/vscode-extension/src/turn-inspector.test.ts`.
+
+**Decided**
+- Turn inspection is constructed purely on the read path from already persisted events and run records — no new write-side storage capture needed.
+- Commands and files are automatically deduplicated to keep the inspection view compact and scannable.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run apps/vscode-extension/src/turn-inspector.test.ts` — 3 tests passed.
+- `corepack pnpm test` — 1195 passed / 87 files (was 1192 / 86).
+- `corepack pnpm release:check` — PASS (build + packed install clean).
+- Red-check: disabled `worktreePath` extraction → test "extracts worktree path, commands, and files" failed with `expected undefined to be '/tmp/bremio-worktree-123'`. Restored.
+
+
 

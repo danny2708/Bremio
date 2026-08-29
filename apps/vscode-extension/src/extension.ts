@@ -12,6 +12,7 @@ import {
   type RunEvent,
 } from "./client";
 import { CliNotFoundError, launchCli } from "./cli-launcher";
+import { assembleTurnInspection } from "./turn-inspector";
 import { assemblePlanChecklist, extractResponse, panelHtml, renderEvent } from "./webview";
 
 let panel: vscode.WebviewPanel | undefined;
@@ -408,9 +409,11 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
   const turns = await Promise.all(
     (session.turns ?? []).map(async (turn) => {
       let events: Array<Record<string, unknown>> = [];
+      let runRecord: Record<string, unknown> | undefined;
       try {
         const detail = await client.run(turn.runId, repoPath);
         events = (detail.events ?? []) as unknown as Array<Record<string, unknown>>;
+        runRecord = detail.run as Record<string, unknown> | undefined;
       } catch {
       }
       const agentEvents = events.map((event) =>
@@ -427,6 +430,7 @@ async function sendSessionDetail(sessionId: string): Promise<void> {
         // Built from the raw events, which still carry `taskId` and the plan
         // payload — `agentEvents` above has already flattened `data` away.
         plan: assemblePlanChecklist(events as never),
+        inspection: assembleTurnInspection(events as never, runRecord as never),
       };
     }),
   );

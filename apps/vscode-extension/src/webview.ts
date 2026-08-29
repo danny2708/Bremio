@@ -1939,6 +1939,28 @@ function renderTranscript(session, turns, contextItems, visionNotice, queued, qu
       out += "</details>";
     }
 
+    if (turn.inspection) {
+      const insp = turn.inspection;
+      const filesCount = (insp.filesChanged || []).length;
+      const cmdsCount = (insp.commandsRun || []).length;
+      if (insp.worktreePath || filesCount > 0 || cmdsCount > 0) {
+        out += '<details class="process" style="margin-bottom:8px">'
+          + '<summary>Inspect turn (' + filesCount + ' file' + (filesCount === 1 ? '' : 's') + ', ' + cmdsCount + ' cmd' + (cmdsCount === 1 ? '' : 's') + ')</summary>'
+          + '<div style="padding:4px 0">';
+        if (insp.worktreePath) {
+          out += '<div><strong>Worktree:</strong> <code>' + escapeHtml(insp.worktreePath) + '</code></div>';
+        }
+        if (filesCount > 0) {
+          out += '<div style="margin-top:3px"><strong>Files:</strong> ' + insp.filesChanged.map(function(f) { return '<code>' + escapeHtml(f) + '</code>'; }).join(', ') + '</div>';
+        }
+        if (cmdsCount > 0) {
+          out += '<div style="margin-top:3px"><strong>Commands:</strong><ul style="margin:2px 0 0 16px;padding:0">' + insp.commandsRun.map(function(c) { return '<li><code>' + escapeHtml(c) + '</code></li>'; }).join('') + '</ul></div>';
+        }
+        out += '<div style="margin-top:6px"><button class="ghost" data-action="diff" data-run="' + escapeHtml(turn.runId) + '">View turn diff</button></div>';
+        out += '</div></details>';
+      }
+    }
+
     out += turn.response
       ? '<div class="bubble response md">' + renderResponseBody(turn.response) + "</div>"
       : '<div class="bubble muted">(no response recorded)</div>';
