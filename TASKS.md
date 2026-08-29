@@ -5,8 +5,11 @@ task. Tick a box only when the task's acceptance criteria are met *and* its
 commit has landed on its branch.
 
 - Design authority: [`docs/14`](docs/14-architecture-review-and-plan.md) (plan)
-  and [`docs/15`](docs/15-architecture-lock.md) (locked semantics). **If a task
-  line and a doc disagree, the doc wins** — fix the line, do not the code.
+  and [`docs/15`](docs/15-architecture-lock.md) (locked semantics). The
+  [Munder integration plan](docs/16-munder-difflin-integration-plan.md) is
+  **proposed** until S11-T1 promotes its accepted invariants into `docs/15`.
+  **If a task line and a locked doc disagree, the doc wins** — fix the line,
+  not the code.
 - Working agreement: [`docs/10-delegation-contract.md`](docs/10-delegation-contract.md).
 - Write-up rules: [`AGENT-WORKFLOW.md`](AGENT-WORKFLOW.md) §"How to record your work".
 - Narrative log: [`PROGRESS.md`](PROGRESS.md) — one block per agent per sprint.
@@ -191,7 +194,7 @@ policy-bound per S9-T5 and still has no consumer. Both are honest about it.
 | [x] | S9-T4 | Injection under a token budget | M | S9-T3 |
 | [x] | S9-T5 | **Wire Sprint 8's tools to a run, or say plainly that they are inert.** `CommandTool`, `WebSearchTool`, `McpPermissionGuard`, `SkillManager` and `HookManager` have no production caller — only `PluginManager` reached a run path. Each now *requires* a policy check to construct (S8-REVIEW), so whoever wires them must supply one; the remaining work is passing the real `evaluate(controlMode, actionClass)` and the S3 approval lifecycle rather than a permissive stub. | L | S8-T1…T8 | — |
 | [x] | S9-T6 | Add `release:check` to the per-task definition of done in `AGENT-WORKFLOW.md`. Sprint 8 shipped 8 tasks with a broken `pnpm build` because every block verified with `typecheck` + `vitest` only, and `tsc` resolves extensionless ESM subpaths that `esbuild` cannot. | S | — | ‖ everything |
-| [ ] | S9-T7 | **Give `packages/memory` a consumer, or fold it into the daemon.** Nothing outside its own tests imports it: no schema, no daemon route, no CLI command, no injection into a prompt. `MemoryInjector.formatInjection` produces a `<memory>` block that no run ever receives. Decide whether memory lives in SQLite beside sessions (where every other durable record lives) or stays a filesystem store, then wire one path end to end. **Needs a decision before starting.** | L | S9-T1…T4 | — |
+| [ ] | S9-T7 | **Give `packages/memory` a production consumer.** The proposed decision in `docs/16` is daemon SQLite as the durable authority, with existing proposal/provenance/token-budget rules retained. Implementation is split into S12-T2 (store/API) and S12-T3 (real prompt injection); tick this row only when both land. | L | S9-T1…T4, S12-T2, S12-T3 | — |
 | [ ] | S9-T8 | `SCOPE_CONFIG.session` declares `transient`/`ephemeral` with `storageDir: ""`, so a session-scoped entry handed to `FsMemoryStore` is written to the store root and is then invisible to `get`/`query`/`delete`, which only scan `project` and `user`. `createMemoryStore` routes session scope to `InMemoryStore`, so the path is unreachable today — but the class accepts the write. Refuse a transient scope in `FsMemoryStore` rather than persisting it where nothing can read it. | S | — | ‖ everything |
 
 ---
@@ -231,6 +234,75 @@ running `git add -A`.
 
 ---
 
+## Sprint 11 — Runtime guard ⛔ needs review
+
+Selective Munder integration starts with the highest-ROI mechanism: an
+evidence-only circuit breaker over Bremio's existing normalized events. This is
+not the S3 planning-cost fallback and must not claim generic live steering.
+Design and acceptance criteria: [`docs/16`](docs/16-munder-difflin-integration-plan.md).
+
+| ✓ | ID | Task | Size | Depends on | Parallel? |
+|---|---|---|---|---|---|
+| [ ] | S11-T1 | **Lock guard and collaboration invariants.** Promote the approved MD-1…MD-6 decisions from `docs/16` into `docs/15`: daemon/orchestrator authority, task-boundary delivery, evidence-only guard signals, unknown-is-inert, reviewed memory, and bounded expansion. Distinguish observe, boundary restriction, cancellation, and verified live input. | S | — | — |
+| [ ] | S11-T2 | **Build the pure runtime-guard evaluator.** Add a provider-agnostic state machine for repeated structured tool calls, error storms, provider-reported token velocity, debounced no-progress, one-level recovery, and compaction grace. No side effects; missing/estimated inputs stay inert. | M | S11-T1 | — |
+| [ ] | S11-T3 | **Persist observe-only guard decisions.** Feed normalized task events into the evaluator and append state changes to `run_events` with reason and evidence quality. Preserve store-then-publish/SSE replay, and do not pretend in-memory counters survive daemon restart. | M | S11-T2 | — |
+| [ ] | S11-T4 | **Surface guard state and reasons.** Render the same canonical event in CLI/TUI and panel: level, proposed action, evidence quality, reason and update time. Observe-only must be labelled; unknown must not render as healthy. | M | S11-T3 | — |
+| [ ] | S11-T5 | **Enforce opt-in boundary actions.** Default remains observe-only. A constrained run may suppress future retry/escalation/new work at task boundaries; hard stop may request cancellation only when the adapter declares and proves it. Never restart completed work or silently change flow mode. | M | S11-T3, S11-T4 | — |
+
+**Sprint gate:** guard decisions replay once and are visible on every surface;
+unknown usage/unstructured tools/unsupported cancellation never trigger action;
+opt-in enforcement preserves reports, cancellation state and ledger coherence;
+`corepack pnpm release:check` passes.
+
+---
+
+## Sprint 12 — Reviewed memory and run blackboard
+
+Reuse `packages/memory`; do not create a second knowledge subsystem. Daemon
+SQLite is the proposed durable authority, while run context stays distinct from
+cross-run reviewed memory.
+
+| ✓ | ID | Task | Size | Depends on | Parallel? |
+|---|---|---|---|---|---|
+| [ ] | S12-T1 | **Reject transient scope in `FsMemoryStore` (closes S9-T8).** A session-scoped write must fail before disk; project/user behaviour stays unchanged. Tick S9-T8 with this task. | S | — | ‖ S11-T2…T5 |
+| [ ] | S12-T2 | **Add daemon-backed durable memory.** Store project memory by canonical repository identity and user memory privately; keep session memory transient/fork-safe. Provenance, review state, expiry and visibility must round-trip without guessed defaults. | M | S11-T1, S12-T1 | — |
+| [ ] | S12-T3 | **Inject approved memory into real runs (closes S9-T7).** Use the existing token-budget selector in Single and Team prompt assembly. Pending/rejected/expired entries never reach a provider; unavailable memory degrades to no injection. Tick S9-T7 with this task after S12-T2 lands. | M | S12-T2 | — |
+| [ ] | S12-T4 | **Expose proposal review end to end.** List/accept/reject through the daemon and one user surface. Accept still requires explicit provenance; duplicate/concurrent review has deterministic first-result semantics and audit data. | M | S12-T2 | ‖ S12-T3 |
+| [ ] | S12-T5 | **Add immutable run-context entries.** Persist attributable facts, decisions, blockers, questions and artifact metadata; derive the current blackboard snapshot instead of overwriting a shared file. Forks do not inherit post-fork context. | M | S12-T2 | — |
+| [ ] | S12-T6 | **Hand artifacts to dependent tasks.** Resolve bounded artifact references into later prompts with producer provenance and context-budget accounting. Missing artifacts become named blockers; never scrape another worker's worktree implicitly. | M | S12-T3, S12-T5 | — |
+| [ ] | S12-T7 | **Show memory, context and artifacts.** CLI and panel read daemon records and show scope, provenance, review state and source task; list routes do not load large artifact bodies by default. | M | S12-T4, S12-T5 | ‖ S12-T6 |
+
+**Sprint gate:** an approved project fact reaches a later Single and Team prompt;
+pending/rejected memory never does; two tasks exchange one artifact through
+daemon-owned context; fork and repository-identity tests pass;
+`corepack pnpm release:check` passes.
+
+---
+
+## Sprint 13 — Bounded collaboration and optional expansion ⛔ needs review
+
+Do not claim this sprint until Sprint 12 passes and the tech lead confirms that
+the additional coordination surface is worth its measured cost. V1 delivery is
+at task boundaries; no provider-independent live chat is promised.
+
+| ✓ | ID | Task | Size | Depends on | Parallel? |
+|---|---|---|---|---|---|
+| [ ] | S13-T1 | **Define task-scoped messages.** Persist unique, redacted, capped envelopes addressed to task/lead/orchestrator with conversation/reply ids, handled state and hop count. Durable provider personas and broadcast are out of scope. | M | S12-T5 | — |
+| [ ] | S13-T2 | **Route messages at task boundaries.** Drain validated requests after a task settles and make responses available to a later start/resume. Only request-artifact/blocker require replies; message/hop budgets end ping-pong with a named escalation. | M | S12-T6, S13-T1 | — |
+| [ ] | S13-T3 | **Resolve artifact requests.** Return only policy-approved artifacts from the run index, or a named unresolved blocker. Unknown ownership fails closed; request/reply overhead is coordination evidence. | M | S13-T2 | — |
+| [ ] | S13-T4 | **Show task conversation threads.** CLI and panel render daemon-owned request/reply/blocker records with task ownership and terminal state; this is not a general-purpose agent chat UI. | M | S13-T1, S13-T2 | ‖ S13-T3 |
+| [ ] | S13-T5 | **Probe live-input capabilities.** Verify each provider with real surfaces/fixtures: in-flight input, delivery acknowledgement, cancellation and resume composition. Unsupported stays default; this task may conclude that no live path should be built. | S | S11-T1, Sprint 12 gate | — |
+| [ ] | S13-T6 | **Validate dynamic microtask proposals.** Purely reject duplicate ids, cycles, excessive depth/children/total, invalid dependencies/modes, exhausted reserve and guard-constrained runs. This task does not execute added work. | M | S11-T5, S13-T2 | — |
+| [ ] | S13-T7 | **Execute microtasks behind a feature flag.** Apply accepted proposals only at scheduler boundaries; default off. Preserve worktree isolation, deterministic results, ordinary policy/capability checks, restart/cancel semantics and coordination attribution. | M | S13-T3, S13-T6 | — |
+| [ ] | S13-T8 | **Gate promotion on paired evidence.** Extend calibration/stats/compare so unknown or non-positive net gain keeps automatic expansion disabled; promotion requires every existing threshold plus enough eligible collaboration samples. | M | S13-T7 | — |
+
+**Sprint gate:** two workers exchange one artifact request/reply through the
+orchestrator with idempotency and hop limits; no peer writes or unsupported
+live-steering claim exists; expansion is off by default and cannot be promoted
+by unknown/non-positive evidence; `corepack pnpm release:check` passes.
+
+---
+
 ## Not scheduled
 
 | ID | Item | Why not scheduled |
@@ -240,3 +312,8 @@ running `git add -A`.
 | — | `bremio session show --max-events` | Documented, never parsed. Small; fold into any CLI sprint. |
 | — | `config/routing.yaml` resolves from `process.cwd()` | Routing depends on invocation directory. Needs a decision. |
 | — | `RunOutcome` has no error **code** | Adapters cannot transmit `classifyAgentError` results. |
+| — | Munder-style scoped integration broker | Revisit only after a real MCP/external integration has an end-to-end consumer and threat model. Do not build a secret system speculatively. |
+| — | Semantic/vector memory index | Existing reviewed memory must first be wired and benchmarked; add embeddings only if tags/recency demonstrably miss useful knowledge. |
+| — | Schedules, webhooks, Slack/GitHub ingress | Needs authentication, replay protection, rate limits, repository authorization, secret handling and an emergency disable path. |
+| — | Live mid-run agent messaging | S13-T5 must verify an acknowledged interactive-input seam per adapter. A message row without delivery is not collaboration. |
+| — | Munder runtime, GOD agent, personas or office UI | **Rejected for Bremio.** They create a second authority or add product surface without improving measured orchestration outcomes. |

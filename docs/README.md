@@ -27,6 +27,9 @@ results back into one place.
 | 11 | [11-local-providers.md](11-local-providers.md) | Plug-and-play seam for local models (Jan/Ollama/LM Studio) |
 | 12 | [12-session-history-and-observability.md](12-session-history-and-observability.md) | Track A (v1.0 blocker): sessions, one renderer, parallel lanes |
 | 13 | [13-context-and-harness.md](13-context-and-harness.md) | Track B (v1.1): context assembly, budget, session continuity |
+| 14 | [14-architecture-review-and-plan.md](14-architecture-review-and-plan.md) | Dogfood architecture review, gaps, ADR proposals and milestone map |
+| 15 | [15-architecture-lock.md](15-architecture-lock.md) | Locked mediation, control, session identity and daemon-authority semantics |
+| 16 | [16-munder-difflin-integration-plan.md](16-munder-difflin-integration-plan.md) | Proposed selective integration: runtime guard, reviewed memory, blackboard and bounded collaboration |
 | 99 | [99-risks-and-open-questions.md](99-risks-and-open-questions.md) | **Read before coding.** ROI, load-bearing risks, items to verify |
 
 ## Status
