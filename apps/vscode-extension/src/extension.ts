@@ -925,7 +925,11 @@ async function startRun(message: Record<string, unknown>): Promise<void> {
     repoPath,
     prompt,
     agentId,
-    ...(message.workerId ? { workerId: String(message.workerId) } : {}),
+    ...(Array.isArray(message.workerIds)
+      ? { workerIds: (message.workerIds as string[]).map(String) }
+      : message.workerId
+        ? { workerId: String(message.workerId) }
+        : {}),
     ...(typeof message.maxConcurrency === "number"
       ? { maxConcurrency: message.maxConcurrency }
       : {}),

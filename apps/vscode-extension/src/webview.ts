@@ -1105,8 +1105,8 @@ pre.log {
       <select id="agent"></select>
 
       <div id="worker-wrap" style="display:none">
-        <label>Worker</label>
-        <select id="worker"></select>
+        <label>Workers (hold Ctrl/Cmd for multiple)</label>
+        <select id="worker" multiple style="min-height:68px"></select>
       </div>
 
       <div id="concurrency-wrap" style="display:none">
@@ -1235,10 +1235,13 @@ function renderAgentOptions() {
     option.textContent = a.id;
     worker.appendChild(option);
   }
+  if (worker.options.length > 0 && Array.from(worker.selectedOptions).length === 0) {
+    worker.options[0].selected = true;
+  }
   $("run-hint").textContent = mode === "auto"
     ? "Auto decides from calibration evidence and falls back to Single until there is enough."
     : mode === "team"
-      ? "Lead plans; the worker executes in isolated git worktrees."
+      ? "Lead plans; the workers execute in isolated git worktrees."
       : "One agent works directly in the repository.";
 }
 
@@ -1251,11 +1254,13 @@ $("attach-files").addEventListener("click", () => vscode.postMessage({ type: "pi
 $("attach-open").addEventListener("click", () => vscode.postMessage({ type: "attachActiveFile" }));
 
 $("start").addEventListener("click", () => {
+  const selectedWorkers = Array.from($("worker").selectedOptions || []).map((o) => o.value);
   vscode.postMessage({
     type: "startRun",
     mode,
     agentId: $("agent").value,
-    workerId: mode === "single" ? undefined : $("worker").value,
+    workerId: mode === "single" ? undefined : selectedWorkers[0],
+    workerIds: mode === "single" ? undefined : selectedWorkers,
     maxConcurrency: mode === "single" ? undefined : Number($("concurrency").value),
     repoPath: $("repo").value.trim(),
     prompt: $("prompt").value.trim(),

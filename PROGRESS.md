@@ -2465,9 +2465,35 @@ All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.
 **Verification**
 - `corepack pnpm typecheck` — clean.
 - `corepack pnpm vitest run apps/daemon/src/storage.test.ts apps/daemon/src/daemon.test.ts` — 127 tests passed (+2 new).
-- `corepack pnpm test` — 1197 passed / 87 files (was 1195 / 87).
-- `corepack pnpm release:check` — PASS (build + packed install clean).
 - Red-check: made `listGroupedSessions()` return `[]` → test "groups sessions across repositories by canonical repository identity" failed with `expected [] to have a length of 2 but got 0`. Restored.
+
+### S10-T7 — Multiple workers instead of one
+- **agent:** Antigravity (Gemini 3.7 Flash)
+- **time:** 2026-08-29T15:56 → 2026-08-29T16:10
+- **branch:** feat/s10-t7-multiple-workers
+- **task(s):** S10-T7
+- **status:** done
+
+**Did**
+- Generalized `assignAgents` in `packages/orchestrator/src/router.ts` to accept `workerIds: string | string[]`, rotating across available workers for task assignment and choosing independent reviewers from the set of non-authors.
+- Updated `RunBremioOptions` and `runBremio` in `packages/orchestrator/src/run.ts` to support `workerIds?: string[]`.
+- Enforced the `docs/15` §2.6 rule: the control-mode gate checks **every** worker in `workerIds`, refusing execution if even one worker lacks the required readOnlyEnforcement capability.
+- Updated `StartRunInput` and `RunRegistry` in `apps/daemon/src/runs.ts` to accept `workerIds` and persist all workers into `worker_providers`.
+- Updated `retry()` in `apps/daemon/src/runs.ts` to forward all `workerProviders` as `workerIds` rather than silently dropping all but the first.
+- Updated daemon `StartRunSchema` in `apps/daemon/src/server.ts`, `StartRunRequest` in `apps/vscode-extension/src/client.ts`, webview worker multi-select in `apps/vscode-extension/src/webview.ts`, and CLI repeatable `--worker` flag in `apps/cli/src/index.ts`.
+- Added unit and integration tests across `router.test.ts`, `run.integration.test.ts`, `daemon.test.ts`, and `session.test.ts`.
+
+**Decided**
+- Control-mode enforcement is strictly weakest-link: every worker in the worker set is verified against the control mode, ensuring an unenforced worker never executes under plan/approve mode.
+- In CLI, `--worker` is configured with `multiple: true` in `parseArgs` to support repeating `--worker <id>`.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/orchestrator/src/router.test.ts packages/orchestrator/src/run.integration.test.ts apps/daemon/src/daemon.test.ts apps/cli/src/session.test.ts` — 111 tests passed.
+- `corepack pnpm test` — 1201 passed / 87 files (was 1197 / 87).
+- `corepack pnpm release:check` — PASS (build + packed install clean).
+- Red-check: changed controlMode check in `run.ts` to check only the first worker → test "refuses if any worker in workerIds cannot back the control mode" failed with expected exception not thrown. Restored.
+
 
 
 

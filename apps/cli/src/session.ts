@@ -271,7 +271,7 @@ export interface SessionIdentityTurn {
 }
 
 export type SessionIdentity =
-  | { ok: true; mode: "single" | "team"; primaryAgent: string; workerAgent?: string }
+  | { ok: true; mode: "single" | "team"; primaryAgent: string; workerAgents?: string[]; workerAgent?: string }
   | { ok: false; error: string };
 
 /**
@@ -321,7 +321,6 @@ export function resolveSessionIdentity(input: {
         `Start a new run and choose the agent explicitly — it was not switched to another provider.`,
     };
   }
-
   if (!availableAgentIds.includes(primaryAgent)) {
     return {
       ok: false,
@@ -332,17 +331,26 @@ export function resolveSessionIdentity(input: {
     };
   }
 
-  const workerAgent = latest.workerProviders?.[0];
-  if (mode === "team" && workerAgent && !availableAgentIds.includes(workerAgent)) {
-    return {
-      ok: false,
-      error:
-        `cannot resume session ${sessionId}: worker agent "${workerAgent}" is not available. ` +
-        `The session was not switched to another provider.`,
-    };
+  const workerAgents = latest.workerProviders ?? [];
+  if (mode === "team") {
+    for (const workerAgent of workerAgents) {
+      if (!availableAgentIds.includes(workerAgent)) {
+        return {
+          ok: false,
+          error:
+            `cannot resume session ${sessionId}: worker agent "${workerAgent}" is not available. ` +
+            `The session was not switched to another provider.`,
+        };
+      }
+    }
   }
 
-  return { ok: true, mode, primaryAgent, ...(workerAgent ? { workerAgent } : {}) };
+  return {
+    ok: true,
+    mode,
+    primaryAgent,
+    ...(workerAgents.length > 0 ? { workerAgents, workerAgent: workerAgents[0] } : {}),
+  };
 }
 
 /**
@@ -357,9 +365,9 @@ export function resolveSessionIdentity(input: {
  * the state machine was decorative past the row it wrote.
  */
 export function resolveContinuationMode(
-  identity: { mode: "single" | "team"; workerAgent?: string },
+  identity: { mode: "single" | "team"; workerAgents?: string[]; workerAgent?: string },
   collaborationState: CollaborationState | undefined,
-): { mode: "single" | "team"; workerAgent?: string } {
+): { mode: "single" | "team"; workerAgents?: string[]; workerAgent?: string } {
   if (!collaborationState) return identity;
   // effectiveMode speaks docs/15's Solo/Co-lab vocabulary; the run APIs still
   // speak the persisted single/team vocabulary (S6-T1's UI codec, not a DB one).
@@ -367,7 +375,11 @@ export function resolveContinuationMode(
   // A transition to Co-lab may not carry a worker (none was needed in Solo);
   // `runBremio` auto-assigns one from the registry when `workerId` is omitted.
   return mode === "team"
-    ? { mode, ...(identity.workerAgent ? { workerAgent: identity.workerAgent } : {}) }
+    ? {
+        mode,
+        ...(identity.workerAgents?.length ? { workerAgents: identity.workerAgents } : {}),
+        ...(identity.workerAgent ? { workerAgent: identity.workerAgent } : {}),
+      }
     : { mode };
 }
 
@@ -457,7 +469,7 @@ export async function continueSessionCommand(options: {
   // S1-T5: check session config provenance and prompt if partial/legacy.
   const cfg = detail.config;
 
-  const { mode, workerAgent } = resolveContinuationMode(
+  const { mode, workerAgents, workerAgent } = resolveContinuationMode(
     resolved,
     cfg?.collaborationState as CollaborationState | undefined,
   );
@@ -521,7 +533,7 @@ export async function continueSessionCommand(options: {
       leadId: primaryAgent,
       // Carried forward for the same reason as the lead: the worker was chosen
       // once and must not be re-picked from whatever happens to be registered.
-      ...(workerAgent ? { workerId: workerAgent } : {}),
+      ...(workerAgents?.length ? { workerIds: workerAgents } : workerAgent ? { workerId: workerAgent } : {}),
       repoPath,
       prompt,
       registry,

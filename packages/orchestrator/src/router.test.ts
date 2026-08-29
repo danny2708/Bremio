@@ -174,6 +174,22 @@ describe("assignAgents (lead ≠ worker)", () => {
     expect(assign.get("T1")).toBe("antigravity");
     expect(assign.get("T2")).toBe("claude");
   });
+
+  it("distributes implementation tasks across multiple workers (S10-T7)", () => {
+    const p = plan([
+      { id: "T1", title: "analyze", kind: "analysis", risk: "low" },
+      { id: "T2", title: "impl 1", kind: "implementation", risk: "low", dependencies: ["T1"] },
+      { id: "T3", title: "impl 2", kind: "implementation", risk: "low", dependencies: ["T1"] },
+      { id: "T4", title: "review", kind: "review", risk: "low", dependencies: ["T2"] },
+    ]);
+
+    const assign = assignAgents(p, "claude", ["codex", "antigravity"]);
+    expect(assign.get("T1")).toBe("claude");
+    expect(assign.get("T2")).toBe("codex");
+    expect(assign.get("T3")).toBe("antigravity");
+    // T4 reviews T2 (authored by codex), so independent choices are claude or antigravity
+    expect(assign.get("T4")).not.toBe("codex");
+  });
 });
 
 describe("assignAgents with weighted scoring", () => {

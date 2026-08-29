@@ -44,6 +44,8 @@ export interface RunBremioOptions {
   leadId: string;
   /** Explicit Team worker. Defaults to the first registered non-lead adapter. */
   workerId?: string;
+  /** Explicit Team workers (Sprint 10 — S10-T7). Defaults to the first registered non-lead adapter. */
+  workerIds?: string[];
   repoPath: string;
   prompt: string;
   registry: AgentRegistry;
@@ -88,7 +90,8 @@ export function createRunId(now = new Date()): string {
   const stamp =
     `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}` +
     `-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
-  return `run-${stamp}-${randomBytes(2).toString("hex")}`;
+  const salt = Math.random().toString(36).slice(2, 6);
+  return `run-${stamp}-${salt}`;
 }
 
 /**
@@ -118,16 +121,25 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     );
   }
 
-  // Worker defaults to the first other provider; an explicit worker enables
-  // deterministic three-provider Team runs.
-  const workerId = opts.workerId ?? [...registry.keys()].find((id) => id !== leadId) ?? leadId;
-  if (!registry.has(workerId)) {
-    throw new Error(
-      `worker "${workerId}" is not registered (available: ${[...registry.keys()].join(", ") || "none"})`,
-    );
-  }
-  if (workerId === leadId && registry.size > 1) {
-    throw new Error("Team worker must be different from the lead");
+  // Worker defaults to the first other provider; explicit worker(s) enable
+  // deterministic multi-provider Team runs.
+  const rawWorkers = opts.workerIds?.length
+    ? opts.workerIds
+    : (opts.workerId ? [opts.workerId] : []);
+
+  const workerIds: string[] = rawWorkers.length > 0
+    ? [...new Set(rawWorkers)]
+    : [([...registry.keys()].find((id) => id !== leadId) ?? leadId)];
+
+  for (const workerId of workerIds) {
+    if (!registry.has(workerId)) {
+      throw new Error(
+        `worker "${workerId}" is not registered (available: ${[...registry.keys()].join(", ") || "none"})`,
+      );
+    }
+    if (workerId === leadId && registry.size > 1) {
+      throw new Error("Team worker must be different from the lead");
+    }
   }
 
   const workspace = new WorktreeManager(repoPath, { runToken: runId.slice(-6) });
@@ -146,13 +158,12 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
 
   const controlMode = opts.controlMode ?? "autopilot";
   if (controlMode !== "autopilot") {
-    // Both roles are checked, not just the lead. In Co-lab the *worker* is the
-    // agent that edits files, so gating only the lead would check the one
-    // participant that mostly reads and wave through the one that writes.
-    for (const [role, agentId] of [
-      ["lead", leadId],
-      ["worker", workerId],
-    ] as const) {
+    // Both roles are checked, not just the lead. With N workers, EVERY worker is checked (docs/15 §2.6).
+    const checkRoles: Array<[string, string]> = [["lead", leadId]];
+    for (const w of workerIds) {
+      checkRoles.push(["worker", w]);
+    }
+    for (const [role, agentId] of checkRoles) {
       if (!agentId) continue;
       const caps = capabilitiesByAgent.get(agentId);
       if (!caps) continue;
@@ -169,7 +180,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     }
   }
 
-  logger?.info({ runId, leadId, workerId, repoPath }, "starting Bremio run");
+  logger?.info({ runId, leadId, workerIds, repoPath }, "starting Bremio run");
   opts.hooks?.onLeadStart?.(leadId);
 
   const planningStarted = Date.now();
@@ -295,7 +306,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
   const capacityByAgent = opts.capacitySnapshots
     ? new Map(opts.capacitySnapshots.map((snapshot) => [snapshot.agentId, snapshot] as const))
     : undefined;
-  const assign = assignAgents(plan, leadId, workerId, {
+  const assign = assignAgents(plan, leadId, workerIds, {
     capabilitiesByAgent,
     ...(capacityByAgent ? { capacityByAgent } : {}),
     ...(opts.capacityPolicy ? { capacityPolicy: opts.capacityPolicy } : {}),

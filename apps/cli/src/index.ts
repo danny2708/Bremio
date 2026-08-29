@@ -151,7 +151,7 @@ function parseCli() {
       mode: { type: "string" },
       agent: { type: "string" },
       lead: { type: "string" },
-      worker: { type: "string" },
+      worker: { type: "string", multiple: true },
       repo: { type: "string" },
       prompt: { type: "string" },
       model: { type: "string" },
@@ -304,10 +304,15 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
   if (!agentIds.has(teamLeadId)) {
     errors.push(`--lead must be a known agent id: ${[...agentIds].sort().join(", ")}`);
   }
-  if (values.worker && !agentIds.has(values.worker)) {
-    errors.push(`--worker must be a known agent id: ${[...agentIds].sort().join(", ")}`);
+  const workers = values.worker
+    ? (Array.isArray(values.worker) ? values.worker : [values.worker])
+    : [];
+  for (const w of workers) {
+    if (!agentIds.has(w)) {
+      errors.push(`--worker must be a known agent id: ${[...agentIds].sort().join(", ")}`);
+    }
+    if (w === teamLeadId) errors.push("--worker must be different from --lead");
   }
-  if (values.worker === teamLeadId) errors.push("--worker must be different from --lead");
   if (values.mode !== undefined) errors.push("compare generates both modes; do not pass --mode");
   if (values.comparison !== undefined) {
     errors.push("compare generates its own shared comparison id; do not pass --comparison");
@@ -366,7 +371,7 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
       registry,
       singleAgentId,
       teamLeadId,
-      ...(values.worker ? { teamWorkerId: values.worker } : {}),
+      ...(values.worker ? { teamWorkerId: Array.isArray(values.worker) ? values.worker[0] : values.worker } : {}),
       ...(values.model ? { model: values.model } : {}),
       ...(values.reasoning
         ? { reasoningLevel: values.reasoning as ReasoningLevel }
@@ -433,12 +438,15 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
   }
 
   const repoPath = path.resolve(values.repo as string);
+  const workers = values.worker
+    ? (Array.isArray(values.worker) ? values.worker : [values.worker])
+    : [];
   const request = {
     mode,
     repoPath,
     prompt,
     agentId: (mode === "single" ? values.agent : values.lead) as string,
-    ...(values.worker ? { workerId: values.worker } : {}),
+    ...(workers.length > 0 ? { workerIds: workers } : {}),
     ...(values.model ? { model: values.model } : {}),
     ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
     ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
@@ -542,14 +550,21 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   if (mode === "single" && values.lead) {
     errors.push("--lead is only valid in Team mode; use --agent for Single mode");
   }
-  if (mode === "single" && values.worker) {
+  const runWorkers = values.worker
+    ? (Array.isArray(values.worker) ? values.worker : [values.worker])
+    : [];
+  if (mode === "single" && runWorkers.length > 0) {
     errors.push("--worker is only valid in Team mode");
   }
-  if (mode === "team" && values.worker && !agentIds.has(values.worker)) {
-    errors.push("--worker must be 'claude', 'codex', 'antigravity', or 'opencode'");
-  }
-  if (mode === "team" && values.worker === values.lead) {
-    errors.push("--worker must be different from --lead");
+  if (mode === "team" && runWorkers.length > 0) {
+    for (const w of runWorkers) {
+      if (!agentIds.has(w)) {
+        errors.push("--worker must be 'claude', 'codex', 'antigravity', or 'opencode'");
+      }
+      if (w === values.lead) {
+        errors.push("--worker must be different from --lead");
+      }
+    }
   }
   if (mode === "team" && values.agent) {
     errors.push("--agent is only valid in Single mode; use --lead for Team mode");
@@ -637,17 +652,21 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       values.lead = "claude";
     }
     // Re-check worker validation now that the resolved mode is known.
-    if (mode === "team" && values.worker && !agentIds.has(values.worker)) {
-      console.error(c.red(`error: --worker must be 'claude', 'codex', 'antigravity', or 'opencode'`));
-      process.exitCode = 2;
-      return;
+    if (mode === "team" && runWorkers.length > 0) {
+      for (const w of runWorkers) {
+        if (!agentIds.has(w)) {
+          console.error(c.red(`error: --worker must be 'claude', 'codex', 'antigravity', or 'opencode'`));
+          process.exitCode = 2;
+          return;
+        }
+        if (w === values.lead) {
+          console.error(c.red("error: --worker must be different from --lead"));
+          process.exitCode = 2;
+          return;
+        }
+      }
     }
-    if (mode === "team" && values.worker === values.lead) {
-      console.error(c.red("error: --worker must be different from --lead"));
-      process.exitCode = 2;
-      return;
-    }
-    if (mode === "single" && values.worker) {
+    if (mode === "single" && runWorkers.length > 0) {
       console.error(c.red("error: --worker is only valid in Team mode"));
       process.exitCode = 2;
       return;
@@ -675,7 +694,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       repoPath: path.resolve(values.repo as string),
       prompt,
       agentId: (mode === "single" ? values.agent : values.lead) as string,
-      ...(values.worker ? { workerId: values.worker } : {}),
+      ...(runWorkers.length > 0 ? { workerIds: runWorkers } : {}),
       ...(values.model ? { model: values.model } : {}),
       ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
       ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
@@ -891,7 +910,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
 
     const report = await runBremio({
       leadId: values.lead as string,
-      ...(values.worker ? { workerId: values.worker } : {}),
+      ...(runWorkers.length > 0 ? { workerIds: runWorkers } : {}),
       repoPath,
       prompt,
       registry,

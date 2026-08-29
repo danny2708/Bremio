@@ -56,31 +56,35 @@ const TASK_ROLE_PREFERENCE_STEP = 25;
 export function assignAgents(
   plan: Plan,
   leadId: string,
-  workerId: string,
+  workerIds: string | string[],
   options: AssignAgentsOptions = {},
 ): Map<string, string> {
   const policy = resolveCapacityRoutingPolicy(options.capacityPolicy);
+  const workers = (Array.isArray(workerIds) ? workerIds : [workerIds]).filter(Boolean);
+  const distinctWorkers = [...new Set(workers)];
 
   if (options.scoring) {
-    return assignScored(plan, leadId, workerId, options, policy);
+    return assignScored(plan, leadId, distinctWorkers, options, policy);
   }
 
   const assign = new Map<string, string>();
+  let workerIndex = 0;
+
   for (const t of plan.tasks) {
     if (t.kind === "analysis") {
-      assign.set(t.id, chooseAgent(t, [leadId, workerId], leadId, options, policy));
+      assign.set(t.id, chooseAgent(t, [leadId, ...distinctWorkers], leadId, options, policy));
       continue;
     }
     if (t.kind === "review") {
       const dependencyAuthors = new Set(
         t.dependencies.map((dependency) => assign.get(dependency)).filter(Boolean),
       );
-      const independent = [leadId, workerId].filter((id) => !dependencyAuthors.has(id));
+      const independent = [leadId, ...distinctWorkers].filter((id) => !dependencyAuthors.has(id));
       assign.set(
         t.id,
         chooseAgent(
           t,
-          independent.length > 0 ? independent : [workerId],
+          independent.length > 0 ? independent : (distinctWorkers.length > 0 ? distinctWorkers : [leadId]),
           leadId,
           options,
           policy,
@@ -88,22 +92,31 @@ export function assignAgents(
       );
       continue;
     }
-    assign.set(t.id, chooseAgent(t, [workerId, leadId], leadId, options, policy));
+    // Rotate workers across tasks so multiple workers share tasks
+    const rotatedWorkers = distinctWorkers.length > 0
+      ? [...distinctWorkers.slice(workerIndex % distinctWorkers.length), ...distinctWorkers.slice(0, workerIndex % distinctWorkers.length)]
+      : [];
+    workerIndex++;
+    assign.set(t.id, chooseAgent(t, [...rotatedWorkers, leadId], leadId, options, policy));
   }
 
-  // Delegation guarantee: if nothing landed on the worker, move the last task.
+  // Delegation guarantee: if nothing landed on any worker, move the last task.
   const someDelegated = [...assign.values()].some((a) => a !== leadId);
-  if (!someDelegated && workerId !== leadId) {
+  const externalWorkers = distinctWorkers.filter((w) => w !== leadId);
+  if (!someDelegated && externalWorkers.length > 0) {
     const last = plan.tasks[plan.tasks.length - 1];
-    const workerAssessment = assessmentFor(workerId, options, policy);
-    const trustedCapacityAvoidance = workerAssessment?.trusted === true &&
-      workerAssessment.scoreAdjustment < 0;
-    if (
-      last &&
-      !trustedCapacityAvoidance &&
-      isCapacityEligible(workerId, last, leadId, options, policy)
-    ) {
-      assign.set(last.id, workerId);
+    for (const workerId of externalWorkers) {
+      const workerAssessment = assessmentFor(workerId, options, policy);
+      const trustedCapacityAvoidance = workerAssessment?.trusted === true &&
+        workerAssessment.scoreAdjustment < 0;
+      if (
+        last &&
+        !trustedCapacityAvoidance &&
+        isCapacityEligible(workerId, last, leadId, options, policy)
+      ) {
+        assign.set(last.id, workerId);
+        break;
+      }
     }
   }
   return assign;
@@ -112,12 +125,12 @@ export function assignAgents(
 function assignScored(
   plan: Plan,
   leadId: string,
-  workerId: string,
+  workerIds: string[],
   options: AssignAgentsOptions,
   policy: CapacityRoutingPolicy,
 ): Map<string, string> {
   const scoring = options.scoring!;
-  const agentIds = [leadId, workerId];
+  const agentIds = [...new Set([leadId, ...workerIds])];
   const assign = new Map<string, string>();
 
   for (const task of plan.tasks) {
@@ -126,17 +139,21 @@ function assignScored(
   }
 
   const someDelegated = [...assign.values()].some((a) => a !== leadId);
-  if (!someDelegated && workerId !== leadId) {
+  const externalWorkers = workerIds.filter((w) => w !== leadId);
+  if (!someDelegated && externalWorkers.length > 0) {
     const last = plan.tasks[plan.tasks.length - 1];
-    const workerAssessment = assessmentFor(workerId, options, policy);
-    const trustedCapacityAvoidance = workerAssessment?.trusted === true &&
-      workerAssessment.scoreAdjustment < 0;
-    if (
-      last &&
-      !trustedCapacityAvoidance &&
-      isCapacityEligible(workerId, last, leadId, options, policy)
-    ) {
-      assign.set(last.id, workerId);
+    for (const workerId of externalWorkers) {
+      const workerAssessment = assessmentFor(workerId, options, policy);
+      const trustedCapacityAvoidance = workerAssessment?.trusted === true &&
+        workerAssessment.scoreAdjustment < 0;
+      if (
+        last &&
+        !trustedCapacityAvoidance &&
+        isCapacityEligible(workerId, last, leadId, options, policy)
+      ) {
+        assign.set(last.id, workerId);
+        break;
+      }
     }
   }
 

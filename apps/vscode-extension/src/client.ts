@@ -86,6 +86,7 @@ export interface StartRunRequest {
   prompt: string;
   agentId: string;
   workerId?: string;
+  workerIds?: string[];
   timeoutMs?: number;
   maxConcurrency?: number;
   /** Continue an existing session rather than starting a new one. */

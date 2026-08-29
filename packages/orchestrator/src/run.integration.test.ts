@@ -158,7 +158,7 @@ class MockLead extends BaseMock {
 
 /** Worker: writes the implementation or executes the read-only test gate. */
 class MockWorker extends BaseMock {
-  readonly id = "codex";
+  readonly id: string = "codex";
   readonly provider = "openai";
   constructor(private readonly delayMs = 0) {
     super();
@@ -430,5 +430,28 @@ describe("runBremio end-to-end (mock adapters)", () => {
         controlMode: "plan",
       }),
     ).rejects.toThrow(/lead "claude" cannot run in plan mode/);
+  });
+
+  it("refuses if any worker in workerIds cannot back the control mode (S10-T7)", async () => {
+    class StrongWorker extends MockWorker {
+      override readonly id = "codex";
+    }
+    class WeakSecondWorker extends MockWorker {
+      override readonly id = "antigravity";
+      override async getCapabilities(): Promise<AgentCapabilities> {
+        return { ...FULL_CAPS, readOnlyEnforcement: "advisory" };
+      }
+    }
+
+    await expect(
+      runBremio({
+        leadId: "claude",
+        workerIds: ["codex", "antigravity"],
+        repoPath: repo,
+        prompt: "anything",
+        registry: createRegistry([new MockLead(), new StrongWorker(), new WeakSecondWorker()]),
+        controlMode: "plan",
+      }),
+    ).rejects.toThrow(/worker "antigravity" cannot run in plan mode/);
   });
 });

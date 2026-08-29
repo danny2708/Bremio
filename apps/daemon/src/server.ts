@@ -32,6 +32,7 @@ const StartRunSchema = z.object({
   prompt: z.string().min(1),
   agentId: z.string().min(1),
   workerId: z.string().min(1).optional(),
+  workerIds: z.array(z.string().min(1)).optional(),
   model: z.string().min(1).optional(),
   reasoningLevel: ReasoningLevelSchema.optional(),
   timeoutMs: z.number().int().positive().optional(),

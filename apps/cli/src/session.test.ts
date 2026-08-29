@@ -314,6 +314,7 @@ describe("resuming a session must not change which agent runs it", () => {
       mode: "team",
       primaryAgent: "codex",
       workerAgent: "antigravity",
+      workerAgents: ["antigravity"],
     });
   });
 
@@ -408,5 +409,14 @@ describe("S6-T2 follow-up: an approved transition must change the next continue"
     // effectiveMode(proposed-colab) is "solo": nothing was approved yet.
     const identity = { mode: "single" as const };
     expect(resolveContinuationMode(identity, "proposed-colab")).toEqual({ mode: "single" });
+  });
+
+  it("carries all prior workers forward in Co-lab continuation (S10-T7)", () => {
+    const identity = { mode: "single" as const, workerAgents: ["antigravity", "codex"], workerAgent: "antigravity" };
+    expect(resolveContinuationMode(identity, "colab")).toEqual({
+      mode: "team",
+      workerAgents: ["antigravity", "codex"],
+      workerAgent: "antigravity",
+    });
   });
 });

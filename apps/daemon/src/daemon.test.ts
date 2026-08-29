@@ -386,6 +386,27 @@ describe("run registry", () => {
     const body = (await detail.json()) as { run: { status: string } };
     expect(["failed", "cancelled", "completed"]).toContain(body.run.status);
   });
+
+  it("accepts and preserves multiple workers across start and retry (S10-T7)", async () => {
+    const registry = await freshRegistry();
+    const handle = await daemon(registry);
+
+    const started = registry.start({
+      mode: "team",
+      repoPath: path.join(os.tmpdir(), "definitely-not-a-repo"),
+      prompt: "multi-worker test",
+      agentId: "claude",
+      workerIds: ["codex", "antigravity"],
+    });
+
+    expect(started.workerProviders).toEqual(["codex", "antigravity"]);
+
+    await call(handle, `/runs/${started.id}/events`).then((r) => r.text());
+
+    // Retry must retain the exact worker set
+    const retried = registry.retry(started.id);
+    expect(retried.workerProviders).toEqual(["codex", "antigravity"]);
+  });
 });
 
 describe("sessions", () => {

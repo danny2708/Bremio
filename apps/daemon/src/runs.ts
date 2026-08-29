@@ -93,6 +93,8 @@ export interface StartRunInput {
   /** Single mode: the agent. Team mode: the lead. */
   agentId: string;
   workerId?: string;
+  /** Explicit Team workers (Sprint 10 — S10-T7). */
+  workerIds?: string[];
   model?: string;
   reasoningLevel?: ReasoningLevel;
   timeoutMs?: number;
@@ -665,7 +667,7 @@ export class RunRegistry {
       repoPath: original.repositoryPath,
       prompt: original.prompt,
       agentId: original.leadProvider ?? "claude",
-      ...(original.workerProviders?.[0] ? { workerId: original.workerProviders[0] } : {}),
+      ...(original.workerProviders?.length ? { workerIds: original.workerProviders } : {}),
       retryOfRunId: original.id,
     });
   }
@@ -810,13 +812,18 @@ export class RunRegistry {
     const resolved = this.#resolveMode(input);
 
     const id = `run-${Date.now().toString(36)}-${(this.#counter += 1).toString(36)}`;
+    const rawWorkers = input.workerIds?.length
+      ? input.workerIds
+      : (input.workerId ? [input.workerId] : []);
+    const workerProviders = rawWorkers.length > 0 ? [...new Set(rawWorkers)] : undefined;
+
     const run = this.store.createRun({
       id,
       mode: resolved.mode,
       repositoryPath: input.repoPath,
       prompt: input.prompt,
       leadProvider: input.agentId,
-      ...(input.workerId ? { workerProviders: [input.workerId] } : {}),
+      ...(workerProviders ? { workerProviders } : {}),
       ...(input.retryOfRunId ? { retryOfRunId: input.retryOfRunId } : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     });
@@ -1202,7 +1209,7 @@ export class RunRegistry {
             prompt: input.prompt,
             registry,
             signal: controller.signal,
-            ...(input.workerId ? { workerId: input.workerId } : {}),
+            ...(input.workerIds?.length ? { workerIds: input.workerIds } : input.workerId ? { workerId: input.workerId } : {}),
             ...(input.model ? { model: input.model } : {}),
             ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
             ...(input.timeoutMs ? { taskTimeoutMs: input.timeoutMs } : {}),
