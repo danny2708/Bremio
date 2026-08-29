@@ -171,11 +171,19 @@ export interface PersistedRun {
 export interface PersistedSession {
   id: string;
   repositoryPath: string;
+  repositoryId?: string;
   title: string;
   createdAt: string;
   updatedAt: string;
   turnCount: number;
   status?: RunStatus;
+}
+
+export interface ProjectSessionGroup {
+  repositoryId: string;
+  repositoryPath: string;
+  projectName: string;
+  sessions: PersistedSession[];
 }
 
 export interface SessionTurn {
@@ -854,27 +862,63 @@ export class RunStore {
     return rows.length;
   }
 
-  listSessions(repositoryPath: string): PersistedSession[] {
+  listSessions(repositoryPath?: string): PersistedSession[] {
+    const whereClause = repositoryPath
+      ? `WHERE ${SAME_REPO_PATH.replace("repository_path", "s.repository_path")}`
+      : "";
+    const params = repositoryPath ? [normalizeRepositoryPath(repositoryPath)] : [];
     const rows = this.db
       .prepare(
         `SELECT s.*, COUNT(r.id) AS turn_count,
                 (SELECT status FROM runs WHERE session_id = s.id ORDER BY turn_index DESC LIMIT 1) AS status
          FROM sessions s
          LEFT JOIN runs r ON r.session_id = s.id
-         WHERE ${SAME_REPO_PATH.replace("repository_path", "s.repository_path")}
+         ${whereClause}
          GROUP BY s.id
          ORDER BY MAX(r.created_at) DESC, s.created_at DESC`,
       )
-      .all(normalizeRepositoryPath(repositoryPath)) as Array<Record<string, unknown>>;
+      .all(...params) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
       id: String(row.id),
       repositoryPath: String(row.repository_path),
+      repositoryId: row.repository_id ? String(row.repository_id) : undefined,
       title: String(row.title),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       turnCount: Number(row.turn_count),
       ...(row.status ? { status: String(row.status) as RunStatus } : {}),
     }));
+  }
+
+  /**
+   * Cross-repository sessions grouped by canonical repository identity (S10-T8).
+   *
+   * Keyed by the canonical repository identity from `resolveRepositoryIdentity`
+   * (so a worktree and its main checkout group together).
+   */
+  listGroupedSessions(): ProjectSessionGroup[] {
+    const all = this.listSessions();
+    const groupsMap = new Map<string, ProjectSessionGroup>();
+
+    for (const session of all) {
+      const repoId = session.repositoryId || normalizeRepositoryPath(session.repositoryPath);
+      let group = groupsMap.get(repoId);
+      if (!group) {
+        const repoPath = session.repositoryPath;
+        const normalized = repoPath.replace(/\\/g, "/").replace(/\/$/, "");
+        const projectName = normalized.split("/").pop() || "project";
+        group = {
+          repositoryId: repoId,
+          repositoryPath: repoPath,
+          projectName,
+          sessions: [],
+        };
+        groupsMap.set(repoId, group);
+      }
+      group.sessions.push(session);
+    }
+
+    return Array.from(groupsMap.values());
   }
 
   sessionDetail(id: string): SessionDetail | undefined {

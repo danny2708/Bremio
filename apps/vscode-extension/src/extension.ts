@@ -381,6 +381,7 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
 async function refreshAll(): Promise<void> {
   await sendAdapters();
   await sendRuns();
+  await sendSessions();
   await sendActiveRuns();
   await sendRepoState();
 }
@@ -390,9 +391,15 @@ async function sendAdapters(): Promise<void> {
 }
 
 async function sendSessions(): Promise<void> {
-  const repoPath = currentRepo();
-  if (!repoPath) return post({ type: "sessions", sessions: [] });
-  post({ type: "sessions", ...(await client.sessions(repoPath)) });
+  try {
+    const { groups } = await client.groupedSessions();
+    post({ type: "sessions", groups });
+  } catch {
+    const repoPath = currentRepo();
+    if (!repoPath) return post({ type: "sessions", sessions: [], groups: [] });
+    const { sessions } = await client.sessions(repoPath);
+    post({ type: "sessions", sessions, groups: [] });
+  }
 }
 
 /**

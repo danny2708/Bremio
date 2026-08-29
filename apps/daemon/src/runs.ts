@@ -47,6 +47,7 @@ import {
   type PersistedRun,
   type PersistedRunEvent,
   type PersistedSession,
+  type ProjectSessionGroup,
   type RunStatus,
   type RunStore,
   type SessionConfig,
@@ -369,6 +370,10 @@ export class RunRegistry {
 
   sessions(repositoryPath: string): PersistedSession[] {
     return this.store.listSessions(repositoryPath);
+  }
+
+  groupedSessions(): ProjectSessionGroup[] {
+    return this.store.listGroupedSessions();
   }
 
   sessionDetail(id: string): SessionDetail | undefined {

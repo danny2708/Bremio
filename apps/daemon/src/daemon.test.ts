@@ -413,12 +413,26 @@ describe("sessions", () => {
     expect(multi!.turnCount).toBe(2);
   });
 
-  it("rejects a missing repo query parameter with 400", async () => {
+  it("rejects a missing repo query parameter with 400 when not requesting grouped", async () => {
     const handle = await daemon();
     const response = await call(handle, "/sessions");
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string };
     expect(body.error).toContain("repo");
+  });
+
+  it("returns cross-repository sessions grouped by project identity (S10-T8)", async () => {
+    const registry = await freshRegistry();
+    const store = (registry as unknown as { store: RunStore }).store;
+
+    store.createRun({ id: "g-r1", mode: "single", repositoryPath: "/tmp/project-1", prompt: "first" });
+    store.createRun({ id: "g-r2", mode: "single", repositoryPath: "/tmp/project-2", prompt: "second" });
+
+    const handle = await daemon(registry);
+    const response = await call(handle, "/sessions?grouped=true");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { groups: Array<{ projectName: string; sessions: unknown[] }> };
+    expect(body.groups).toHaveLength(2);
   });
 
   it("returns session detail with turns in order, model, and reasoning", async () => {

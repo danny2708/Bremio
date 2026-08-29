@@ -505,6 +505,25 @@ describe("sessions", () => {
     // produces and the lookup would miss without any error.
     expect(normalizeRepositoryPath("D:\\Việt\\Repo")).toBe("d:/việt/repo");
   });
+
+  it("groups sessions across repositories by canonical repository identity (S10-T8)", async () => {
+    const s = await store();
+
+    s.createRun({ id: "r1", mode: "single", repositoryPath: "/tmp/project-alpha", prompt: "alpha task 1" });
+    s.createRun({ id: "r2", mode: "single", repositoryPath: "/tmp/project-beta", prompt: "beta task 1" });
+    s.createRun({ id: "r3", mode: "single", repositoryPath: "/tmp/project-alpha", prompt: "alpha task 2" });
+
+    const groups = s.listGroupedSessions();
+    expect(groups).toHaveLength(2);
+
+    const alphaGroup = groups.find((g) => g.projectName === "project-alpha");
+    const betaGroup = groups.find((g) => g.projectName === "project-beta");
+
+    expect(alphaGroup).toBeDefined();
+    expect(alphaGroup?.sessions).toHaveLength(2);
+    expect(betaGroup).toBeDefined();
+    expect(betaGroup?.sessions).toHaveLength(1);
+  });
 });
 
 describe("RepositoryIdentity (S1-T6)", () => {

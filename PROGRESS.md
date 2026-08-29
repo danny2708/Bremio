@@ -2446,5 +2446,29 @@ All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.
 - `corepack pnpm release:check` — PASS (build + packed install clean).
 - Red-check: disabled `worktreePath` extraction → test "extracts worktree path, commands, and files" failed with `expected undefined to be '/tmp/bremio-worktree-123'`. Restored.
 
+### S10-T8 — Sessions grouped by project
+- **agent:** Antigravity (Gemini 3.7 Flash)
+- **time:** 2026-08-29T15:47 → 2026-08-29T15:55
+- **branch:** feat/s10-t8-sessions-by-project
+- **task(s):** S10-T8
+- **status:** done
+
+**Did**
+- Added `listGroupedSessions()` to `RunStore` in `apps/daemon/src/storage.ts`, grouping sessions across all repositories by canonical `repository_id` (from `resolveRepositoryIdentity`).
+- Added `groupedSessions()` to `RunRegistry` and updated `GET /sessions` route in `apps/daemon/src/server.ts` to support `?grouped=true`.
+- Added `groupedSessions()` to extension client and updated `renderSessionList()` in `apps/vscode-extension/src/webview.ts` to render project group headers with project name and repository path.
+- Added unit tests in `storage.test.ts` and `daemon.test.ts`.
+
+**Decided**
+- Cross-repo sessions group by the canonical git identity (`repository_id` or normalized repository path), ensuring worktrees and main checkouts group together under one project identity rather than fragmenting into separate project buckets.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run apps/daemon/src/storage.test.ts apps/daemon/src/daemon.test.ts` — 127 tests passed (+2 new).
+- `corepack pnpm test` — 1197 passed / 87 files (was 1195 / 87).
+- `corepack pnpm release:check` — PASS (build + packed install clean).
+- Red-check: made `listGroupedSessions()` return `[]` → test "groups sessions across repositories by canonical repository identity" failed with `expected [] to have a length of 2 but got 0`. Restored.
+
+
 
 

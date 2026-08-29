@@ -1357,7 +1357,7 @@ window.addEventListener("message", (event) => {
     }
   }
   if (message.type === "sessions") {
-    $("tab-sessions").innerHTML = renderSessionList(message.sessions);
+    $("tab-sessions").innerHTML = renderSessionList(message.sessions, message.groups);
   }
   if (message.type === "sessionDetail") {
     storedContextItems = message.contextItems || [];
@@ -1515,12 +1515,34 @@ const assembleTaskLanes = ${assembleTaskLanes.toString()};
 const extractResponse = ${extractResponse.toString()};
 const renderDiffViewer = ${renderDiffViewer.toString()};
 
-function renderSessionList(sessions) {
+function renderSessionList(sessions, groups) {
+  const badge = (status) =>
+    status === "completed" ? "ok" : status === "failed" ? "bad" : "warn";
+
+  if (groups && groups.length > 0) {
+    return groups.map((g) => {
+      const header = '<div class="section-label" style="margin-top:12px;margin-bottom:6px;display:flex;align-items:center;gap:6px">'
+        + '<span style="font-weight:600;color:var(--fg)">' + escapeHtml(g.projectName) + "</span>"
+        + '<span class="muted" style="font-size:10px">(' + escapeHtml(g.repositoryPath) + ")</span>"
+        + "</div>";
+
+      const rows = (g.sessions || []).map((s) => {
+        const turns = s.turnCount ?? 1;
+        return '<div class="session-row" data-session="' + escapeHtml(s.id) + '">'
+          + '<span class="title">' + escapeHtml(s.title || "Untitled") + "</span>"
+          + '<span class="muted">' + turns + (turns === 1 ? " turn" : " turns") + "</span>"
+          + '<span class="badge ' + badge(s.status) + '">' + escapeHtml(s.status ?? "completed") + "</span>"
+          + "</div>";
+      }).join("");
+
+      return header + (rows || '<div class="empty">No sessions in this project.</div>');
+    }).join("");
+  }
+
   if (!sessions || sessions.length === 0) {
     return '<div class="empty">No sessions in this repository yet.</div>';
   }
-  const badge = (status) =>
-    status === "completed" ? "ok" : status === "failed" ? "bad" : "warn";
+
   return sessions.map((s) => {
     const turns = s.turnCount ?? 1;
     return '<div class="session-row" data-session="' + escapeHtml(s.id) + '">'

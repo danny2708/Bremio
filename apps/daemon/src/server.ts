@@ -421,6 +421,9 @@ async function handle(
   }
 
   if (method === "GET" && route === "/sessions") {
+    if (url.searchParams.get("grouped") === "true") {
+      return sendJson(res, 200, { groups: registry.groupedSessions() });
+    }
     const repoPath = url.searchParams.get("repo");
     if (!repoPath) return sendJson(res, 400, { error: "repo query parameter is required" });
     return sendJson(res, 200, { sessions: registry.sessions(repoPath) });

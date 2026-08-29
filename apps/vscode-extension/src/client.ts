@@ -95,11 +95,19 @@ export interface StartRunRequest {
 export interface SessionSummary {
   id: string;
   repositoryPath: string;
+  repositoryId?: string;
   title: string;
   createdAt: string;
   updatedAt: string;
   turnCount: number;
   status?: string;
+}
+
+export interface ProjectSessionGroup {
+  repositoryId: string;
+  repositoryPath: string;
+  projectName: string;
+  sessions: SessionSummary[];
 }
 
 export interface SessionTurn {
@@ -480,6 +488,11 @@ export class BremioClient {
   /** Sessions in this repository, newest first. */
   sessions(repoPath: string): Promise<{ sessions: SessionSummary[] }> {
     return this.#call(`/sessions?repo=${encodeURIComponent(repoPath)}`);
+  }
+
+  /** Sessions across all repositories grouped by project identity (S10-T8). */
+  groupedSessions(): Promise<{ groups: ProjectSessionGroup[] }> {
+    return this.#call("/sessions?grouped=true");
   }
 
   session(id: string): Promise<{ session: SessionDetail }> {
