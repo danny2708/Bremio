@@ -422,6 +422,25 @@ export class BremioClient {
     });
   }
 
+  gitCreatePr(request: {
+    repo: string;
+    title: string;
+    body?: string;
+    draft?: boolean;
+    base?: string;
+    head?: string;
+  }): Promise<{
+    ok: boolean;
+    url?: string;
+    error?: string;
+  }> {
+    return this.#call("/git/pr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
   /** The repository's current git state — branch, or a named reason there is none. */
   repoState(repoPath: string): Promise<{
     repoPath: string;

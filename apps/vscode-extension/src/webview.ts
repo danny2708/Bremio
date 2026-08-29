@@ -1622,6 +1622,15 @@ function renderGitPanel(git) {
     + '<button class="ghost" data-action="git-pull">Pull</button>'
     + '<button class="ghost" data-action="git-push">Push</button>'
     + "</div>"
+    + '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted);font-weight:600">Open Pull Request via gh</summary>'
+    + '<input id="git-pr-title" type="text" placeholder="pull request title" style="margin-top:6px">'
+    + '<textarea id="git-pr-body" rows="2" placeholder="description (optional)" style="margin-top:6px"></textarea>'
+    + '<div class="row" style="margin-top:6px;align-items:center">'
+    + '<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;margin:0"><input type="checkbox" id="git-pr-draft" style="width:auto"> Draft</label>'
+    + '<div class="spacer"></div>'
+    + '<button class="ghost" data-action="git-create-pr">Create PR</button>'
+    + "</div>"
+    + "</details>"
     + '<div id="git-result"></div>';
 }
 
@@ -2183,6 +2192,18 @@ document.addEventListener("click", (event) => {
   }
   if (button.dataset.action === "git-pull") {
     vscode.postMessage({ type: "gitPull", rebase: false });
+    return;
+  }
+  if (button.dataset.action === "git-create-pr") {
+    const titleBox = $("git-pr-title");
+    const bodyBox = $("git-pr-body");
+    const draftBox = $("git-pr-draft");
+    vscode.postMessage({
+      type: "gitCreatePr",
+      title: titleBox ? titleBox.value : "",
+      body: bodyBox ? bodyBox.value : "",
+      draft: draftBox ? draftBox.checked : false,
+    });
     return;
   }
   if (button.dataset.action === "apply-diff" || button.dataset.action === "revert-diff"

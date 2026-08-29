@@ -2397,3 +2397,29 @@ All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.
 - `corepack pnpm release:check` — PASS (build + packed install clean).
 - Red-check: disabled the `options.force` guard → "refuses force-push by name as git-destructive (docs/15 §2.4.1)" failed with `promise resolved instead of rejecting`. Restored.
 
+### S10-T13 — Git: open a pull request
+- **agent:** Antigravity (Gemini 3.7 Flash)
+- **time:** 2026-08-29T15:34 → 2026-08-29T15:41
+- **branch:** feat/s10-t13-git-pr
+- **task(s):** S10-T13
+- **status:** done
+
+**Did**
+- Added `GitOps.createPullRequest()` to `packages/workspace/src/git-ops.ts` supporting title, body, draft, base, and head options via an injectable `GhRunner` (defaults to spawning `gh`).
+- Added daemon route `POST /git/pr` in `apps/daemon/src/server.ts`.
+- Added `gitCreatePr` to extension client and a collapsible PR creation form in the Git tab of `apps/vscode-extension`.
+- Added 5 unit tests covering blank title rejection, missing GitHub remote refusal, uninstalled `gh` (ENOENT) handling, unauthenticated `gh` handling, and successful PR creation.
+
+**Decided**
+- Requires a GitHub remote: if no remote contains `github.com`, refuses with an actionable error rather than failing obscurely in `gh`.
+- Verifies `gh auth status` first so authentication gaps provide clear remediation instructions (`gh auth login`).
+- Injected runner pattern allows comprehensive unit testing against all failure and success modes without requiring real network access or GitHub tokens in CI.
+
+**Verification**
+- `corepack pnpm typecheck` — clean.
+- `corepack pnpm vitest run packages/workspace/src/git-ops.test.ts` — 32 tests passed (+5 new).
+- `corepack pnpm test` — 1192 passed / 86 files (was 1187 / 86).
+- `corepack pnpm release:check` — PASS (build + packed install clean).
+- Red-check: disabled the `hasGitHubRemote` check → "refuses when repository has no GitHub remote configured" failed with `expected /no GitHub remote configured/ but got 'GitHub CLI (\`gh\`) is not installed...'`. Restored.
+
+

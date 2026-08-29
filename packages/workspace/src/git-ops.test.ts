@@ -320,3 +320,80 @@ describe("GitOps.pull", () => {
   });
 });
 
+describe("GitOps.createPullRequest", () => {
+  it("refuses a blank title", async () => {
+    await expect(new GitOps(repo).createPullRequest({ title: "   " })).rejects.toThrow(
+      /title is required/,
+    );
+  });
+
+  it("refuses when repository has no GitHub remote configured", async () => {
+    git(["remote", "add", "origin", "https://gitlab.com/user/project.git"]);
+    await expect(new GitOps(repo).createPullRequest({ title: "My PR" })).rejects.toThrow(
+      /no GitHub remote configured/,
+    );
+  });
+
+  it("refuses when gh CLI is not installed (ENOENT)", async () => {
+    git(["remote", "add", "origin", "https://github.com/user/project.git"]);
+    const mockRunner = async () => {
+      const err = new Error("spawn gh ENOENT");
+      (err as unknown as { code: string }).code = "ENOENT";
+      throw err;
+    };
+    await expect(new GitOps(repo, mockRunner).createPullRequest({ title: "My PR" })).rejects.toThrow(
+      /GitHub CLI \(`gh`\) is not installed/,
+    );
+  });
+
+  it("refuses when gh CLI is unauthenticated", async () => {
+    git(["remote", "add", "origin", "https://github.com/user/project.git"]);
+    const mockRunner = async (args: string[]) => {
+      if (args[0] === "auth" && args[1] === "status") {
+        throw new Error("You are not logged into any GitHub hosts. Run gh auth login to authenticate.");
+      }
+      return { stdout: "", stderr: "" };
+    };
+    await expect(new GitOps(repo, mockRunner).createPullRequest({ title: "My PR" })).rejects.toThrow(
+      /GitHub CLI is not authenticated/,
+    );
+  });
+
+  it("creates a pull request with title, body, and draft flag", async () => {
+    git(["remote", "add", "origin", "git@github.com:owner/repo.git"]);
+    const recordedCalls: string[][] = [];
+    const mockRunner = async (args: string[]) => {
+      recordedCalls.push(args);
+      if (args[0] === "auth") return { stdout: "Logged in to github.com account testuser", stderr: "" };
+      if (args[0] === "pr" && args[1] === "create") {
+        return { stdout: "https://github.com/owner/repo/pull/42\n", stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    };
+
+    const result = await new GitOps(repo, mockRunner).createPullRequest({
+      title: "Add feature",
+      body: "Details of the feature",
+      draft: true,
+      base: "main",
+      head: "feature/new",
+    });
+
+    expect(result.url).toBe("https://github.com/owner/repo/pull/42");
+    expect(recordedCalls[1]).toEqual([
+      "pr",
+      "create",
+      "--title",
+      "Add feature",
+      "--body",
+      "Details of the feature",
+      "--draft",
+      "--base",
+      "main",
+      "--head",
+      "feature/new",
+    ]);
+  });
+});
+
+

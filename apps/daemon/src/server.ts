@@ -349,6 +349,33 @@ async function handle(
     }
   }
 
+  // Open a pull request via GitHub CLI (S10-T13).
+  if (method === "POST" && route === "/git/pr") {
+    const body = (await readJsonBody(req)) as {
+      repo?: string;
+      title?: string;
+      body?: string;
+      draft?: boolean;
+      base?: string;
+      head?: string;
+    };
+    if (!body.repo) return sendJson(res, 400, { error: "repo is required" });
+    if (!body.title) return sendJson(res, 400, { error: "title is required" });
+    try {
+      const ops = new GitOps(body.repo);
+      const result = await ops.createPullRequest({
+        title: body.title,
+        body: body.body,
+        draft: body.draft,
+        base: body.base,
+        head: body.head,
+      });
+      return sendJson(res, 200, { ok: true, url: result.url });
+    } catch (err) {
+      return sendJson(res, 200, { ok: false, error: (err as Error).message });
+    }
+  }
+
   // The repository's current git state (S10-T9). Apply, revert and merge all
   // act relative to the checked-out branch, so the panel has to be able to
   // show which one that is rather than leaving the user to assume.

@@ -1,4 +1,20 @@
+import { execFile } from "node:child_process";
 import { simpleGit, type SimpleGit } from "simple-git";
+
+export type GhRunner = (args: string[], cwd: string) => Promise<{ stdout: string; stderr: string }>;
+
+const defaultGhRunner: GhRunner = async (args: string[], cwd: string) => {
+  return new Promise((resolve, reject) => {
+    execFile("gh", args, { cwd }, (err, stdout, stderr) => {
+      if (err) {
+        const error = new Error(stderr.trim() || stdout.trim() || err.message);
+        (error as unknown as { code?: string | number }).code = (err as unknown as { code?: string | number }).code;
+        return reject(error);
+      }
+      resolve({ stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+};
 
 /**
  * Git operations Bremio performs on the user's behalf (Sprint 10).
@@ -55,7 +71,10 @@ function describe(letter: string): string {
 export class GitOps {
   private readonly git: SimpleGit;
 
-  constructor(private readonly repoPath: string) {
+  constructor(
+    private readonly repoPath: string,
+    private readonly ghRunner: GhRunner = defaultGhRunner,
+  ) {
     this.git = simpleGit(repoPath);
   }
 
@@ -313,5 +332,78 @@ export class GitOps {
       throw new GitOpsError((err as Error).message);
     }
   }
+
+  /**
+   * Open a pull request via GitHub CLI (`gh`).
+   *
+   * Classified as `network` (`docs/15` §2.4.1).
+   * Requires GitHub CLI installed, authenticated, and a GitHub remote.
+   */
+  async createPullRequest(options: {
+    title: string;
+    body?: string;
+    draft?: boolean;
+    base?: string;
+    head?: string;
+  }): Promise<{ url: string }> {
+    if (!options.title.trim()) {
+      throw new GitOpsError("a pull request title is required");
+    }
+
+    const remotes = await this.remotes();
+    const hasGitHubRemote = remotes.some((r) =>
+      (r.refs.fetch && /github\.com/i.test(r.refs.fetch)) ||
+      (r.refs.push && /github\.com/i.test(r.refs.push)),
+    );
+    if (!hasGitHubRemote) {
+      throw new GitOpsError(
+        "repository has no GitHub remote configured — cannot create a pull request via GitHub CLI",
+      );
+    }
+
+    // Verify gh is available and authenticated
+    try {
+      await this.ghRunner(["auth", "status"], this.repoPath);
+    } catch (err) {
+      const msg = (err as Error).message;
+      if ((err as { code?: string }).code === "ENOENT" || msg.includes("ENOENT") || msg.includes("not recognized")) {
+        throw new GitOpsError(
+          "GitHub CLI (`gh`) is not installed or not in PATH — install it from https://cli.github.com to create pull requests",
+        );
+      }
+      throw new GitOpsError(
+        `GitHub CLI is not authenticated (${msg}) — run 'gh auth login' first`,
+      );
+    }
+
+    const args = ["pr", "create", "--title", options.title.trim()];
+    if (options.body !== undefined) {
+      args.push("--body", options.body);
+    } else {
+      args.push("--body", "");
+    }
+    if (options.draft) {
+      args.push("--draft");
+    }
+    if (options.base) {
+      args.push("--base", options.base);
+    }
+    if (options.head) {
+      args.push("--head", options.head);
+    }
+
+    try {
+      const { stdout } = await this.ghRunner(args, this.repoPath);
+      const url = stdout.trim().split("\n").pop()?.trim() || "";
+      if (!url.startsWith("http")) {
+        throw new GitOpsError(`unexpected gh pr create output: ${stdout}`);
+      }
+      return { url };
+    } catch (err) {
+      if (err instanceof GitOpsError) throw err;
+      throw new GitOpsError(`failed to create pull request: ${(err as Error).message}`);
+    }
+  }
 }
+
 

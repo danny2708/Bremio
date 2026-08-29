@@ -277,6 +277,15 @@ async function handleMessage(message: Record<string, unknown>): Promise<void> {
       case "gitPull":
         await gitPull(message.rebase === true);
         return;
+      case "gitCreatePr":
+        await gitCreatePr({
+          title: String(message.title ?? ""),
+          body: typeof message.body === "string" ? message.body : undefined,
+          draft: message.draft === true,
+          base: typeof message.base === "string" ? message.base : undefined,
+          head: typeof message.head === "string" ? message.head : undefined,
+        });
+        return;
       case "openSession":
         if (typeof message.sessionId === "string") await sendSessionDetail(message.sessionId);
         return;
@@ -574,6 +583,36 @@ async function gitPull(rebase: boolean): Promise<void> {
   });
   await sendGitStatus();
   await sendRepoState();
+}
+
+async function gitCreatePr(options: {
+  title: string;
+  body?: string;
+  draft?: boolean;
+  base?: string;
+  head?: string;
+}): Promise<void> {
+  const repoPath = currentRepo();
+  if (!repoPath) throw new Error("no workspace folder is open");
+  if (!options.title.trim()) {
+    post({ type: "gitResult", ok: false, detail: "A pull request title is required." });
+    return;
+  }
+  const result = await client.gitCreatePr({
+    repo: repoPath,
+    title: options.title,
+    body: options.body,
+    draft: options.draft,
+    base: options.base,
+    head: options.head,
+  });
+  post({
+    type: "gitResult",
+    ok: result.ok,
+    detail: result.ok
+      ? `Created pull request: ${result.url}`
+      : (result.error ?? "pull request creation refused"),
+  });
 }
 
 /**
