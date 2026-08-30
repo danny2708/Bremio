@@ -103,12 +103,20 @@ export {
 export {
   computeNetGain,
   findBestSingleAgentBaseline,
+  summarizeNetGain,
+  aggregateNetGain,
+  formatNetGain,
   type KnownNetGain,
   type UnknownNetGain,
   type NetGainResult,
   type KnownSingleBaseline,
   type UnknownSingleBaseline,
   type SingleBaselineResult,
+  type KnownNetGainAggregate,
+  type UnknownNetGainAggregate,
+  type NetGainAggregate,
+  type ComparisonNetGain,
+  type NetGainSummary,
 } from "./net-gain";
 
 export {

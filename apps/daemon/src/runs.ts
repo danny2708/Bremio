@@ -22,7 +22,7 @@ import {
   type ProcessSupervisor,
   type TerminationOutcome,
 } from "@bremio/adapter-sdk";
-import { MemoryInjector } from "@bremio/memory";
+import { FsMemoryStore, MemoryInjector } from "@bremio/memory";
 import { RunToolset } from "./run-toolset";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
@@ -1259,23 +1259,25 @@ export class RunRegistry {
       }
     };
 
-    const storeAdapter: import("@bremio/memory").MemoryStore = {
-      store: async (entry) => this.store.storeMemory(entry),
-      get: async (id) => this.store.getMemory(id),
-      query: async (filter) => this.store.queryMemory(filter),
-      delete: async (id) => { this.store.deleteMemory(id); return true; },
-      list: async (scope) => this.store.queryMemory({ scopes: [scope] }),
-    };
-    const injector = new MemoryInjector(storeAdapter);
-    const injectedEntries = await injector.select({
-      maxTokens: 4000,
-      scopes: ["project", "user"],
-      tags: [],
-    });
-    // Filter project memories by repository
-    const filteredEntries = injectedEntries.filter(e => e.scope !== "project" || e.repository === input.repoPath);
-    const memoryString = injector.formatInjection(filteredEntries);
-    const finalPrompt = memoryString ? `${input.prompt}\n\n${memoryString}` : input.prompt;
+    let finalPrompt = input.prompt;
+    try {
+      const memoryStore = new FsMemoryStore(path.join(input.repoPath, ".bremio"));
+      const injector = new MemoryInjector(memoryStore);
+      const injectedEntries = await injector.select({
+        maxTokens: 4000,
+        scopes: ["project", "user"],
+        tags: [],
+      });
+      const filteredEntries = injectedEntries.filter(
+        (e) => e.scope !== "project" || e.repository === input.repoPath,
+      );
+      const memoryString = injector.formatInjection(filteredEntries);
+      if (memoryString) {
+        finalPrompt = `${input.prompt}\n\n${memoryString}`;
+      }
+    } catch {
+      // Memory injection is best-effort; repository might not have .bremio yet
+    }
 
     try {
       const report: BremioRunReport = input.mode === "single"

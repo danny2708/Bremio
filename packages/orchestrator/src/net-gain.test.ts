@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LedgerEntry } from "./ledger";
-import { computeNetGain } from "./net-gain";
+import { computeNetGain, summarizeNetGain } from "./net-gain";
 
 function summary(
   runId: string,
@@ -122,3 +122,48 @@ describe("computeNetGain", () => {
     });
   });
 });
+
+describe("summarizeNetGain", () => {
+  it("summarizes net gain across multiple comparison groups", () => {
+    const entries = [
+      summary("single-1", "case-1", "single-agent"),
+      costEntry("single-1", "single-1::single", 1),
+      summary("multi-1", "case-1", "multi-agent"),
+      costEntry("multi-1", "TASK-1", 0.5),
+      costEntry("multi-1", "multi-1::lead", 0.2, "coordination"),
+
+      summary("single-2", "case-2", "single-agent"),
+      costEntry("single-2", "single-2::single", 2),
+      summary("multi-2", "case-2", "multi-agent"),
+      costEntry("multi-2", "TASK-2", 0.5),
+      costEntry("multi-2", "multi-2::lead", 0.5, "coordination"),
+    ];
+
+    const summaryResult = summarizeNetGain(entries);
+    expect(summaryResult.comparisons).toHaveLength(2);
+    expect(summaryResult.aggregate).toEqual({
+      status: "known",
+      netGainUsd: 0.3 + 1.0,
+      measuredRuns: 2,
+    });
+  });
+
+  it("returns unknown aggregate when any comparison group is unknown", () => {
+    const entries = [
+      summary("single-1", "case-1", "single-agent"),
+      costEntry("single-1", "single-1::single", 1),
+      summary("multi-1", "case-1", "multi-agent"),
+      costEntry("multi-1", "TASK-1", 0.5),
+      costEntry("multi-1", "multi-1::lead", 0.2, "coordination"),
+
+      // case-2 has no single-agent baseline
+      summary("multi-2", "case-2", "multi-agent"),
+      costEntry("multi-2", "TASK-2", 0.5),
+      costEntry("multi-2", "multi-2::lead", 0.5, "coordination"),
+    ];
+
+    const summaryResult = summarizeNetGain(entries);
+    expect(summaryResult.aggregate.status).toBe("unknown");
+  });
+});
+

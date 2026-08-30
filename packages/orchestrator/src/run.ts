@@ -90,6 +90,8 @@ export interface RunBremioOptions {
     measuredInputTokens?: number;
   }>;
   providerSessionId?: string;
+  /** If specified, overrides calibration-gated dynamic microtask expansion. */
+  enableDynamicExpansion?: boolean;
 }
 
 /** Generate a sortable, human-readable run id: run-YYYYMMDD-HHMMSS-xxxx. */
@@ -347,6 +349,17 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     );
   }
 
+  let enableDynamicExpansion = opts.enableDynamicExpansion ?? false;
+  if (opts.enableDynamicExpansion === undefined) {
+    try {
+      const entries = await readLedger(ledgerPathFor(repoPath));
+      const calibration = evaluateCalibrationReadiness(entries);
+      enableDynamicExpansion = calibration.expansionStatus === "enabled";
+    } catch {
+      enableDynamicExpansion = false;
+    }
+  }
+
   const results = await runPlan({
     plan,
     assign,
@@ -355,6 +368,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     runDir,
     runId,
     ledgerPath: ledgerPathFor(repoPath),
+    enableDynamicExpansion,
     ...(opts.taskTimeoutMs ? { taskTimeoutMs: opts.taskTimeoutMs } : {}),
     ...(opts.maxConcurrency ? { maxConcurrency: opts.maxConcurrency } : {}),
     signal: opts.signal,

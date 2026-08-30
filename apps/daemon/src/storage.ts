@@ -649,25 +649,19 @@ export class RunStore {
   }
 
   getLastGuardDecision(runId: string, agentId: string): any {
-    const row = this.db
-      .prepare(
-        "SELECT payload FROM events WHERE run_id = ? AND type = 'task-event' AND json_extract(payload, '$.data.type') = 'guard_decision' ORDER BY seq DESC LIMIT 1"
-      )
-      .get(runId) as { payload: string } | undefined;
-    
-    if (!row) return undefined;
     try {
+      const row = this.db
+        .prepare(
+          "SELECT payload FROM run_events WHERE run_id = ? AND type = 'task-event' AND json_extract(payload, '$.data.type') = 'guard_decision' ORDER BY seq DESC LIMIT 1"
+        )
+        .get(runId) as { payload: string } | undefined;
+      
+      if (!row) return undefined;
       const parsed = JSON.parse(row.payload);
-      // guard_decision data includes decision in the payload, but let's check
-      // we emit `{ type: "guard_decision", runId, ts, decision: {...} }`
       if (parsed.agentId === agentId && parsed.data?.decision) {
         return parsed.data.decision;
       }
-      // Wait, events table payload is the `data` of the emitted event.
-      // So payload contains `agentId` inside it?
-      // Actually `processGuard` does `this.#emit(runId, { kind: "task-event", agentId, data: { type: "guard_decision", decision } })`.
-      // `runs.ts`'s `this.#emit` appends to `events` table?
-      // Let's just do a json_extract in sqlite to match agentId, or just parse and check.
+      return undefined;
     } catch {
       return undefined;
     }

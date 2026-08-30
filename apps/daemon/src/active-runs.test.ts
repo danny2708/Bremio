@@ -115,13 +115,16 @@ async function harness(): Promise<{
 
   const store = await RunStore.open(path.join(dir, "bremio.db"));
   const adapter = new BlockingAdapter();
+  const registry = new RunRegistry(store, undefined, () => [adapter]);
   cleanups.push(async () => {
     adapter.release();
+    registry.cancelAll();
+    await registry.awaitCancellations();
     store.close();
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
   });
 
-  return { registry: new RunRegistry(store, undefined, () => [adapter]), store, repo, adapter };
+  return { registry, store, repo, adapter };
 }
 
 describe("activeRuns reports who is working (S10-T4)", () => {

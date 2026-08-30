@@ -62,6 +62,7 @@ class ReviewMockAdapter implements AgentAdapter {
   async *startRun(request: AgentRunRequest): AsyncIterable<AgentEvent> {
     const ts = Date.now();
     yield { type: "started", runId: request.runId, ts };
+    await new Promise((resolve) => setTimeout(resolve, 50));
     await fs.writeFile(path.join(request.cwd, "FEATURE.txt"), "agent output\n", "utf8");
     yield {
       type: "completed",
@@ -107,12 +108,15 @@ async function harness(): Promise<{ registry: RunRegistry; store: RunStore; repo
   git(["commit", "-q", "-m", "init"]);
 
   const store = await RunStore.open(path.join(dir, "bremio.db"));
+  const registry = new RunRegistry(store, undefined, () => [new ReviewMockAdapter()]);
   cleanups.push(async () => {
+    registry.cancelAll();
+    await registry.awaitCancellations();
     store.close();
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
   });
 
-  return { registry: new RunRegistry(store, undefined, () => [new ReviewMockAdapter()]), store, repo };
+  return { registry, store, repo };
 }
 
 /** Collects events and lets a test await one, replay included. */

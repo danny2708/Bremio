@@ -125,6 +125,31 @@ describe("evaluateCalibrationReadiness", () => {
     );
     expect(result.recommendation).toBe("single-agent");
   });
+
+  it("gates dynamic expansion on positive net gain evidence", () => {
+    // Non-positive net gain pair (baseline $0.01, multi $0.02 -> net gain -$0.01)
+    const nonPositiveEntries = Array.from({ length: 5 }, (_, index) => pair(`case-${index}`)).flat();
+    const nonPositiveResult = evaluateCalibrationReadiness(nonPositiveEntries);
+    expect(nonPositiveResult.status).toBe("ready");
+    expect(nonPositiveResult.expansionStatus).toBe("disabled");
+    expect(nonPositiveResult.expansionBlockers).toEqual(
+      expect.arrayContaining([expect.stringContaining("net gain is non-positive")]),
+    );
+
+    // Positive net gain pair (baseline $0.05, multi $0.02 -> net gain +$0.03)
+    const positivePair = (id: string): LedgerEntry[] => {
+      const p = pair(id);
+      const singleTask = p.find((e) => e.runId.endsWith("-single") && e.scope === "task");
+      if (singleTask) singleTask.usage = { costUsd: 0.05 };
+      return p;
+    };
+
+    const positiveEntries = Array.from({ length: 5 }, (_, index) => positivePair(`case-${index}`)).flat();
+    const positiveResult = evaluateCalibrationReadiness(positiveEntries);
+    expect(positiveResult.status).toBe("ready");
+    expect(positiveResult.expansionStatus).toBe("enabled");
+    expect(positiveResult.expansionBlockers).toEqual([]);
+  });
 });
 
 describe("resolveCalibrationPolicy", () => {
@@ -135,3 +160,4 @@ describe("resolveCalibrationPolicy", () => {
       .toThrow(/between 0 and 1/);
   });
 });
+

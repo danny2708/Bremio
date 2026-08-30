@@ -1,4 +1,5 @@
 import type { LedgerEntry } from "./ledger";
+import { summarizeNetGain, type NetGainSummary } from "./net-gain";
 
 export interface CalibrationPolicy {
   minimumPairedComparisons: number;
@@ -21,6 +22,7 @@ export const DEFAULT_CALIBRATION_POLICY: Readonly<CalibrationPolicy> = {
 export interface CalibrationReadiness {
   status: "ready" | "insufficient-evidence";
   recommendation: "single-agent" | "controlled-multi-agent";
+  expansionStatus: "enabled" | "disabled";
   pairedComparisons: number;
   evaluableComparisons: number;
   nonInferiorComparisons: number;
@@ -28,7 +30,9 @@ export interface CalibrationReadiness {
   actualModelCoverage: number;
   reportedCostCoverage: number;
   coordinationCoverage: number;
+  netGainSummary: NetGainSummary;
   blockers: string[];
+  expansionBlockers: string[];
 }
 
 interface ComparisonGroup {
@@ -171,9 +175,23 @@ export function evaluateCalibrationReadiness(
   }
 
   const ready = blockers.length === 0;
+  const netGainSummary = summarizeNetGain(entries);
+  const expansionBlockers: string[] = [...blockers];
+  if (netGainSummary.aggregate.status === "unknown") {
+    expansionBlockers.push(`net gain is unknown: ${netGainSummary.aggregate.reason}`);
+  } else if (netGainSummary.aggregate.netGainUsd <= 0) {
+    expansionBlockers.push(
+      `net gain is non-positive ($${netGainSummary.aggregate.netGainUsd.toFixed(4)})`,
+    );
+  }
+
+  const expansionStatus: "enabled" | "disabled" =
+    ready && expansionBlockers.length === 0 ? "enabled" : "disabled";
+
   return {
     status: ready ? "ready" : "insufficient-evidence",
     recommendation: ready ? "controlled-multi-agent" : "single-agent",
+    expansionStatus,
     pairedComparisons: paired.length,
     evaluableComparisons: evaluable.length,
     nonInferiorComparisons: nonInferior.length,
@@ -181,7 +199,9 @@ export function evaluateCalibrationReadiness(
     actualModelCoverage,
     reportedCostCoverage,
     coordinationCoverage,
+    netGainSummary,
     blockers,
+    expansionBlockers,
   };
 }
 

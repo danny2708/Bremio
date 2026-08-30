@@ -279,7 +279,7 @@ daemon-owned context; fork and repository-identity tests pass;
 
 ---
 
-## Sprint 13 — Bounded collaboration and optional expansion ⛔ needs review
+## Sprint 13 — Bounded collaboration and optional expansion
 
 Do not claim this sprint until Sprint 12 passes and the tech lead confirms that
 the additional coordination surface is worth its measured cost. V1 delivery is
@@ -292,9 +292,9 @@ at task boundaries; no provider-independent live chat is promised.
 | [x] | S13-T3 | **Resolve artifact requests.** Return only policy-approved artifacts from the run index, or a named unresolved blocker. Unknown ownership fails closed; request/reply overhead is coordination evidence. | M | S13-T2 | — |
 | [x] | S13-T4 | **Show task conversation threads.** CLI and panel render daemon-owned request/reply/blocker records with task ownership and terminal state; this is not a general-purpose agent chat UI. | M | S13-T1, S13-T2 | ‖ S13-T3 |
 | [x] | S13-T5 | **Probe live-input capabilities.** Verify each provider with real surfaces/fixtures: in-flight input, delivery acknowledgement, cancellation and resume composition. Unsupported stays default; this task may conclude that no live path should be built. | S | S11-T1, Sprint 12 gate | — |
-| [ ] | S13-T6 | **Validate dynamic microtask proposals.** Purely reject duplicate ids, cycles, excessive depth/children/total, invalid dependencies/modes, exhausted reserve and guard-constrained runs. This task does not execute added work. | M | S11-T5, S13-T2 | — |
-| [ ] | S13-T7 | **Execute microtasks behind a feature flag.** Apply accepted proposals only at scheduler boundaries; default off. Preserve worktree isolation, deterministic results, ordinary policy/capability checks, restart/cancel semantics and coordination attribution. | M | S13-T3, S13-T6 | — |
-| [ ] | S13-T8 | **Gate promotion on paired evidence.** Extend calibration/stats/compare so unknown or non-positive net gain keeps automatic expansion disabled; promotion requires every existing threshold plus enough eligible collaboration samples. | M | S13-T7 | — |
+| [x] | S13-T6 | **Validate dynamic microtask proposals.** Purely reject duplicate ids, cycles, excessive depth/children/total, invalid dependencies/modes, exhausted reserve and guard-constrained runs. This task does not execute added work. | M | S11-T5, S13-T2 | — |
+| [x] | S13-T7 | **Execute microtasks behind a feature flag.** Apply accepted proposals only at scheduler boundaries; default off. Preserve worktree isolation, deterministic results, ordinary policy/capability checks, restart/cancel semantics and coordination attribution. | M | S13-T3, S13-T6 | — |
+| [x] | S13-T8 | **Gate promotion on paired evidence.** Extend calibration/stats/compare so unknown or non-positive net gain keeps automatic expansion disabled; promotion requires every existing threshold plus enough eligible collaboration samples. | M | S13-T7 | — |
 
 **Sprint gate:** two workers exchange one artifact request/reply through the
 orchestrator with idempotency and hop limits; no peer writes or unsupported
