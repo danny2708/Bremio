@@ -1,4 +1,4 @@
-import type { Plan, Task } from "@bremio/protocol";
+import type { Plan, Task, TaskMessage } from "@bremio/protocol";
 
 /**
  * JSON Schema for the lead's plan output, passed to adapters as `outputSchema`
@@ -107,7 +107,12 @@ export function buildRepairPrompt(userPrompt: string, error: string): string {
 }
 
 /** Build the instruction handed to a worker for one task. */
-export function buildTaskPrompt(plan: Plan, task: Task): string {
+export function buildTaskPrompt(
+  plan: Plan,
+  task: Task,
+  artifacts?: { name: string; content: string }[],
+  messages?: TaskMessage[],
+): string {
   const readOnly = task.kind === "review" || task.kind === "analysis" || task.kind === "test";
   const lines = [
     "You are executing ONE task within a larger plan, in an isolated git worktree (the current working directory).",
@@ -117,6 +122,28 @@ export function buildTaskPrompt(plan: Plan, task: Task): string {
     `YOUR TASK (${task.id} — ${task.kind}): ${task.title}`,
   ];
   if (task.description) lines.push("", task.description);
+  
+  if (artifacts && artifacts.length > 0) {
+    lines.push("", "PROVIDED ARTIFACTS:");
+    for (const a of artifacts) {
+      lines.push(`\n--- BEGIN ARTIFACT: ${a.name} ---`);
+      lines.push(a.content);
+      lines.push(`--- END ARTIFACT: ${a.name} ---`);
+    }
+  }
+
+  if (messages && messages.length > 0) {
+    lines.push("", "MESSAGES DIRECTED TO YOU:");
+    for (const m of messages) {
+      lines.push(`\n--- BEGIN MESSAGE from ${m.sourceTaskId} ---`);
+      lines.push(`ID: ${m.id}`);
+      lines.push(`Action: ${m.act}`);
+      if (m.replyToId) lines.push(`In Reply To: ${m.replyToId}`);
+      lines.push(`Payload:\n${m.payload}`);
+      lines.push(`--- END MESSAGE ---`);
+    }
+  }
+
   if (task.acceptanceCriteria.length > 0) {
     lines.push("", "ACCEPTANCE CRITERIA:");
     for (const c of task.acceptanceCriteria) lines.push(`- ${c}`);

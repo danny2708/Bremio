@@ -12,6 +12,7 @@ import {
 } from "@bremio/orchestrator";
 import type { ReasoningLevel, AgentEvent } from "@bremio/protocol";
 import { createHash } from "node:crypto";
+import * as fs from "node:fs/promises";
 import {
   classifyAgentError,
   processSupervisor,
@@ -1209,14 +1210,26 @@ export class RunRegistry {
       }
     }
 
+    let isConstrained = false;
+
     const evaluators = new Map<string, RuntimeGuardEvaluator>();
     const getEvaluator = (agentId: string) => {
       let evaluator = evaluators.get(agentId);
       if (!evaluator) {
-         evaluator = new RuntimeGuardEvaluator(runId, agentId, capabilities.get(agentId)!, {
-           enforce: routingConfig.guard.enforce,
-         });
-         evaluators.set(agentId, evaluator);
+        evaluator = new RuntimeGuardEvaluator(runId, agentId, capabilities.get(agentId)!, {
+          enforce: routingConfig.guard.enforce,
+        });
+        
+        // Restore state if available
+        const lastDecision = this.store.getLastGuardDecision(runId, agentId);
+        if (lastDecision) {
+          evaluator.level = lastDecision.level;
+          if (lastDecision.level === "constrained" && routingConfig.guard.enforce) {
+            isConstrained = true;
+          }
+        }
+        
+        evaluators.set(agentId, evaluator);
       }
       return evaluator;
     };
@@ -1239,10 +1252,8 @@ export class RunRegistry {
         if (decision.action === "cancel") {
           this.cancel(runId);
         } else if (decision.action === "suppress-future-work") {
-          if (!controller.signal.aborted) {
-            this.#emit(runId, { kind: "status", message: `constrained — suppressing future work: ${decision.reason}` });
-            controller.abort();
-          }
+          isConstrained = true;
+          this.#emit(runId, { kind: "status", message: `constrained — suppressing future work: ${decision.reason}` });
         }
       }
     };
@@ -1273,6 +1284,7 @@ export class RunRegistry {
             prompt: finalPrompt,
             registry,
             signal: controller.signal,
+            stopRequested: () => isConstrained,
             ...(input.model ? { model: input.model } : {}),
             ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
             ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
@@ -1297,6 +1309,7 @@ export class RunRegistry {
             prompt: finalPrompt,
             registry,
             signal: controller.signal,
+            stopRequested: () => isConstrained,
             ...(input.workerIds?.length ? { workerIds: input.workerIds } : input.workerId ? { workerId: input.workerId } : {}),
             ...(input.model ? { model: input.model } : {}),
             ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
@@ -1306,7 +1319,20 @@ export class RunRegistry {
             ...(input.controlMode ? { controlMode: input.controlMode } : {}),
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
             ...(turnIndex !== undefined ? { turnIndex } : {}),
-            ...(priorTurns !== undefined ? { priorTurns } : {}),
+            fetchUnresolvedMessages: async (targetId) => 
+              this.store.getUnresolvedMessages(runId).filter(m => m.targetId === targetId),
+            resolveArtifact: async (taskId, artifactPath) => {
+              const artifacts = this.store.listArtifacts(runId);
+              const found = artifacts.find(a => a.path === artifactPath);
+              if (found) {
+                const content = await fs.readFile(found.absolutePath, "utf8");
+                return { path: found.path, content };
+              }
+              return undefined;
+            },
+            markMessageHandled: async (msgId) => {
+              this.store.markMessageHandled(msgId);
+            },
             hooks: {
               onLeadStart: (id) =>
                 this.#emit(runId, { kind: "lead", message: `lead ${id} planning`, agentId: id }),
@@ -1343,14 +1369,20 @@ export class RunRegistry {
                 });
                 processGuard(agentId, event);
               },
-              onTaskComplete: (result) =>
+              onTaskComplete: (result) => {
+                if (result.messages) {
+                  for (const msg of result.messages) {
+                    this.store.insertMessage(msg);
+                  }
+                }
                 this.#emit(runId, {
                   kind: "task-complete",
                   message: result.status,
                   taskId: result.taskId,
                   agentId: result.agentId,
                   data: result,
-                }),
+                });
+              },
             },
           });
 

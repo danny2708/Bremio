@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { TaskIdSchema } from "./task";
+import { TaskMessageSchema } from "./message";
 
 /** A finding raised while running or reviewing a task. */
 export const FindingSchema = z.object({
@@ -87,6 +88,8 @@ export const TaskResultSchema = z.object({
   commandsExecuted: z.array(z.string()).default([]),
   tests: z.array(TestRunSchema).default([]),
   findings: z.array(FindingSchema).default([]),
+  /** Messages emitted by this task for cross-task coordination. */
+  messages: z.array(TaskMessageSchema).default([]),
   commitHash: z.string().optional(),
   sessionId: z.string().optional(),
   // --- operational metadata (Bremio-specific, optional) ---

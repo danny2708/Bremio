@@ -10,6 +10,7 @@ import type {
   ReasoningLevel,
   Task,
   UsageSummary,
+  TaskMessage,
 } from "@bremio/protocol";
 import {
   assessCapacity,
@@ -70,6 +71,13 @@ export interface RunBremioOptions {
   /** Why this flow mode was chosen (set by --mode auto resolution). */
   autoModeReason?: string;
   signal?: AbortSignal;
+  stopRequested?: () => boolean;
+  /** Fetch unresolved messages targeting a specific task ID */
+  fetchUnresolvedMessages?: (targetId: string) => Promise<TaskMessage[]>;
+  /** Resolve an artifact request across the run index */
+  resolveArtifact?: (taskId: string, artifactPath: string) => Promise<{ path: string, content: string } | undefined>;
+  /** Mark a message as handled in the daemon */
+  markMessageHandled?: (messageId: string) => Promise<void>;
   logger?: Logger;
   hooks?: RunBremioHooks;
   sessionId?: string;
@@ -349,8 +357,12 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     ledgerPath: ledgerPathFor(repoPath),
     ...(opts.taskTimeoutMs ? { taskTimeoutMs: opts.taskTimeoutMs } : {}),
     ...(opts.maxConcurrency ? { maxConcurrency: opts.maxConcurrency } : {}),
-    ...(opts.signal ? { signal: opts.signal } : {}),
-    ...(opts.hooks ? { hooks: opts.hooks } : {}),
+    signal: opts.signal,
+    stopRequested: opts.stopRequested,
+    fetchUnresolvedMessages: opts.fetchUnresolvedMessages,
+    resolveArtifact: opts.resolveArtifact,
+    markMessageHandled: opts.markMessageHandled,
+    hooks: opts.hooks,
   });
 
   const leadIdentity = observedIdentity(observedLeadModels, observedLeadReasoningLevels);

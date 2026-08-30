@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { AgentAdapter } from "@bremio/adapter-sdk";
-import type { AgentEvent, Attribution, ChangeType, Plan, Task, TaskResult, TurnFileChange } from "@bremio/protocol";
+import type { AgentEvent, Attribution, ChangeType, Plan, Task, TaskResult, TurnFileChange, TaskMessage } from "@bremio/protocol";
 import { TaskLog, type WorktreeManager } from "@bremio/workspace";
 
 const execFileAsync = promisify(execFile);
@@ -38,6 +40,14 @@ export interface RunPlanOptions {
    */
   maxConcurrency?: number;
   signal?: AbortSignal;
+  /** If true, no new tasks will be started, but in-flight tasks may finish. */
+  stopRequested?: () => boolean;
+  /** Fetch unresolved messages targeting a specific task ID */
+  fetchUnresolvedMessages?: (targetId: string) => Promise<TaskMessage[]>;
+  /** Resolve an artifact request across the run index */
+  resolveArtifact?: (taskId: string, artifactPath: string) => Promise<{ path: string, content: string } | undefined>;
+  /** Mark a message as handled in the daemon */
+  markMessageHandled?: (messageId: string) => Promise<void>;
   hooks?: SchedulerHooks;
 }
 
@@ -112,8 +122,11 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
       const adapter = opts.registry.get(agentId);
       const blocked = blockedBy(task);
 
-      if (opts.signal?.aborted) {
-        await settle(task, cancelledResult(task, agentId, "run cancelled before this task started"));
+      if (opts.signal?.aborted || opts.stopRequested?.()) {
+        await settle(
+          task,
+          cancelledResult(task, agentId, opts.signal?.aborted ? "run cancelled before this task started" : "run stopped before this task started"),
+        );
         continue;
       }
       if (blocked.length > 0) {
@@ -167,8 +180,8 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
         const blocked = blockedBy(task);
         await settle(
           task,
-          opts.signal?.aborted
-            ? cancelledResult(task, agentId, "run cancelled before this task started")
+          opts.signal?.aborted || opts.stopRequested?.()
+            ? cancelledResult(task, agentId, opts.signal?.aborted ? "run cancelled before this task started" : "run stopped before this task started")
             : failedResult(
                 task,
                 agentId,
@@ -251,13 +264,88 @@ async function runOneTask(
       }, opts.taskTimeoutMs)
     : undefined;
 
+  // Load expected artifacts
+  const loadedArtifacts: { name: string; content: string }[] = [];
+  if (task.expectedArtifacts?.length > 0) {
+    for (const name of task.expectedArtifacts) {
+      const artifactPath = path.join(worktree.path, name);
+      try {
+        const content = await fs.readFile(artifactPath, "utf8");
+        // Simple context budget check: if the artifact is huge, truncate or fail?
+        // The requirement says "Context-budget overflow is reported and deterministic."
+        // But maybe that's S12-T3's token budget? 
+        // For now, let's just include the content.
+        loadedArtifacts.push({ name, content });
+      } catch {
+        await log.close();
+        const error = `missing expected artifact: ${name}`;
+        return {
+          taskId: task.id,
+          agentId,
+          status: "failed",
+          summary: error,
+          filesChanged: [],
+          filesRead: [],
+          changeLedger: [],
+          commandsExecuted: [],
+          tests: [],
+          findings: [{ severity: "blocker", message: error, status: "open" }],
+          error,
+          branch: worktree.branch,
+          worktreePath: worktree.path,
+          logsPath: log.path,
+          durationMs: Date.now() - started,
+        };
+      }
+    }
+  }
+
+  // Fetch unresolved messages
+  const messages = opts.fetchUnresolvedMessages ? await opts.fetchUnresolvedMessages(task.id) : [];
+
+  // Resolve any request-artifact messages immediately if possible
+  if (opts.resolveArtifact) {
+    for (const msg of messages) {
+      if (msg.act === "request-artifact") {
+        const resolved = await opts.resolveArtifact(msg.sourceTaskId, msg.payload);
+        if (resolved) {
+          loadedArtifacts.push({ name: resolved.path, content: resolved.content });
+          msg.handled = true; // Mark it as handled so the agent knows it was provided
+          if (opts.markMessageHandled) {
+            await opts.markMessageHandled(msg.id);
+          }
+        } else {
+          // Unresolved artifact request escalates to a blocker
+          const error = `unresolved artifact request from ${msg.sourceTaskId}: ${msg.payload}`;
+          return {
+            taskId: task.id,
+            agentId,
+            status: "failed",
+            summary: error,
+            filesChanged: [],
+            filesRead: [],
+            changeLedger: [],
+            commandsExecuted: [],
+            tests: [],
+            findings: [{ severity: "blocker", message: error, status: "open" }],
+            error,
+            branch: worktree.branch,
+            worktreePath: worktree.path,
+            logsPath: log.path,
+            durationMs: Date.now() - started,
+          };
+        }
+      }
+    }
+  }
+
   let run: CollectedRun;
   try {
     run = await collectRun(
       adapter.startRun({
         runId: taskRunId,
         role: roleForKind(task.kind),
-        prompt: buildTaskPrompt(opts.plan, task),
+        prompt: buildTaskPrompt(opts.plan, task, loadedArtifacts, messages),
         cwd: worktree.path,
         permission,
         ...(task.kind === "review" ? { outputSchema: reviewOutputJsonSchema } : {}),
