@@ -1031,7 +1031,7 @@ describe("session_config (S1-T1/T2)", () => {
     const { user_version: freshVer } = fresh["db"]
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
-    expect(freshVer).toBe(15);
+    expect(freshVer).toBe(16);
 
     // Fresh store has session_compacts table and lineage columns on sessions
     const freshCols = fresh["db"].prepare("PRAGMA table_info(session_compacts)").all() as Array<{ name: string }>;
@@ -1470,6 +1470,71 @@ describe("ProviderSessionBinding (S1-T4)", () => {
       expect(() => s.forkSession(run0.sessionId!, -1)).toThrow(/invalid turn index/);
       expect(() => s.forkSession(run0.sessionId!, 5)).toThrow(/invalid turn index/);
       expect(() => s.forkSession("unknown-session-id", 0)).toThrow(/parent session not found/);
+    });
+  });
+
+  describe("run_blackboard (S12-T5)", () => {
+    it("adds and retrieves blackboard entries for a run", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run = s.createRun({
+        id: "bb-r0",
+        mode: "single",
+        repositoryPath: "/tmp/repo",
+        prompt: "Run 0",
+      });
+
+      const entry = {
+        id: "bb-e1",
+        runId: run.id,
+        kind: "decision" as const,
+        content: "We decided to test this.",
+        author: "orchestrator",
+        metadata: { rationale: "Because tests are good" },
+        createdAt: new Date().toISOString(),
+      };
+
+      s.addBlackboardEntry(entry);
+
+      const entries = s.queryBlackboard(run.id);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toEqual(entry);
+    });
+
+    it("copies blackboard entries into new runs during forkSession", async () => {
+      const s = await store();
+      stores.push(s);
+
+      const run = s.createRun({
+        id: "bb-fork-r0",
+        mode: "single",
+        repositoryPath: "/tmp/repo",
+        prompt: "Run 0",
+      });
+
+      const entry = {
+        id: "bb-fork-e1",
+        runId: run.id,
+        kind: "fact" as const,
+        content: "Some fact",
+        author: "orchestrator",
+        metadata: {},
+        createdAt: new Date().toISOString(),
+      };
+      s.addBlackboardEntry(entry);
+
+      const forkedSession = s.forkSession(run.sessionId!, 0);
+      const forkedRuns = s.sessionDetail(forkedSession.id)!.turns;
+      expect(forkedRuns).toHaveLength(1);
+      
+      const forkedRunId = forkedRuns[0]!.runId;
+      const forkedEntries = s.queryBlackboard(forkedRunId);
+      
+      expect(forkedEntries).toHaveLength(1);
+      expect(forkedEntries[0]!.id).toBe(entry.id);
+      expect(forkedEntries[0]!.content).toBe(entry.content);
+      expect(forkedEntries[0]!.runId).toBe(forkedRunId); // Should be mapped to the new run ID!
     });
   });
 });

@@ -37,6 +37,7 @@ function task(id: string, over: Partial<Task> = {}): Task {
     preferredAgents: [],
     risk: "low",
     dependencies: [],
+    expectedArtifacts: [],
     acceptanceCriteria: [],
     ...over,
   };

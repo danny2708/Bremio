@@ -1904,6 +1904,8 @@ export class RunStore {
       return results.slice(0, filter.limit);
     }
     return results;
+  }
+
   // --- Task-scoped Messaging ---
 
   insertMessage(message: any): void {

@@ -50,6 +50,7 @@ describe("buildTaskPrompt review output matches parseReviewOutput contract", () 
         requiredCapabilities: ["repository.read", "review"],
         preferredAgents: [],
         dependencies: [],
+        expectedArtifacts: [],
         acceptanceCriteria: ["all changes are reviewed"],
       },
     ],

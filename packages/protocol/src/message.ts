@@ -6,7 +6,8 @@ export const TaskMessageActionSchema = z.enum([
   "request-artifact",
   "inform",
   "blocker",
-  "done"
+  "done",
+  "propose-microtask"
 ]);
 export type TaskMessageAction = z.infer<typeof TaskMessageActionSchema>;
 

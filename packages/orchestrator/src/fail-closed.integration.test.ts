@@ -24,6 +24,7 @@ function task(kind: Task["kind"], overrides: Partial<Task> = {}): Task {
     kind,
     risk: "low",
     dependencies: [],
+    expectedArtifacts: [],
     preferredAgents: [],
     requiredCapabilities: [],
     acceptanceCriteria: [],

@@ -13,6 +13,7 @@ import {
 import type { ReasoningLevel, AgentEvent } from "@bremio/protocol";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import {
   classifyAgentError,
   processSupervisor,
@@ -1325,7 +1326,7 @@ export class RunRegistry {
               const artifacts = this.store.listArtifacts(runId);
               const found = artifacts.find(a => a.path === artifactPath);
               if (found) {
-                const content = await fs.readFile(found.absolutePath, "utf8");
+                const content = await fs.readFile(path.join(input.repoPath, found.path), "utf8");
                 return { path: found.path, content };
               }
               return undefined;

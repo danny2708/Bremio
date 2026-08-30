@@ -63,6 +63,8 @@ export const TaskSchema = z.object({
   risk: RiskSchema,
   /** Ids of tasks that must finish before this one. */
   dependencies: z.array(TaskIdSchema).default([]),
+  /** Artifacts that this task needs to consume from its dependencies. */
+  expectedArtifacts: z.array(z.string().min(1)).default([]),
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
   /**
    * Optional richer context for the worker's prompt. Not required by the
@@ -71,3 +73,16 @@ export const TaskSchema = z.object({
   description: z.string().optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;
+
+export const MicrotaskProposalSchema = z.object({
+  id: TaskIdSchema,
+  title: z.string().min(1),
+  description: z.string().optional(),
+  kind: TaskKindSchema.optional().default("implementation"),
+  requiredCapabilities: z.array(RequiredCapabilitySchema).default([]),
+  dependencies: z.array(TaskIdSchema).default([]),
+  expectedArtifacts: z.array(z.string().min(1)).default([]),
+  acceptanceCriteria: z.array(z.string().min(1)).default([]),
+});
+export type MicrotaskProposal = z.infer<typeof MicrotaskProposalSchema>;
+

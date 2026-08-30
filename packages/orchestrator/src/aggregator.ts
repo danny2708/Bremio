@@ -121,6 +121,7 @@ function missingResult(taskId: string, agentId: string): TaskResult {
     commandsExecuted: [],
     tests: [],
     findings: [],
+      messages: [],
     error: "no result was produced for this task",
   };
 }

@@ -38,6 +38,8 @@ export {
   defaultDatabasePath,
   isTerminal,
   TERMINAL_STATUSES,
+  type BlackboardEntry,
+  type BlackboardEntryKind,
   type PersistedRun,
   type PersistedRunEvent,
   type PersistedArtifact,

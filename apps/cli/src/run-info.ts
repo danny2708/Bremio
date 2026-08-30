@@ -19,7 +19,7 @@ export async function runInfoCommandFromCli(positionals: string[], repoPath: str
     return 2;
   }
 
-  const client = new DaemonClient(Number(process.env.BREMIO_DAEMON_PORT) || 9229);
+  const client = new DaemonClient();
 
   try {
     if (subcommand === "context") {
@@ -52,6 +52,7 @@ export async function runInfoCommandFromCli(positionals: string[], repoPath: str
         console.log("");
       }
       return 0;
+    }
     if (subcommand === "threads") {
       const { messages } = await client.getRunMessages(runId);
       if (!messages || messages.length === 0) {

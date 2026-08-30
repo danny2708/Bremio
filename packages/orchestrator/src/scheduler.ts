@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentAdapter } from "@bremio/adapter-sdk";
-import type { AgentEvent, Attribution, ChangeType, Plan, Task, TaskResult, TurnFileChange, TaskMessage } from "@bremio/protocol";
+import type { AgentEvent, Attribution, ChangeType, Plan, Task, TaskResult, TurnFileChange, TaskMessage, MicrotaskProposal } from "@bremio/protocol";
 import { TaskLog, type WorktreeManager } from "@bremio/workspace";
 
 const execFileAsync = promisify(execFile);
@@ -42,13 +42,85 @@ export interface RunPlanOptions {
   signal?: AbortSignal;
   /** If true, no new tasks will be started, but in-flight tasks may finish. */
   stopRequested?: () => boolean;
+  hooks?: SchedulerHooks;
+  /** If true, allows tasks to propose new microtasks dynamically. Default false. */
+  enableDynamicExpansion?: boolean;
+  /** Max tasks that can be added dynamically to this run. Default 10. */
+  dynamicReserveCount?: number;
+  /** Max depth of dynamic task chains. Default 3. */
+  maxDynamicDepth?: number;
+  /** Max dynamic tasks a single task can propose. Default 3. */
+  maxDynamicChildren?: number;
   /** Fetch unresolved messages targeting a specific task ID */
   fetchUnresolvedMessages?: (targetId: string) => Promise<TaskMessage[]>;
   /** Resolve an artifact request across the run index */
   resolveArtifact?: (taskId: string, artifactPath: string) => Promise<{ path: string, content: string } | undefined>;
   /** Mark a message as handled in the daemon */
   markMessageHandled?: (messageId: string) => Promise<void>;
-  hooks?: SchedulerHooks;
+}
+
+export interface ValidationContext {
+  tasks: Task[];
+  parentMap: Map<string, string>;
+  isConstrained: boolean;
+  reserveCount: number;
+  maxDepth: number;
+  maxChildren: number;
+}
+
+export function validateMicrotaskProposal(
+  proposal: MicrotaskProposal,
+  sourceTaskId: string,
+  context: ValidationContext
+): { valid: true } | { valid: false; reason: string } {
+  if (context.isConstrained) {
+    return { valid: false, reason: "run is constrained; no new tasks allowed" };
+  }
+  if (context.reserveCount <= 0) {
+    return { valid: false, reason: "dynamic task reserve depleted" };
+  }
+  if (context.tasks.some(t => t.id === proposal.id)) {
+    return { valid: false, reason: `duplicate task id: ${proposal.id}` };
+  }
+
+  // Check children limit
+  let children = 0;
+  for (const [_, parent] of context.parentMap) {
+    if (parent === sourceTaskId) children++;
+  }
+  if (children >= context.maxChildren) {
+    return { valid: false, reason: `task ${sourceTaskId} exceeded max children (${context.maxChildren})` };
+  }
+
+  // Check depth limit
+  let depth = 1;
+  let curr = sourceTaskId;
+  while (context.parentMap.has(curr)) {
+    depth++;
+    curr = context.parentMap.get(curr)!;
+  }
+  if (depth > context.maxDepth) {
+    return { valid: false, reason: `task chain exceeded max depth (${context.maxDepth})` };
+  }
+
+  // Cycle check for dependencies
+  const isDescendant = (ancestorId: string, targetId: string): boolean => {
+    let current = targetId;
+    while (context.parentMap.has(current)) {
+      const p = context.parentMap.get(current)!;
+      if (p === ancestorId) return true;
+      current = p;
+    }
+    return false;
+  };
+
+  for (const dep of proposal.dependencies ?? []) {
+    if (isDescendant(proposal.id, dep)) {
+      return { valid: false, reason: `dependency cycle detected via ${dep}` };
+    }
+  }
+
+  return { valid: true };
 }
 
 /**
@@ -95,6 +167,11 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
   /** Resolves with the finished task's id, so the race can evict it directly. */
   const running = new Map<string, Promise<string>>();
 
+  const parentMap = new Map<string, string>();
+  let reserveCount = opts.dynamicReserveCount ?? 10;
+  const maxDepth = opts.maxDynamicDepth ?? 3;
+  const maxChildren = opts.maxDynamicChildren ?? 3;
+
   /**
    * A dependency is settled once it has a result, or once it is known never to
    * produce one (an id outside this plan). Unsettled dependencies keep a task
@@ -110,6 +187,64 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
     results.set(task.id, result);
     pending.delete(task.id);
     await recordLedger(task, result, opts);
+
+    if (opts.enableDynamicExpansion && result.status === "completed") {
+      const proposals = result.messages.filter((m) => m.act === "propose-microtask" && !m.handled);
+      for (const msg of proposals) {
+        try {
+          const proposal = JSON.parse(msg.payload) as MicrotaskProposal;
+          const validation = validateMicrotaskProposal(proposal, task.id, {
+            tasks: ordered,
+            parentMap,
+            isConstrained: opts.stopRequested?.() ?? false,
+            reserveCount,
+            maxDepth,
+            maxChildren
+          });
+
+          if (validation.valid) {
+            msg.handled = true;
+            const newTask: Task = {
+              id: proposal.id,
+              title: proposal.title,
+              kind: proposal.kind ?? "implementation",
+              requiredCapabilities: proposal.requiredCapabilities ?? [],
+              preferredAgents: [result.agentId], // Inherit agent from parent by default
+              risk: "low",
+              dependencies: proposal.dependencies ?? [],
+              expectedArtifacts: proposal.expectedArtifacts ?? [],
+              acceptanceCriteria: proposal.acceptanceCriteria ?? [],
+              description: proposal.description
+            };
+            ordered.push(newTask);
+            planTaskIds.add(newTask.id);
+            pending.set(newTask.id, newTask);
+            parentMap.set(newTask.id, task.id);
+            reserveCount--;
+            
+            result.findings.push({
+              severity: "info",
+              message: `Accepted dynamic microtask proposal: ${newTask.id}`,
+              status: "open"
+            });
+          } else {
+            msg.handled = true;
+            result.findings.push({
+              severity: "warning",
+              message: `Rejected microtask proposal ${proposal.id}: ${validation.reason}`,
+              status: "open"
+            });
+          }
+        } catch (e) {
+          msg.handled = true;
+          result.findings.push({
+            severity: "warning",
+            message: `Failed to parse microtask proposal: ${e}`,
+            status: "open"
+          });
+        }
+      }
+    }
   };
 
   while (pending.size > 0 || running.size > 0) {
@@ -290,6 +425,7 @@ async function runOneTask(
           commandsExecuted: [],
           tests: [],
           findings: [{ severity: "blocker", message: error, status: "open" }],
+      messages: [],
           error,
           branch: worktree.branch,
           worktreePath: worktree.path,
@@ -328,6 +464,7 @@ async function runOneTask(
             commandsExecuted: [],
             tests: [],
             findings: [{ severity: "blocker", message: error, status: "open" }],
+            messages: [],
             error,
             branch: worktree.branch,
             worktreePath: worktree.path,
@@ -442,6 +579,7 @@ async function runOneTask(
     commandsExecuted: run.commands,
     tests,
     findings,
+    messages: [],
     ...(collected.commitHash ? { commitHash: collected.commitHash } : {}),
     ...(run.outcome.sessionId ? { sessionId: run.outcome.sessionId } : {}),
     branch: worktree.branch,
@@ -469,6 +607,7 @@ function cancelledResult(task: Task, agentId: string, error: string): TaskResult
     commandsExecuted: [],
     tests: [],
     findings: [],
+      messages: [],
     error,
   };
 }
@@ -485,6 +624,7 @@ function failedResult(task: Task, agentId: string, error: string): TaskResult {
     commandsExecuted: [],
     tests: [],
     findings: [],
+      messages: [],
     error,
   };
 }

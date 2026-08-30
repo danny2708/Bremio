@@ -43,9 +43,10 @@ import { mergeCommand } from "./merge";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
 import { collectComparison, printComparison, type ComparisonSide } from "./compare";
 import { capacityCommand } from "./quota";
-import { compareCommandFromCli } from "./compare";
+
 import { mcpCommandFromCli } from "./mcp";
 import { sessionCommandFromCli } from "./session";
+import { approvalCommandFromCli } from "./approval";
 import { statsCommand } from "./stats";
 import { memoryCommandFromCli } from "./memory";
 import { runInfoCommandFromCli } from "./run-info";
@@ -239,6 +240,8 @@ async function main(): Promise<void> {
     return;
   }
 
+  const repoPath = values.repo ? path.resolve(values.repo) : process.cwd();
+
   switch (command) {
     case "tui":
       if (!canUseTui()) {
@@ -255,7 +258,8 @@ async function main(): Promise<void> {
       process.exitCode = await runInfoCommandFromCli(positionals, repoPath);
       return;
     case "compare":
-      process.exitCode = await compareCommandFromCli(values, positionals);
+      console.error(c.red("compare command is not yet implemented."));
+      process.exitCode = 1;
       return;
     case "memory":
       process.exitCode = await memoryCommandFromCli(values, positionals);
@@ -271,7 +275,7 @@ async function main(): Promise<void> {
       process.exitCode = await applyCommandFromCli(values, positionals, command);
       return;
     case "stats":
-      process.exitCode = await statsCommand(values);
+      process.exitCode = await statsCommand({ ...values, repoPath, since: values.since ? new Date(values.since) : undefined });
       return;
     case "capacity":
     case "quota":

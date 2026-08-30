@@ -14,14 +14,14 @@ Options for list:
   --scope <scope>   Filter by scope (project, user)
 `;
 
-export async function memoryCommandFromCli(values: Values, positionals: string[]): Promise<number> {
+export async function memoryCommandFromCli(values: Record<string, any>, positionals: string[]): Promise<number> {
   const subcommand = positionals[1];
   if (!subcommand) {
     console.log(USAGE);
     return 2;
   }
 
-  const client = new DaemonClient(Number(process.env.BREMIO_DAEMON_PORT) || 9229);
+  const client = new DaemonClient();
 
   try {
     if (subcommand === "list") {
@@ -40,8 +40,8 @@ export async function memoryCommandFromCli(values: Values, positionals: string[]
         console.log(`  Scope:      ${entry.scope}`);
         console.log(`  State:      ${entry.review?.state || "pending"}`);
         console.log(`  Tags:       ${entry.tags.join(", ") || "none"}`);
-        if (entry.provenance) {
-          console.log(`  Provenance: ${entry.provenance.sourceTask} (${entry.provenance.sourceRun})`);
+        if ((entry as any).provenance) {
+          console.log(`  Provenance: ${(entry as any).provenance.sourceTask} (${(entry as any).provenance.sourceRun})`);
         }
         console.log(`  Created:    ${new Date(entry.createdAt).toLocaleString()}`);
         const contentStr = entry.content;

@@ -35,7 +35,7 @@ function isDeepEqual(a: any, b: any): boolean {
 
 export class RuntimeGuardEvaluator {
   private config: GuardConfig;
-  private level: RuntimeGuardLevel = "healthy";
+  public level: RuntimeGuardLevel = "healthy";
   
   private consecutiveErrors = 0;
   private consecutiveSameTool = 0;

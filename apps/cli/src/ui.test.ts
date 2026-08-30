@@ -24,7 +24,7 @@ describe("S4-T3: reasons for every automatic choice", () => {
       plan: { summary: "test", tasks: [], leadAgentId: "claude" },
       tasks: [
         {
-          task: { id: "TASK-001", title: "fix", kind: "implementation" as const, risk: "low" as const, dependencies: [], preferredAgents: [] },
+          task: { id: "TASK-001", title: "fix", kind: "implementation" as const, risk: "low" as const, dependencies: [], expectedArtifacts: [], preferredAgents: [] },
           agentId: "codex",
           result: {
             taskId: "TASK-001",
@@ -35,6 +35,7 @@ describe("S4-T3: reasons for every automatic choice", () => {
             commandsExecuted: [],
             tests: [],
             findings: [],
+      messages: [],
           },
           reason,
         },
@@ -70,7 +71,7 @@ describe("S4-T3: reasons for every automatic choice", () => {
       plan: { summary: "test", tasks: [], leadAgentId: "claude" },
       tasks: [
         {
-          task: { id: "TASK-001", title: "fix", kind: "implementation", risk: "low", dependencies: [], preferredAgents: [], requiredCapabilities: [], acceptanceCriteria: [] },
+          task: { id: "TASK-001", title: "fix", kind: "implementation", risk: "low", dependencies: [], expectedArtifacts: [], preferredAgents: [], requiredCapabilities: [], acceptanceCriteria: [] },
           agentId: "codex",
           result: {
             taskId: "TASK-001",
@@ -83,6 +84,7 @@ describe("S4-T3: reasons for every automatic choice", () => {
             commandsExecuted: [],
             tests: [],
             findings: [],
+      messages: [],
           },
           reason: "exhausted at 2% remaining, fresh; next-claude is held for lead reserve",
         },

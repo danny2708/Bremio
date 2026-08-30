@@ -34,6 +34,7 @@ export interface RunSingleAgentOptions {
   timeoutMs?: number;
   comparisonId?: string;
   signal?: AbortSignal;
+  stopRequested?: () => boolean;
   hooks?: SingleRunHooks;
   sessionId?: string;
   turnIndex?: number;
