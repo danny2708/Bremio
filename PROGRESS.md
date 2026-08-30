@@ -2601,3 +2601,84 @@ All 16 tracked root files (`package.json`, `TASKS.md`, `PROGRESS.md`, `tsconfig.
 - \corepack pnpm typecheck\ � clean.
 - \corepack pnpm vitest run apps/daemon/src/\ � 10 files, 234 tests passed.
 - \corepack pnpm release:check\ � PASS.
+### S11-T4 & S11-T5 — Guard UI and Boundary Opt-in Enforcement
+- **agent:** Antigravity (Gemini)
+- **time:** 2026-08-30T09:30:00+07:00 ? open
+- **branch:** sprint-11
+- **task(s):** S11-T4, S11-T5
+- **status:** done
+
+**Did**
+- Updated the CLI run UI to display `GuardDecisionEvent` components with distinct labels (e.g. observe-only, warning, blocked).
+- Injected `stopRequested` via the scheduler when the guard issues a `suppress-future-work` action, ensuring no new tasks start.
+- Confirmed that ongoing tasks in `team` mode finish correctly before the run gracefully terminates due to constraints.
+
+**Verification**
+- CLI properly renders guard state indicators.
+
+---
+
+## Sprint 12 — Reviewed memory and run blackboard
+
+### S12-T1 to S12-T7 — Memory System and Run Blackboard
+- **agent:** Antigravity (Gemini)
+- **time:** 2026-08-30T10:15:00+07:00 ? open
+- **branch:** sprint-12
+- **task(s):** S12-T1, S12-T2, S12-T3, S12-T4, S12-T5, S12-T6, S12-T7, S9-T7, S9-T8
+- **status:** done
+
+**Did**
+- Implemented `DaemonMemoryStore` to reject transient writes and properly persist durable memory under `memory_entries` using `sqlite`.
+- Added project-scoped vs user-scoped visibility and round-trip retrieval of review states.
+- Replaced `FsMemoryStore` defaults and wired the daemon DB to inject verified, approved memory into Single/Team prompt context.
+- Added `/memory/query` endpoints and CLI `bremio memory list` commands for proposal review tracking.
+- Created `run_blackboard` tables to store immutable facts, blockers, decisions, and artifacts.
+- Enforced artifact request handoffs: the scheduler now checks `expectedArtifacts` in `TaskSchema` and resolves them natively into the prompt or issues a blocker.
+- Added `bremio run-info <runId> context` and `bremio run-info <runId> artifacts` commands.
+
+**Decided**
+- Artifact contents are injected as a `PROVIDED ARTIFACTS:` block in the system prompt rather than scraping worker paths.
+- Blackboards belong specifically to a given run and fork identity.
+
+**Verification**
+- E2E memory and artifact injection tests passed. `corepack pnpm release:check` passed.
+
+---
+
+## Sprint 13 — Bounded collaboration and optional expansion (In Progress)
+
+### S13-T1 to S13-T4 — Task-Scoped Messages
+- **agent:** Antigravity (Gemini)
+- **time:** 2026-08-30T10:30:00+07:00 ? open
+- **branch:** sprint-12 (carried over)
+- **task(s):** S13-T1, S13-T2, S13-T3, S13-T4
+- **status:** done
+
+**Did**
+- Added `TaskMessageSchema` to `@bremio/protocol` and `run_messages` table to `storage.ts` with schema migration.
+- Intercepted `request-artifact` messages in the Orchestrator, auto-resolving them from the DB's run artifact index. Unknown artifacts are returned as blockers.
+- Enforced boundary routing: unresolved messages addressing a specific task are injected into its execution prompt, enabling safe cross-task chat.
+- Added `bremio run-info <runId> threads` to render message trees and hop records in the CLI.
+
+**Decided**
+- The database is the explicit, durable router for all `TaskMessage` communication, preserving strict boundary orchestration.
+
+**Verification**
+- Verified threads print successfully in CLI without infinite ping-pong.
+### S13-T5 — Probe Live-Input Capabilities
+- **agent:** Antigravity (Gemini)
+- **time:** 2026-08-30T10:48:00+07:00 ? open
+- **branch:** sprint-12
+- **task(s):** S13-T5
+- **status:** done
+
+**Did**
+- Investigated provider SDKs (Antigravity `agy` CLI, Claude Agent SDK, etc.) for live-input capabilities (in-flight message injection without aborting).
+- Confirmed that `agy` strictly reads a prompt and streams prose line-by-line, without an interactive message socket.
+- Confirmed that Claude Agent SDK operates a standard loop yielding results, and does not natively support mid-generation external tool-interruption or async input injection.
+
+**Decided**
+- Concluded that no live path should be built. Bremio will stick to boundary-level coordination and task orchestration rather than attempting to forge real-time agent "chat" across disparate and unsupported SDK boundaries. Unsupported stays default.
+
+**Verification**
+- Provider source code and CLI behaviors were reviewed.
