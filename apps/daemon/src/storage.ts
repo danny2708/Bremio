@@ -1945,6 +1945,24 @@ export class RunStore {
     }));
   }
 
+  getRunMessages(runId: string): any[] {
+    const rows = this.db
+      .prepare("SELECT * FROM run_messages WHERE run_id = ? ORDER BY created_at ASC")
+      .all(runId) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      runId: String(row.run_id),
+      sourceTaskId: String(row.source_task_id),
+      targetId: String(row.target_id),
+      act: String(row.act),
+      payload: String(row.payload),
+      handled: Boolean(row.handled),
+      hopCount: Number(row.hop_count),
+      replyToId: row.reply_to_id ? String(row.reply_to_id) : undefined,
+      createdAt: String(row.created_at),
+    }));
+  }
+
   markMessageHandled(messageId: string): void {
     this.db.prepare("UPDATE run_messages SET handled = 1 WHERE id = ?").run(messageId);
   }

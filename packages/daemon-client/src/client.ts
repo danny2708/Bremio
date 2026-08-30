@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { PROTOCOL_VERSION, checkProtocolCompatibility } from "@bremio/protocol";
 import type { MemoryEntry, MemoryQuery } from "@bremio/memory";
+import type { TaskMessage } from "@bremio/protocol";
 
 export interface DaemonEndpoint {
   port: number;
@@ -266,6 +267,10 @@ export class DaemonClient {
 
   async getBlackboardEntries(runId: string): Promise<{ entries: BlackboardEntry[] }> {
     return this.get<{ entries: BlackboardEntry[] }>(`/blackboard/${encodeURIComponent(runId)}`);
+  }
+
+  async getRunMessages(runId: string): Promise<{ messages: TaskMessage[] }> {
+    return this.get<{ messages: TaskMessage[] }>(`/messages/${encodeURIComponent(runId)}`);
   }
 
   async queryMemory(filter: MemoryQuery & { repository?: string }): Promise<{ memory: MemoryEntry[] }> {

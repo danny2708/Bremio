@@ -90,7 +90,7 @@ ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --worker <agent>        Available workers for Team mode (can be passed multiple times).
 
 ${c.bold("run-info")} show run artifacts and blackboard context
-    Usage: bremio run-info <runId> <context|artifacts>
+    Usage: bremio run-info <runId> <context|artifacts|threads>
     --repo <path>           Target git repository. Required.
   --model <id>            Model for the Single agent or Team lead (optional).
   --reasoning <level>     Single-agent or Team-lead reasoning level.

@@ -83,6 +83,25 @@ export interface DaemonHandle {
   close(): Promise<void>;
 }
 
+async function handleMessages(
+  req: IncomingMessage,
+  res: ServerResponse,
+  route: string,
+  method: string,
+  registry: RunRegistry,
+): Promise<void> {
+  const store = registry.store;
+  const match = route.match(/^\/messages\/([^/]+)$/);
+  if (!match) return sendJson(res, 404, { error: "not found" });
+  const runId = match[1]!;
+
+  if (method === "GET") {
+    const messages = store.getRunMessages(runId);
+    return sendJson(res, 200, { messages });
+  }
+  return sendJson(res, 405, { error: "Method Not Allowed" });
+}
+
 export async function startDaemonServer(options: DaemonServerOptions): Promise<DaemonHandle> {
   const registry = options.registry;
   const server = createServer((req, res) => {
@@ -112,6 +131,39 @@ export async function startDaemonServer(options: DaemonServerOptions): Promise<D
         server.close(() => resolve());
       }),
   };
+}
+
+async function handleBlackboard(
+  req: IncomingMessage,
+  res: ServerResponse,
+  route: string,
+  method: string,
+  registry: RunRegistry,
+): Promise<void> {
+  const store = registry.store;
+  const match = route.match(/^\/blackboard\/([^/]+)$/);
+  if (!match) return sendJson(res, 404, { error: "not found" });
+  const runId = match[1]!;
+
+  if (method === "GET") {
+    const entries = store.queryBlackboard(runId);
+    return sendJson(res, 200, { entries });
+  }
+
+  if (method === "POST") {
+    try {
+      const body = (await readJsonBody(req)) as any;
+      store.addBlackboardEntry({
+        ...body,
+        runId,
+      });
+      return sendJson(res, 201, { ok: true });
+    } catch (err) {
+      return sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
+  return sendJson(res, 405, { error: "method not allowed" });
 }
 
 async function handleMemory(
@@ -208,6 +260,14 @@ async function handle(
 
   if (route.startsWith("/memory")) {
     return handleMemory(req, res, route, method, registry);
+  }
+
+  if (route.startsWith("/blackboard")) {
+    return handleBlackboard(req, res, route, method, registry);
+  }
+
+  if (route.startsWith("/messages")) {
+    return handleMessages(req, res, route, method, registry);
   }
 
   if (method === "GET" && route === "/health") {
