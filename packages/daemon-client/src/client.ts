@@ -13,6 +13,18 @@ export interface DaemonEndpoint {
   protocolVersion?: number;
 }
 
+export type BlackboardEntryKind = "fact" | "decision" | "blocker" | "question" | "artifact";
+
+export interface BlackboardEntry {
+  id: string;
+  runId: string;
+  kind: BlackboardEntryKind;
+  content: string;
+  author: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface DaemonMeta {
   daemonVersion: string;
   protocolVersion: number;
@@ -248,6 +260,14 @@ export class DaemonClient {
     return this.post<{ ok: boolean }>(`/memory/${encodeURIComponent(id)}/review`, decision);
   }
 
+  async addBlackboardEntry(runId: string, entry: Omit<BlackboardEntry, "runId">): Promise<{ ok: boolean }> {
+    return this.post<{ ok: boolean }>(`/blackboard/${encodeURIComponent(runId)}`, entry);
+  }
+
+  async getBlackboardEntries(runId: string): Promise<{ entries: BlackboardEntry[] }> {
+    return this.get<{ entries: BlackboardEntry[] }>(`/blackboard/${encodeURIComponent(runId)}`);
+  }
+
   async queryMemory(filter: MemoryQuery & { repository?: string }): Promise<{ memory: MemoryEntry[] }> {
     const params = new URLSearchParams();
     if (filter.scopes) filter.scopes.forEach(s => params.append("scope", s));
@@ -289,10 +309,12 @@ export class DaemonClient {
   async runDetail(id: string, repoPath: string): Promise<{
     run?: { id: string; status: string };
     events?: RunEvent[];
+    artifacts?: { runId: string; kind: string; path: string; taskId?: string; createdAt: string }[];
   }> {
     return this.get<{
       run?: { id: string; status: string };
       events?: RunEvent[];
+      artifacts?: { runId: string; kind: string; path: string; taskId?: string; createdAt: string }[];
     }>(`/runs/${encodeURIComponent(id)}?repo=${encodeURIComponent(repoPath)}`);
   }
 

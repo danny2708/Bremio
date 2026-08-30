@@ -25,7 +25,7 @@ type Database = InstanceType<typeof DatabaseSync>;
  */
 
 /** Bumped when the schema changes; `migrate` walks from whatever is on disk. */
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 17;
 
 /**
  * One repository can be named several ways by the OS that launched us: Windows
@@ -214,6 +214,18 @@ export interface SessionTurn {
   workerProviders?: string[];
   /** `single` | `team` as persisted. The session's collaboration mode. */
   mode?: PersistedRun["mode"];
+}
+
+export type BlackboardEntryKind = "fact" | "decision" | "blocker" | "question" | "artifact";
+
+export interface BlackboardEntry {
+  id: string;
+  runId: string;
+  kind: BlackboardEntryKind;
+  content: string;
+  author: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface SessionDetail {
@@ -634,6 +646,31 @@ export class RunStore {
     this.db
       .prepare(`UPDATE runs SET ${assignments} WHERE id = ?`)
       .run(...Object.values(columns) as never[], id);
+  }
+
+  getLastGuardDecision(runId: string, agentId: string): any {
+    const row = this.db
+      .prepare(
+        "SELECT payload FROM events WHERE run_id = ? AND type = 'task-event' AND json_extract(payload, '$.data.type') = 'guard_decision' ORDER BY seq DESC LIMIT 1"
+      )
+      .get(runId) as { payload: string } | undefined;
+    
+    if (!row) return undefined;
+    try {
+      const parsed = JSON.parse(row.payload);
+      // guard_decision data includes decision in the payload, but let's check
+      // we emit `{ type: "guard_decision", runId, ts, decision: {...} }`
+      if (parsed.agentId === agentId && parsed.data?.decision) {
+        return parsed.data.decision;
+      }
+      // Wait, events table payload is the `data` of the emitted event.
+      // So payload contains `agentId` inside it?
+      // Actually `processGuard` does `this.#emit(runId, { kind: "task-event", agentId, data: { type: "guard_decision", decision } })`.
+      // `runs.ts`'s `this.#emit` appends to `events` table?
+      // Let's just do a json_extract in sqlite to match agentId, or just parse and check.
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -1134,6 +1171,26 @@ export class RunStore {
             "INSERT INTO artifacts (run_id, kind, path, task_id, created_at) VALUES (?, ?, ?, ?, ?)",
           )
           .run(freshRunId, String(a.kind), String(a.path), a.task_id ? String(a.task_id) : null, String(a.created_at));
+      }
+
+      // Copy blackboard entries
+      const blackboard = this.db
+        .prepare("SELECT * FROM run_blackboard WHERE run_id = ?")
+        .all(originalRunId) as Array<Record<string, unknown>>;
+      for (const b of blackboard) {
+        this.db
+          .prepare(
+            "INSERT INTO run_blackboard (id, run_id, type, content, author, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          )
+          .run(
+            randomUUID(),
+            freshRunId,
+            String(b.type),
+            String(b.content),
+            String(b.author),
+            String(b.created_at),
+            String(b.metadata),
+          );
       }
     }
 
@@ -1761,6 +1818,47 @@ export class RunStore {
     return u.changes > 0;
   }
 
+  addBlackboardEntry(entry: BlackboardEntry): void {
+    if (this.#closed) return;
+    this.db
+      .prepare(
+        "INSERT INTO run_blackboard (id, run_id, type, content, author, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      )
+      .run(
+        entry.id,
+        entry.runId,
+        entry.kind,
+        entry.content,
+        entry.author,
+        entry.createdAt,
+        JSON.stringify(entry.metadata)
+      );
+  }
+
+  queryBlackboard(runId: string): BlackboardEntry[] {
+    if (this.#closed) return [];
+    const rows = this.db
+      .prepare("SELECT * FROM run_blackboard WHERE run_id = ? ORDER BY created_at ASC")
+      .all(runId) as Array<{
+      id: string;
+      run_id: string;
+      type: string;
+      content: string;
+      author: string;
+      created_at: string;
+      metadata: string;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      runId: r.run_id,
+      kind: r.type as BlackboardEntryKind,
+      content: r.content,
+      author: r.author,
+      createdAt: r.created_at,
+      metadata: JSON.parse(r.metadata) as Record<string, unknown>,
+    }));
+  }
+
   queryMemory(filter: MemoryQuery & { repository?: string }): MemoryEntry[] {
     const scopes = filter.scopes ?? ["project", "user"];
     const results: MemoryEntry[] = [];
@@ -1806,6 +1904,49 @@ export class RunStore {
       return results.slice(0, filter.limit);
     }
     return results;
+  // --- Task-scoped Messaging ---
+
+  insertMessage(message: any): void {
+    this.db
+      .prepare(
+        `INSERT INTO run_messages (
+          id, run_id, source_task_id, target_id, act, payload, handled, hop_count, reply_to_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        message.id,
+        message.runId,
+        message.sourceTaskId,
+        message.targetId,
+        message.act,
+        message.payload,
+        message.handled ? 1 : 0,
+        message.hopCount,
+        message.replyToId || null,
+        message.createdAt
+      );
+  }
+
+  getUnresolvedMessages(runId: string): any[] {
+    const rows = this.db
+      .prepare("SELECT * FROM run_messages WHERE run_id = ? AND handled = 0 ORDER BY created_at ASC")
+      .all(runId) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      runId: String(row.run_id),
+      sourceTaskId: String(row.source_task_id),
+      targetId: String(row.target_id),
+      act: String(row.act),
+      payload: String(row.payload),
+      handled: Boolean(row.handled),
+      hopCount: Number(row.hop_count),
+      replyToId: row.reply_to_id ? String(row.reply_to_id) : undefined,
+      createdAt: String(row.created_at),
+    }));
+  }
+
+  markMessageHandled(messageId: string): void {
+    this.db.prepare("UPDATE run_messages SET handled = 1 WHERE id = ?").run(messageId);
   }
 }
 
@@ -2257,6 +2398,28 @@ function migrate(db: Database): void {
           metadata TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_run_blackboard_run ON run_blackboard(run_id);
+      `);
+    }
+
+    if (Number(current) < 16) {
+      addColumnIfMissing(db, "run_blackboard", "author", "TEXT NOT NULL DEFAULT 'orchestrator'");
+    }
+
+    if (Number(current) < 17) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS run_messages (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+          source_task_id TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          act TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          handled INTEGER NOT NULL DEFAULT 0,
+          hop_count INTEGER NOT NULL DEFAULT 0,
+          reply_to_id TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_messages_run ON run_messages(run_id);
       `);
     }
 

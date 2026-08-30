@@ -36,12 +36,20 @@ export async function memoryCommandFromCli(values: Values, positionals: string[]
 
       for (const entry of memory) {
         console.log(c.cyan(entry.id));
-        console.log(`  Title:   ${entry.title}`);
-        console.log(`  Scope:   ${entry.scope}`);
-        console.log(`  State:   ${entry.review?.state || "pending"}`);
-        console.log(`  Tags:    ${entry.tags.join(", ") || "none"}`);
-        console.log(`  Created: ${new Date(entry.createdAt).toLocaleString()}`);
-        console.log(`\n${entry.content}\n`);
+        console.log(`  Title:      ${entry.title}`);
+        console.log(`  Scope:      ${entry.scope}`);
+        console.log(`  State:      ${entry.review?.state || "pending"}`);
+        console.log(`  Tags:       ${entry.tags.join(", ") || "none"}`);
+        if (entry.provenance) {
+          console.log(`  Provenance: ${entry.provenance.sourceTask} (${entry.provenance.sourceRun})`);
+        }
+        console.log(`  Created:    ${new Date(entry.createdAt).toLocaleString()}`);
+        const contentStr = entry.content;
+        if (contentStr.length > 500) {
+          console.log(`\n${contentStr.slice(0, 500)}...\n  [Truncated: ${contentStr.length} bytes total]\n`);
+        } else {
+          console.log(`\n${contentStr}\n`);
+        }
       }
       return 0;
     }

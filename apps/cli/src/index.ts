@@ -43,11 +43,12 @@ import { mergeCommand } from "./merge";
 import { collectDiagnostics, exportDiagnostics, redactDeep } from "./diagnostics";
 import { collectComparison, printComparison, type ComparisonSide } from "./compare";
 import { capacityCommand } from "./quota";
-import { approvalCommandFromCli } from "./approval";
+import { compareCommandFromCli } from "./compare";
 import { mcpCommandFromCli } from "./mcp";
 import { sessionCommandFromCli } from "./session";
 import { statsCommand } from "./stats";
 import { memoryCommandFromCli } from "./memory";
+import { runInfoCommandFromCli } from "./run-info";
 import { canUseTui, startTui } from "./tui";
 import { createCLIPluginManager, KNOWN_ADAPTER_IDS } from "./tui/data";
 import { renderEvent } from "@bremio/event-view";
@@ -85,9 +86,12 @@ ${c.bold("Usage")}
 ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --mode <single|team|auto> Explicit execution mode (auto uses calibration evidence). Required for new commands.
   --agent <agent>         Agent for Single mode: claude, codex, antigravity, or opencode.
-  --lead <agent>          Lead for Team mode (capability-gated). Without --mode, implies Team.
-  --worker <agent>        Explicit Team worker (including antigravity and opencode).
-  --repo <path>           Target git repository. Required.
+  --lead <agent>          Lead for Team mode (distributes sub-tasks).
+  --worker <agent>        Available workers for Team mode (can be passed multiple times).
+
+${c.bold("run-info")} show run artifacts and blackboard context
+    Usage: bremio run-info <runId> <context|artifacts>
+    --repo <path>           Target git repository. Required.
   --model <id>            Model for the Single agent or Team lead (optional).
   --reasoning <level>     Single-agent or Team-lead reasoning level.
   --timeout <seconds>     Hard timeout for the Single run or each Team task.
@@ -246,6 +250,9 @@ async function main(): Promise<void> {
       return;
     case "run":
       await runCommand(values, positionals);
+      return;
+    case "run-info":
+      process.exitCode = await runInfoCommandFromCli(positionals, repoPath);
       return;
     case "compare":
       process.exitCode = await compareCommandFromCli(values, positionals);

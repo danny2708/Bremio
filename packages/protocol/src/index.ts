@@ -20,6 +20,11 @@ export {
   type Risk,
 } from "./task";
 
+export * from "./result";
+export * from "./task";
+export * from "./workspace";
+export * from "./message";
+
 export { PlanSchema, type Plan } from "./plan";
 
 export { ExecutionModeSchema, type ExecutionMode } from "./run";
