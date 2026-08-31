@@ -110,9 +110,9 @@ export function renderEvent(event: {
     }
 
     case "plan": {
-      const plan = event as any;
-      const tasks = plan.tasks || [];
-      const summary = plan.message || plan.summary || "Plan created";
+      const planObj = (event as any).plan || event;
+      const tasks = planObj.tasks || [];
+      const summary = planObj.summary || planObj.message || "Plan created";
       return { kind: "plan", summary: `[plan] ${summary} (${tasks.length} tasks)`, severity: "info" };
     }
 

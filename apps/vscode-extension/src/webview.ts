@@ -2219,9 +2219,19 @@ function renderTranscript(session, turns, contextItems, visionNotice, queued, qu
       }
     }
 
-    out += turn.response
-      ? '<div class="bubble response md">' + renderResponseBody(turn.response) + "</div>"
-      : '<div class="bubble muted">(no response recorded)</div>';
+    let isRawPlan = false;
+    if (turn.response && turn.plan && turn.plan.tasks && turn.plan.tasks.length > 0) {
+      const trimmed = turn.response.trim();
+      if (trimmed.startsWith("{") && trimmed.endsWith("}") && trimmed.includes('"tasks"')) {
+        isRawPlan = true;
+      }
+    }
+
+    if (turn.response && !isRawPlan) {
+      out += '<div class="bubble response md">' + renderResponseBody(turn.response) + "</div>";
+    } else if (!turn.response && (!turn.plan || !turn.plan.tasks || turn.plan.tasks.length === 0)) {
+      out += '<div class="bubble muted">(no response recorded)</div>';
+    }
 
     out += '<div class="turn-foot">' + escapeHtml(turn.status) + " · run " + escapeHtml(turn.runId)
       + ' <button class="ghost" style="margin-left:8px;padding:2px 6px;font-size:11px" data-action="fork-turn" data-session="' + escapeHtml(session.id) + '" data-turn="' + turn.turnIndex + '">Fork</button>'
