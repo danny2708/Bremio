@@ -966,7 +966,7 @@ async function startRun(message: Record<string, unknown>): Promise<void> {
       : {}),
   });
 
-  post({ type: "runStarted", id: run.id });
+  post({ type: "runStarted", id: run.id, prompt });
   await follow(run.id, repoPath);
 }
 

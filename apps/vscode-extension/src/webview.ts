@@ -1276,6 +1276,8 @@ pre.log {
           <button class="ghost" id="new-run" style="display:none">New run</button>
         </div>
       </div>
+      <div class="bubble prompt" id="live-prompt" style="margin-bottom: 16px; display: none;"></div>
+      <div id="live-plan" style="margin-bottom: 10px;"></div>
       <pre class="log" id="log"></pre>
       <div id="gate"></div>
     </div>
@@ -1294,6 +1296,7 @@ const $ = (id) => document.getElementById(id);
 let mode = "single";
 let adapters = [];
 let activeRunId = null;
+let liveRunEvents = [];
 
 /** Show a tab without asking the host to reload it. */
 /**
@@ -1410,6 +1413,16 @@ $("new-run").addEventListener("click", () => {
 });
 
 function appendLog(event) {
+  liveRunEvents.push(event);
+
+  if (event.kind === "plan" || event.kind === "task-start" || event.kind === "task-complete") {
+    const planObj = assemblePlanChecklist(liveRunEvents);
+    const planHtml = renderPlanChecklist(planObj);
+    const livePlanEl = $("live-plan");
+    if (livePlanEl) livePlanEl.innerHTML = planHtml;
+    return; // Do not append structural json blobs to the raw log view
+  }
+
   const view = renderLogLine(event);
   const line = document.createElement("div");
   line.className = "log-line " + (view.severity || "info");
@@ -1578,10 +1591,18 @@ window.addEventListener("message", (event) => {
   }
   if (message.type === "runStarted") {
     activeRunId = message.id;
+    liveRunEvents = [];
     $("run-form").style.display = "none";
     $("run-live").style.display = "block";
     $("log").textContent = "";
     $("gate").innerHTML = "";
+    $("live-plan").innerHTML = "";
+    if (message.prompt) {
+      $("live-prompt").textContent = message.prompt;
+      $("live-prompt").style.display = "block";
+    } else {
+      $("live-prompt").style.display = "none";
+    }
     $("live-state").textContent = "running";
     $("live-state").className = "badge ok";
     $("cancel").style.display = "inline-block";
