@@ -30,6 +30,7 @@ results back into one place.
 | 14 | [14-architecture-review-and-plan.md](14-architecture-review-and-plan.md) | Dogfood architecture review, gaps, ADR proposals and milestone map |
 | 15 | [15-architecture-lock.md](15-architecture-lock.md) | Locked mediation, control, session identity and daemon-authority semantics |
 | 16 | [16-munder-difflin-integration-plan.md](16-munder-difflin-integration-plan.md) | Proposed selective integration: runtime guard, reviewed memory, blackboard and bounded collaboration |
+| 17 | [17-parity-assessment-and-roadmap.md](17-parity-assessment-and-roadmap.md) | Completeness scorecard vs. Devin/Lovable, strategic options, phased parity roadmap |
 | 99 | [99-risks-and-open-questions.md](99-risks-and-open-questions.md) | **Read before coding.** ROI, load-bearing risks, items to verify |
 
 ## Status
