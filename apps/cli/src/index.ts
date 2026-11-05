@@ -1281,6 +1281,24 @@ async function doctor(): Promise<void> {
       ),
     );
   }
+  console.log("");
+  console.log(c.bold("tools delivered to agents"));
+  for (const line of toolDeliveryLines()) console.log(`  ${c.dim(line)}`);
+}
+
+/**
+ * What Bremio-side tooling actually reaches a running agent. Sprint 8 built
+ * MCP/hooks/skills/web search behind policy, but no run consumes them yet
+ * (docs/17 §2.1 axis H). Saying so here keeps `doctor` from implying more
+ * than a run does; P3 replaces each line as the wiring lands.
+ */
+function toolDeliveryLines(): string[] {
+  return [
+    "mcp servers:  not delivered — agents use only their own provider-configured MCP",
+    "hooks:        not delivered — lifecycle hooks are not invoked by runs",
+    "skills:       not delivered — skill content is not injected into prompts",
+    "web search:   not delivered — agents use their provider's native search, if any",
+  ];
 }
 
 main().catch((err) => {
