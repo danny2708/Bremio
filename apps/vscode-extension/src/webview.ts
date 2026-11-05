@@ -218,6 +218,10 @@ export function renderEvent(event: {
     evidenceQuality: string;
   };
   ts?: number;
+  taskId?: string;
+  summary?: string;
+  tasks?: unknown[];
+  plan?: { summary?: string; message?: string; tasks?: unknown[] };
 }): { kind: string; summary: string; detail?: string; severity: string } {
   switch (event.type) {
     case "started":
@@ -280,6 +284,18 @@ export function renderEvent(event: {
         severity,
       };
     }
+    case "plan": {
+      const planObj = event.plan ?? event;
+      const tasks = planObj.tasks ?? [];
+      const summary = planObj.summary || planObj.message || "Plan created";
+      return { kind: "plan", summary: "[plan] " + summary + " (" + tasks.length + " tasks)", severity: "info" };
+    }
+    case "task-start":
+      return { kind: "task-start", summary: "[task] ▶ " + (event.message || event.taskId || "started"), severity: "info" };
+    case "task-complete":
+      return { kind: "task-complete", summary: "[task] ✓ " + (event.message || event.taskId || "completed"), severity: "success" };
+    case "task-event":
+      return { kind: "task-event", summary: "[task] · " + (event.message || "event"), severity: "info" };
     default: {
       const label = String(event.type);
       return { kind: label, summary: "[" + label + "]", detail: JSON.stringify(event), severity: "info" };

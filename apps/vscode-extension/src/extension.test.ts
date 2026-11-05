@@ -314,6 +314,14 @@ describe("the panel's event renderer does not drift from the canonical one", () 
     { type: "log", level: "warn", message: "careful" },
     { type: "error", message: "it broke" },
     { type: "completed" },
+    { type: "plan", plan: { summary: "two steps", tasks: [{}, {}] } },
+    { type: "plan", message: "flat plan", tasks: [{}] },
+    { type: "plan" },
+    { type: "task-start", taskId: "TASK-001" },
+    { type: "task-start", message: "starting impl", taskId: "TASK-001" },
+    { type: "task-complete", taskId: "TASK-002" },
+    { type: "task-complete" },
+    { type: "task-event", message: "progress" },
     { type: "some_future_provider_event", text: "unseen" },
   ];
 

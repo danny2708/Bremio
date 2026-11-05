@@ -29,6 +29,11 @@ export function renderEvent(event: {
     evidenceQuality: string;
   };
   ts?: number;
+  /** Plan / task lifecycle events (S13-T7 live checklist). */
+  taskId?: string;
+  summary?: string;
+  tasks?: unknown[];
+  plan?: { summary?: string; message?: string; tasks?: unknown[] };
 }): EventView {
   switch (event.type) {
     case "started":
@@ -110,8 +115,8 @@ export function renderEvent(event: {
     }
 
     case "plan": {
-      const planObj = (event as any).plan || event;
-      const tasks = planObj.tasks || [];
+      const planObj = event.plan ?? event;
+      const tasks = planObj.tasks ?? [];
       const summary = planObj.summary || planObj.message || "Plan created";
       return { kind: "plan", summary: `[plan] ${summary} (${tasks.length} tasks)`, severity: "info" };
     }
@@ -121,7 +126,7 @@ export function renderEvent(event: {
 
     case "task-complete":
       return { kind: "task-complete", summary: `[task] ✓ ${event.message || event.taskId || "completed"}`, severity: "success" };
-      
+
     case "task-event":
       return { kind: "task-event", summary: `[task] · ${event.message || "event"}`, severity: "info" };
 
