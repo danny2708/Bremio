@@ -100,6 +100,8 @@ export interface StartRunRequest {
   sessionId?: string;
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
   controlMode?: string;
+  /** MCP server ids to attach (docs/17 P3-T1). */
+  mcpServers?: string[];
 }
 
 async function readEndpointFile(file: string): Promise<DaemonEndpoint | undefined> {

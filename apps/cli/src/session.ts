@@ -6,7 +6,7 @@ import { CodexAdapter } from "@bremio/adapter-codex";
 import { OpenCodeAdapter } from "@bremio/adapter-opencode";
 import { daemonStatus, defaultDatabasePath, RunStore, type ContextItemType, type PersistedContextItem, type SessionDetail } from "@bremio/daemon";
 import { extractResponse, renderEvent } from "@bremio/event-view";
-import { createRegistry, runBremio, runSingleAgent } from "@bremio/orchestrator";
+import { createRegistry, extendRegistry, runBremio, runSingleAgent } from "@bremio/orchestrator";
 import { effectiveMode, type CollaborationState } from "@bremio/policy";
 import { c, formatEventView, statusGlyph } from "./ui";
 
@@ -446,12 +446,16 @@ export async function continueSessionCommand(options: {
   const providerSessionId = latestTurn?.sessionId;
 
   const repoPath = path.resolve(options.repoPath ?? detail.repositoryPath ?? ".");
-  const registry = createRegistry([
-    new ClaudeAdapter(),
-    new CodexAdapter(),
-    new AntigravityAdapter(),
-    new OpenCodeAdapter(),
-  ]);
+  // In-process continuation runs in autopilot; MCP calls are gated by it (docs/17 P3).
+  const registry = extendRegistry(
+    createRegistry([
+      new ClaudeAdapter(),
+      new CodexAdapter(),
+      new AntigravityAdapter(),
+      new OpenCodeAdapter(),
+    ]),
+    { controlMode: "autopilot" },
+  );
 
   const resolved = resolveSessionIdentity({
     sessionId: id,

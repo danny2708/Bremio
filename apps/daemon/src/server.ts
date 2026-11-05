@@ -43,6 +43,8 @@ const StartRunSchema = z.object({
   sessionId: z.string().min(1).optional(),
   workspaceStrategy: z.enum(["direct-workspace", "isolated-worktree"]).optional(),
   controlMode: z.enum(["plan", "approve", "autopilot"]).optional(),
+  /** MCP server ids to attach (docs/17 P3-T1); opt-in, never all by default. */
+  mcpServers: z.array(z.string().min(1).max(64)).max(16).optional(),
 });
 
 const MergeSchema = z.object({

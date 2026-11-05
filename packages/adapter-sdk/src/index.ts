@@ -81,7 +81,13 @@ export {
   mapTools,
   mapResourceActionClass,
   McpPermissionGuard,
+  isValidMcpServerId,
+  attachableMcpServers,
+  checkMcpToolCall,
+  mcpCheckPermitsNow,
+  describeMcpDenial,
 } from "./mcp";
+export type { McpPermissionCheck, McpTransportType } from "./mcp";
 
 export { PluginManager } from "./plugin";
 export type {

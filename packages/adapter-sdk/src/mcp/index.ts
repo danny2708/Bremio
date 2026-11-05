@@ -33,3 +33,12 @@ export {
   McpPermissionGuard,
   type McpPermissionCheck,
 } from "./permission-guard";
+
+export {
+  isValidMcpServerId,
+  attachableMcpServers,
+  checkMcpToolCall,
+  mcpCheckPermitsNow,
+  describeMcpDenial,
+  type McpTransportType,
+} from "./run-attach";

@@ -24,6 +24,7 @@ import {
 } from "@bremio/adapter-sdk";
 import { FsMemoryStore, MemoryInjector } from "@bremio/memory";
 import { RunToolset } from "./run-toolset";
+import { prepareRunExtensions } from "@bremio/orchestrator";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
@@ -119,6 +120,8 @@ export interface StartRunInput {
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
   /** Control mode for execution: plan | approve | autopilot. */
   controlMode?: import("@bremio/policy").ControlMode;
+  /** MCP server ids from `.bremio/mcp-servers.json` to attach (docs/17 P3-T1). */
+  mcpServers?: string[];
 }
 
 /**
@@ -1175,12 +1178,17 @@ export class RunRegistry {
   ): Promise<void> {
     const routingConfig = await loadRoutingConfig().catch(() => getDefaultRoutingConfig());
     if (this.#storeIsGone()) return;
-    const registry = createRegistry(this.executableAdapters());
+    // docs/17 P3: every adapter call carries the run's MCP gate and opted-in servers.
+    const { registry, error: extensionError } = await prepareRunExtensions(
+      input,
+      createRegistry(this.executableAdapters()),
+    );
 
-    // Construct Sprint 8 tools wired to real policy evaluation and the S3
-    // approval lifecycle. The tools are per-run and policy-bound, but no
-    // adapter currently consumes them — they remain inert at their call sites
-    // until a later task wires them into an adapter or orchestrator path.
+    // Sprint 8 tools wired to real policy evaluation. MCP no longer goes
+    // through this object: servers and the per-call gate reach adapters via
+    // `prepareRunExtensions` above (docs/17 P3-T1). The command and web-search
+    // tools built here are still not offered to any agent; P3-T5 is where an
+    // agent-callable surface for them would come from.
     const toolset = new RunToolset({
       controlMode: input.controlMode ?? "autopilot",
     });
@@ -1280,6 +1288,7 @@ export class RunRegistry {
     }
 
     try {
+      if (extensionError) throw extensionError;
       const report: BremioRunReport = input.mode === "single"
         ? await runSingleAgent({
             primaryAgentId: input.agentId,

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { ReasoningLevel } from "@bremio/protocol";
 import type { AgentRole, Permission } from "./capabilities";
+import type { McpServerManifest } from "./mcp/manifest";
+import type { McpPermissionCheck } from "./mcp/permission-guard";
 
 /** Result of an adapter liveness probe. */
 export const AgentHealthSchema = z.object({
@@ -50,4 +52,16 @@ export interface AgentRunRequest {
   signal?: AbortSignal;
   /** Free-form context for logging/tracing. */
   metadata?: Record<string, unknown>;
+  /**
+   * MCP servers the user opted into for this run (docs/17 P3-T1). Adapters
+   * attach them only where `getRuntimeCapabilities().mcp` is true, and only to
+   * workspace-write requests (`attachableMcpServers`).
+   */
+  mcpServers?: readonly McpServerManifest[];
+  /**
+   * The run's control-mode policy for MCP tool calls. Adapters with a
+   * per-action seam consult it for every MCP call; adapters without one
+   * consult it once before attaching servers. Missing means deny.
+   */
+  mcpToolGate?: (toolName: string) => McpPermissionCheck;
 }

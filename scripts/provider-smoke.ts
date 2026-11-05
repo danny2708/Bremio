@@ -6,7 +6,7 @@ import { AntigravityAdapter } from "../packages/adapter-antigravity/src/index";
 import { ClaudeAdapter } from "../packages/adapter-claude/src/index";
 import { CodexAdapter } from "../packages/adapter-codex/src/index";
 import { OpenCodeAdapter } from "../packages/adapter-opencode/src/index";
-import { createRegistry, runBremio, runSingleAgent } from "../packages/orchestrator/src/index";
+import { createRegistry, extendRegistry, runBremio, runSingleAgent } from "../packages/orchestrator/src/index";
 
 type LeadId = "claude" | "codex";
 type AgentId = LeadId | "antigravity" | "opencode";
@@ -149,12 +149,13 @@ async function smokeLead(leadId: LeadId, options: Options): Promise<void> {
 }
 
 function createProviderRegistry() {
-  return createRegistry([
+  // Autopilot MCP gate, matching the orchestrator default (docs/17 P3).
+  return extendRegistry(createRegistry([
     new ClaudeAdapter(),
     new CodexAdapter(),
     new AntigravityAdapter(),
     new OpenCodeAdapter(),
-  ]);
+  ]), { controlMode: "autopilot" });
 }
 
 async function assertHealthy(

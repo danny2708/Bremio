@@ -3,7 +3,13 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { processSupervisor } from "@bremio/adapter-sdk";
+import {
+  attachableMcpServers,
+  checkMcpToolCall,
+  describeMcpDenial,
+  mcpCheckPermitsNow,
+  processSupervisor,
+} from "@bremio/adapter-sdk";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type {
   AgentAdapter,
@@ -12,6 +18,7 @@ import type {
   AgentRunRequest,
   AgentToolVocabulary,
   AdapterRuntimeCapabilities,
+  McpServerManifest,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
@@ -65,6 +72,7 @@ export function buildCodexExecArgs(
   if (req.reasoningLevel) {
     args.push("-c", `model_reasoning_effort=${JSON.stringify(req.reasoningLevel)}`);
   }
+  args.push(...codexMcpPlan(req).args);
   return args;
 }
 
@@ -94,7 +102,73 @@ export function buildCodexResumeArgs(
   if (req.reasoningLevel) {
     args.push("-c", `model_reasoning_effort=${JSON.stringify(req.reasoningLevel)}`);
   }
+  args.push(...codexMcpPlan(req).args);
   return args;
+}
+
+/**
+ * TOML for one value. JSON string escapes (\", \\, \n, \uXXXX) are a subset
+ * of TOML basic-string escapes, so JSON.stringify yields valid TOML strings.
+ */
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+/** Inline TOML table for one manifest, or a reason it cannot be expressed. */
+export function codexMcpServerToml(m: McpServerManifest): { toml: string } | { skipped: string } {
+  const t = m.transport;
+  if (t.type === "stdio") {
+    if (t.cwd) {
+      return { skipped: `mcp server "${m.id}" not attached: Bremio does not pass a stdio cwd to codex` };
+    }
+    const parts = [
+      `command=${tomlString(t.command)}`,
+      `args=[${t.args.map(tomlString).join(",")}]`,
+    ];
+    if (t.env && Object.keys(t.env).length > 0) {
+      const env = Object.entries(t.env).map(([k, v]) => `${tomlString(k)}=${tomlString(v)}`);
+      parts.push(`env={${env.join(",")}}`);
+    }
+    return { toml: `{${parts.join(",")}}` };
+  }
+  if (t.type === "streamable-http") {
+    return { toml: `{url=${tomlString(t.url)}}` };
+  }
+  return { skipped: `mcp server "${m.id}" not attached: codex has no SSE transport; use streamable-http` };
+}
+
+/**
+ * What codex gets for MCP on this request (P3-T1).
+ *
+ * `codex exec` has no per-call approval seam (`--sandbox` is all-or-nothing),
+ * so the run's MCP policy is checked once, before attaching: servers are added
+ * via `-c mcp_servers.<id>={...}` only when policy lets an MCP call run now.
+ * Anything withheld is reported as a note, never silently dropped.
+ */
+export function codexMcpPlan(req: AgentRunRequest): { args: string[]; notes: string[] } {
+  const servers = attachableMcpServers(req);
+  if (servers.length === 0) return { args: [], notes: [] };
+  const check = checkMcpToolCall(req, "*");
+  if (!mcpCheckPermitsNow(check)) {
+    return {
+      args: [],
+      notes: [`mcp servers not attached: ${describeMcpDenial("*", check)} (codex cannot gate individual calls)`],
+    };
+  }
+  const args: string[] = [];
+  const notes: string[] = [];
+  const attached: string[] = [];
+  for (const m of servers) {
+    const entry = codexMcpServerToml(m);
+    if ("skipped" in entry) {
+      notes.push(entry.skipped);
+      continue;
+    }
+    args.push("-c", `mcp_servers.${m.id}=${entry.toml}`);
+    attached.push(m.id);
+  }
+  if (attached.length > 0) notes.unshift(`mcp servers attached: ${attached.join(", ")}`);
+  return { args, notes };
 }
 
 export class CodexAdapter implements AgentAdapter {
@@ -129,7 +203,10 @@ export class CodexAdapter implements AgentAdapter {
       structuredToolEvents: false,
       contextMetrics: "estimated",
       manualCompact: false,
-      mcp: false,
+      // P3-T1: manifest servers become `-c mcp_servers.<id>=...` overrides,
+      // gated once per run (no per-call seam).
+      mcp: true,
+      mcpTransports: ["stdio", "streamable-http"],
       webSearch: false,
       cancellation: true,
     };
@@ -186,6 +263,15 @@ export class CodexAdapter implements AgentAdapter {
     const args = resumeSessionId
       ? buildCodexResumeArgs(resumeSessionId, req, outFile, schemaFile)
       : buildCodexExecArgs(req, outFile, schemaFile);
+    for (const note of codexMcpPlan(req).notes) {
+      yield {
+        type: "log",
+        runId: req.runId,
+        ts: now(),
+        level: note.startsWith("mcp servers attached") ? "info" : "warn",
+        message: note,
+      };
+    }
 
     let spawnError: Error | undefined;
     let stderr = "";
