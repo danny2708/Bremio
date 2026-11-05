@@ -13,8 +13,12 @@ export const LedgerEntrySchema = z.object({
   ts: z.string(), // ISO 8601
   runId: z.string(),
   taskId: z.string(),
-  /** Missing on legacy entries, which are task entries. */
-  scope: z.enum(["task", "coordination", "run"]).optional(),
+  /**
+   * Missing on legacy entries, which are task entries. `bench` lines record a
+   * bremio-bench case outcome (docs/18); every consumer here ignores them,
+   * because a bench case is a measurement of Bremio, not a run of the repo.
+   */
+  scope: z.enum(["task", "coordination", "run", "bench"]).optional(),
   provider: z.string(), // the agent that ran it (TaskResult.agentId)
   role: z.string(),
   kind: z.string(),
@@ -162,6 +166,8 @@ export function computeStats(entries: LedgerEntry[]): LedgerStats {
   let totalTasks = 0;
 
   for (const e of entries) {
+    // Bench lines measure Bremio on fixtures, not work in this repository.
+    if (e.scope === "bench") continue;
     runs.add(e.runId);
     const scope = e.scope ?? "task";
     if (scope === "coordination") {

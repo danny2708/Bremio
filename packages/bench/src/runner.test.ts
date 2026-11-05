@@ -11,7 +11,7 @@ import type {
   AgentRunRequest,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
-import { createRegistry } from "@bremio/orchestrator";
+import { createRegistry, readLedger } from "@bremio/orchestrator";
 import type { AgentEvent } from "@bremio/protocol";
 import { listFiles, loadCases } from "./cases";
 import { benchResultPath, runBench } from "./runner";
@@ -311,6 +311,33 @@ describe("runBench — single mode", () => {
     expect(result.cases[0]?.overBudget).toBeNull();
     expect(result.summary.totalCostUsd).toBeNull();
     expect(result.summary.casesWithKnownCost).toBe(0);
+  });
+
+  it("appends one bench-scoped ledger line per case", async () => {
+    const agent = new FakeAgent("fake", rangeCase, "solve", 0.02);
+    const { outputDir, workRoot } = await dirs("ledger");
+    const ledgerPath = path.join(outputDir, "..", "ledger.jsonl");
+    const result = await runBench({
+      cases: [rangeCase],
+      mode: "single",
+      agentId: "fake",
+      registry: createRegistry([agent]),
+      outputDir,
+      workRoot,
+      ledgerPath,
+    });
+    const entries = await readLedger(ledgerPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      scope: "bench",
+      runId: result.benchRunId,
+      taskId: `${result.benchRunId}::js-bugfix-range`,
+      provider: "fake",
+      kind: "bug-fix",
+      flowMode: "single-agent",
+      outcomeVerified: true,
+      usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.02 },
+    });
   });
 
   it("refuses an unregistered agent before touching any case", async () => {

@@ -1,12 +1,16 @@
 import path from "node:path";
 import {
+  compareBench,
   formatBenchReport,
+  formatComparison,
+  loadBenchResult,
   loadCases,
   runBench,
   selfCheckCase,
   type BenchCaseResult,
   type LoadedCase,
 } from "@bremio/bench";
+import { ledgerPathFor } from "@bremio/orchestrator";
 import { ReasoningLevelSchema } from "@bremio/protocol";
 import { createCLIPluginManager, KNOWN_ADAPTER_IDS } from "./tui/data";
 import { c } from "./ui";
@@ -130,6 +134,9 @@ async function benchRun(values: BenchCliValues): Promise<number> {
       ...(values.reasoning ? { reasoningLevel: ReasoningLevelSchema.parse(values.reasoning) } : {}),
       ...(values.timeout ? { timeoutMs: Number(values.timeout) * 1000 } : {}),
       outputDir,
+      // One `scope: "bench"` line per case in this checkout's ledger; stats
+      // and calibration ignore that scope.
+      ledgerPath: ledgerPathFor(process.cwd()),
       keepAll: values.keep === true,
       signal: controller.signal,
       ...(values.json
@@ -155,6 +162,42 @@ async function benchRun(values: BenchCliValues): Promise<number> {
     return 1;
   } finally {
     process.off("SIGINT", onInterrupt);
+  }
+}
+
+async function benchReport(values: BenchCliValues, positionals: string[]): Promise<number> {
+  const { outputDir } = defaults(values);
+  try {
+    if (values.compare) {
+      const otherId = positionals[2];
+      if (!otherId) {
+        console.error(c.red("error: --compare needs two ids: bremio bench report --compare <idA> <idB>"));
+        return 2;
+      }
+      const cmp = compareBench(
+        await loadBenchResult(outputDir, values.compare),
+        await loadBenchResult(outputDir, otherId),
+      );
+      if (values.json) {
+        console.log(JSON.stringify({
+          before: cmp.before.benchRunId,
+          after: cmp.after.benchRunId,
+          resolveRateDelta: cmp.resolveRateDelta,
+          costDeltaUsd: cmp.costDeltaUsd,
+          wallTimeDeltaMs: cmp.wallTimeDeltaMs,
+          cases: cmp.cases,
+        }, null, 2));
+      } else {
+        console.log(formatComparison(cmp));
+      }
+      return 0;
+    }
+    const result = await loadBenchResult(outputDir, positionals[2]);
+    console.log(values.json ? JSON.stringify(result, null, 2) : formatBenchReport(result));
+    return 0;
+  } catch (err) {
+    console.error(c.red(`error: ${(err as Error).message}`));
+    return 2;
   }
 }
 
@@ -193,6 +236,8 @@ export async function benchCommandFromCli(
   switch (sub) {
     case "run":
       return benchRun(values);
+    case "report":
+      return benchReport(values, positionals);
     case "check":
       return benchCheck(values);
     default:

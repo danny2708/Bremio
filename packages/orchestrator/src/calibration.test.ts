@@ -161,3 +161,18 @@ describe("resolveCalibrationPolicy", () => {
   });
 });
 
+describe("calibration ignores bench ledger lines", () => {
+  it("returns the same readiness with or without bench entries", () => {
+    const entries = Array.from({ length: 5 }, (_, index) => pair(`case-${index}`)).flat();
+    // Shaped to look like failing evidence for an existing comparison; only
+    // the scope keeps it out, which is exactly what this pins.
+    const bench: LedgerEntry[] = Array.from({ length: 5 }, (_, index) => ({
+      ...summary(`bench-${index}`, `case-${index}`, "multi-agent", false),
+      scope: "bench" as const,
+      taskId: `bench-${index}::case`,
+      usage: { costUsd: 9 },
+    }));
+    expect(evaluateCalibrationReadiness([...entries, ...bench]))
+      .toEqual(evaluateCalibrationReadiness(entries));
+  });
+});

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  appendLedgerEntry,
   ledgerPathFor,
   readLedger,
   runBremio,
@@ -43,6 +44,11 @@ export interface BenchRunOptions {
   workRoot?: string;
   /** Keep workdirs of every case, not only failed ones. */
   keepAll?: boolean;
+  /**
+   * Ledger that receives one `scope: "bench"` line per case; omit to skip.
+   * Stats, net gain and calibration ignore that scope.
+   */
+  ledgerPath?: string;
   signal?: AbortSignal;
   onCaseStart?(benchCase: LoadedCase, index: number, total: number): void;
   onCaseEnd?(result: BenchCaseResult, index: number, total: number): void;
@@ -219,7 +225,8 @@ export function benchResultPath(outputDir: string, benchRunId: string): string {
 /**
  * Run every case sequentially (cases share provider quota, and parallel runs
  * would make wall time meaningless), write `<outputDir>/<benchRunId>.json`
- * after each case so an interrupted bench keeps what it measured.
+ * after each case so an interrupted bench keeps what it measured, and append
+ * one `scope: "bench"` ledger line per case.
  */
 export async function runBench(opts: BenchRunOptions): Promise<BenchRunResult> {
   if (opts.mode === "single" && !opts.agentId) throw new Error("single mode needs --agent");
@@ -254,6 +261,31 @@ export async function runBench(opts: BenchRunOptions): Promise<BenchRunResult> {
     const result = await runOneCase(benchCase, opts);
     results.push(result);
     await fs.writeFile(outFile, `${JSON.stringify(snapshot(), null, 2)}\n`, "utf8");
+    if (opts.ledgerPath) {
+      await appendLedgerEntry(opts.ledgerPath, {
+        ts: now().toISOString(),
+        runId: benchRunId,
+        taskId: `${benchRunId}::${result.caseId}`,
+        scope: "bench",
+        provider: opts.mode === "single" ? (opts.agentId as string) : (opts.leadId as string),
+        role: "bench",
+        kind: result.category,
+        status: result.runStatus === "error" ? "failed" : result.runStatus,
+        filesChanged: 0,
+        durationMs: result.wallTimeMs,
+        flowMode: opts.mode === "single" ? "single-agent" : "multi-agent",
+        outcomeVerified: result.resolved,
+        ...(result.usage.entriesWithUsage > 0
+          ? {
+              usage: {
+                ...(result.usage.inputTokens !== undefined ? { inputTokens: result.usage.inputTokens } : {}),
+                ...(result.usage.outputTokens !== undefined ? { outputTokens: result.usage.outputTokens } : {}),
+                ...(result.usage.costUsd !== null ? { costUsd: result.usage.costUsd } : {}),
+              },
+            }
+          : {}),
+      });
+    }
     opts.onCaseEnd?.(result, index, total);
   }
 

@@ -171,3 +171,31 @@ describe("LedgerEntrySchema", () => {
     })).success).toBe(true);
   });
 });
+
+describe("bench ledger scope", () => {
+  const bench = entry({
+    scope: "bench",
+    runId: "bench-20261105-120000-abc123",
+    taskId: "bench-20261105-120000-abc123::js-bugfix-range",
+    provider: "codex",
+    role: "bench",
+    kind: "bug-fix",
+    status: "failed",
+    filesChanged: 0,
+    flowMode: "single-agent",
+    outcomeVerified: false,
+    usage: { inputTokens: 500, outputTokens: 50, costUsd: 1.5 },
+  });
+
+  it("is a valid ledger entry", () => {
+    expect(LedgerEntrySchema.safeParse(bench).success).toBe(true);
+  });
+
+  it("is ignored by stats: a bench case is a measurement, not work in this repo", () => {
+    const base = [
+      entry({ taskId: "T1", status: "completed", usage: { costUsd: 0.1 } }),
+      entry({ scope: "coordination", taskId: "lead", provider: "claude" }),
+    ];
+    expect(computeStats([...base, bench, bench])).toEqual(computeStats(base));
+  });
+});
