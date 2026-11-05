@@ -4,13 +4,13 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { canBackControlMode, type ControlMode, type WorkspaceStrategy } from "@bremio/policy";
 import type { AdapterRuntimeCapabilities, AgentToolVocabulary } from "@bremio/adapter-sdk";
-import type { AgentEvent, Attribution, ChangeType, ReasoningLevel, TaskStatus, TestRun, TurnFileChange, UsageSummary } from "@bremio/protocol";
+import type { AgentEvent, Attribution, ChangeType, ReasoningLevel, TaskFailureCode, TaskStatus, TestRun, TurnFileChange, UsageSummary } from "@bremio/protocol";
 import { prepareTurnExecution, type TurnMechanismDecision } from "@bremio/harness";
 import { TaskLog, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
 import { appendLedgerEntry, ledgerPathFor } from "./ledger";
 import type { AgentRegistry } from "./registry";
 import { createRunId } from "./run";
-import { collectRun, type CollectedRun } from "./stream";
+import { collectRun, withErrorCode, type CollectedRun } from "./stream";
 
 const execFileAsync = promisify(execFile);
 
@@ -69,6 +69,8 @@ export interface SingleAgentResult {
   actualReasoningLevel?: ReasoningLevel;
   usage?: UsageSummary;
   error?: string;
+  /** Classified reason the run did not complete (P2-T1). */
+  errorCode?: TaskFailureCode;
   runtimeCapabilities?: AdapterRuntimeCapabilities;
 }
 
@@ -252,7 +254,10 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     }
   } catch (error) {
     collected = {
-      outcome: { status: controller.signal.aborted ? "cancelled" : "failed", error: (error as Error).message },
+      outcome: withErrorCode({
+        status: controller.signal.aborted ? "cancelled" : "failed",
+        error: (error as Error).message,
+      }),
       assistantText: "",
       commands: [],
       tests: [],
@@ -315,9 +320,11 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
   }
   let status = collected.outcome.status;
   let error = collected.outcome.error;
+  let errorCode: TaskFailureCode | undefined = collected.outcome.errorCode;
   if (timedOut) {
     status = "cancelled";
     error = `single-agent run timed out after ${opts.timeoutMs}ms`;
+    errorCode = "timeout";
   }
   const filesRead = [...new Set(collected.filesRead)].sort();
   const filesWritten = [...new Set(collected.filesWritten)].sort();
@@ -367,6 +374,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
       : {}),
     ...(collected.usage ? { usage: collected.usage } : {}),
     ...(error ? { error } : {}),
+    ...(status !== "completed" ? { errorCode: errorCode ?? "unknown" } : {}),
     ...(runtimeCaps ? { runtimeCapabilities: runtimeCaps } : {}),
   };
   const verification = verifySingleResult(result);

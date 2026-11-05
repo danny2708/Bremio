@@ -24,6 +24,7 @@ export * from "./result";
 export * from "./task";
 
 export * from "./message";
+export * from "./error-code";
 
 export { PlanSchema, type Plan } from "./plan";
 
