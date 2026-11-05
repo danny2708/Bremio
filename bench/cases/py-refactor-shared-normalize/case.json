@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "py-refactor-shared-normalize",
+  "title": "deduplicate normalize() into a shared module",
+  "category": "refactor",
+  "language": "python",
+  "prompt": "orders.py and customers.py each define an identical `normalize` function. Move it into a new module text_utils.py and import it in both modules so there is exactly one definition. The behaviour of `order_label` and `customer_key` must not change.",
+  "verify": [
+    {
+      "command": "python",
+      "args": [
+        "-m",
+        "unittest",
+        "-v",
+        "__bench__/test_refactor.py"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

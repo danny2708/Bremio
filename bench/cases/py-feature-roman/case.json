@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "py-feature-roman",
+  "title": "add to_roman()",
+  "category": "feature",
+  "language": "python",
+  "prompt": "Add `to_roman(n)` to roman.py, the inverse of the existing `from_roman`, for 1 <= n <= 3999 using standard subtractive notation (4 is IV, 9 is IX). Raise ValueError for numbers outside that range. Use only the Python standard library.",
+  "verify": [
+    {
+      "command": "python",
+      "args": [
+        "-m",
+        "unittest",
+        "-v",
+        "__bench__/test_roman.py"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

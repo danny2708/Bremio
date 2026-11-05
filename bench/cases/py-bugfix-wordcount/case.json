@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "py-bugfix-wordcount",
+  "title": "word_counts mishandles case, punctuation and whitespace",
+  "category": "bug-fix",
+  "language": "python",
+  "prompt": "word_counts in wordcount.py should count words case-insensitively and ignore punctuation and extra whitespace (tabs, newlines, repeated spaces), but it does not. Fix it. Apostrophes inside a word (don't) are part of the word. Use only the Python standard library.",
+  "verify": [
+    {
+      "command": "python",
+      "args": [
+        "-m",
+        "unittest",
+        "-v",
+        "__bench__/test_wordcount.py"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

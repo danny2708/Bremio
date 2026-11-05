@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "js-refactor-extract-validation",
+  "title": "extract validation helpers into their own module",
+  "category": "refactor",
+  "language": "javascript",
+  "prompt": "Refactor: move the validation helpers `isEmail` and `isNonEmpty` out of src/app.mjs into a new module src/validate.mjs that exports both, and make src/app.mjs import them from './validate.mjs' instead of defining them. `register` must behave exactly as before.",
+  "verify": [
+    {
+      "command": "node",
+      "args": [
+        "--test",
+        "__bench__/refactor.test.mjs"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

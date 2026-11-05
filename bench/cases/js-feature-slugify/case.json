@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "js-feature-slugify",
+  "title": "add slugify()",
+  "category": "feature",
+  "language": "javascript",
+  "prompt": "Add and export `slugify(text)` from src/strings.mjs: lowercase the text, strip diacritics (é becomes e), replace every run of characters that are not a-z or 0-9 with a single '-', and trim leading and trailing '-'. Keep `capitalize` working.",
+  "verify": [
+    {
+      "command": "node",
+      "args": [
+        "--test",
+        "__bench__/strings.test.mjs"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

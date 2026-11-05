@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "js-tests-stack",
+  "title": "write tests that catch real bugs in a stack",
+  "category": "test-writing",
+  "language": "javascript",
+  "prompt": "Write tests for src/stack.mjs in test/stack.test.mjs using node:test and node:assert. Cover push/pop order (last in, first out), that peek returns the top without removing it, that size tracks pushes and pops, and that pop on an empty stack throws. The tests must pass against the current implementation when run with `node --test test/stack.test.mjs`. Do not change src/stack.mjs.",
+  "verify": [
+    {
+      "command": "node",
+      "args": [
+        "__bench__/check.mjs"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

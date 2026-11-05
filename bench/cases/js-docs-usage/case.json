@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "js-docs-usage",
+  "title": "document parseDuration in the README",
+  "category": "docs",
+  "language": "javascript",
+  "prompt": "Document src/duration.mjs in README.md. Add a `## Usage` section that shows how to import `parseDuration`, includes at least one fenced ```js example, and lists every supported unit (h, m, s). Add a `## Errors` section explaining what happens on invalid input. Do not change the code.",
+  "verify": [
+    {
+      "command": "node",
+      "args": [
+        "--test",
+        "__bench__/docs.test.mjs"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

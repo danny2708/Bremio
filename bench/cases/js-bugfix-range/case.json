@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "js-bugfix-range",
+  "title": "range() drops its inclusive end",
+  "category": "bug-fix",
+  "language": "javascript",
+  "prompt": "`range(start, end, step)` in src/range.mjs is documented as inclusive of `end` but drops the last value: range(1, 3) returns [1, 2]. Fix it. It must still work for a step greater than 1 and return [] when start is greater than end.",
+  "verify": [
+    {
+      "command": "node",
+      "args": [
+        "--test",
+        "__bench__/range.test.mjs"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

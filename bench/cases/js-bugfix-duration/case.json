@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "js-bugfix-duration",
+  "title": "parseDuration miscounts minutes",
+  "category": "bug-fix",
+  "language": "javascript",
+  "prompt": "parseDuration('1h30m') in src/duration.mjs returns 9000 instead of 5400. Fix the bug. Invalid input such as '5x' must keep throwing an Error.",
+  "verify": [
+    {
+      "command": "node",
+      "args": [
+        "--test",
+        "__bench__/duration.test.mjs"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

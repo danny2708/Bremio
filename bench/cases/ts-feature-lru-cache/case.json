@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "ts-feature-lru-cache",
+  "title": "implement an LRU cache",
+  "category": "feature",
+  "language": "typescript",
+  "prompt": "Implement LruCache in src/lru.ts. `get(key)` returns the value (or undefined) and marks the key most recently used. `set(key, value)` inserts or updates and, when the cache would exceed its capacity, evicts the least recently used entry. `size` reports the number of entries. Constructing with a capacity below 1 throws a RangeError. Keep the file valid for Node's type stripping (no enums or parameter properties).",
+  "verify": [
+    {
+      "command": "node",
+      "args": [
+        "--experimental-strip-types",
+        "--test",
+        "__bench__/lru.test.ts"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

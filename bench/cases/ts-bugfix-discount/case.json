@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "ts-bugfix-discount",
+  "title": "totalWithDiscount ignores quantity and misreads percent",
+  "category": "bug-fix",
+  "language": "typescript",
+  "prompt": "totalWithDiscount in src/pricing.ts gives wrong totals: it ignores each item's quantity and treats the percentage (0-100) as a fraction. Fix it. The result is in cents, rounded to the nearest cent. A discount below 0 or above 100 must throw a RangeError. Keep the file valid for Node's type stripping (no enums or parameter properties).",
+  "verify": [
+    {
+      "command": "node",
+      "args": [
+        "--experimental-strip-types",
+        "--test",
+        "__bench__/pricing.test.ts"
+      ]
+    }
+  ],
+  "timeoutSec": 600,
+  "costBudgetUsd": 0.5
+}

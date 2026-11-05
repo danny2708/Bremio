@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "js-multifile-timeout-ms",
+  "title": "rename timeout to timeoutMs across modules",
+  "category": "multi-file",
+  "language": "javascript",
+  "prompt": "Rename the config option `timeout` (seconds) to `timeoutMs` (milliseconds) across src/config.mjs, src/client.mjs and src/cli.mjs. The default stays 30 seconds (30000 ms). The CLI flag `--timeout` becomes `--timeout-ms`. `describe()` must print `timeoutMs=30000 retries=2` for the defaults. Passing the old `timeout` option to createClient must throw an Error whose message mentions `timeoutMs`.",
+  "verify": [
+    {
+      "command": "node",
+      "args": [
+        "--test",
+        "__bench__/timeout.test.mjs"
+      ]
+    }
+  ],
+  "timeoutSec": 900,
+  "costBudgetUsd": 0.75
+}
