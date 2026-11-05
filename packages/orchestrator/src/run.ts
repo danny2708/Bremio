@@ -31,6 +31,11 @@ import {
   type RoutingConfig,
 } from "./routing-config";
 import { runPlan, type SchedulerHooks } from "./scheduler";
+import { runTeamFixLoop } from "./fix-loop";
+import { evaluateDefinitionOfDone } from "./definition-of-done";
+import { runReplanLoop } from "./replan";
+import { openTeamAutoPr, type AutoPrDeps } from "./auto-pr";
+import { applyPlanCheckpoint, PlanCheckpointError, type OnPlanReady, type PlanCheckpointRecord } from "./plan-checkpoint";
 import type { SingleRunFallback } from "./single-run";
 import { validatePlan } from "./validator";
 
@@ -39,6 +44,10 @@ export interface RunBremioHooks extends SchedulerHooks {
   onLeadEvent?(event: AgentEvent): void;
   onPlan?(plan: Plan, assign: Map<string, string>): void;
   onFallback?(reason: string, agentId: string): void;
+  /** A re-plan (P2-T5) replaced blocked work with these new tasks. */
+  onReplan?(record: import("./replan").ReplanRecord): void;
+  /** A fix iteration (P2-T3) is about to run these tasks for these gate reasons. */
+  onFixIteration?(iteration: number, reasons: readonly string[], tasks: readonly Task[]): void;
 }
 
 export interface RunBremioOptions {
@@ -92,6 +101,31 @@ export interface RunBremioOptions {
   providerSessionId?: string;
   /** If specified, overrides calibration-gated dynamic microtask expansion. */
   enableDynamicExpansion?: boolean;
+  /**
+   * Bounded fix iterations after a failed quality gate (P2-T3). The library
+   * default is 0 (off); the CLI and daemon pass DEFAULT_MAX_FIX_ITERATIONS.
+   */
+  maxFixIterations?: number;
+  /** Stop fix iterations once their provider-reported cost reaches this. */
+  maxFixCostUsd?: number;
+  /**
+   * Plan checkpoint (P2-T2): called once with the validated plan before any
+   * worktree or worker run exists. Approve / reject / edit; an edit is
+   * re-validated like a lead's plan. Omit for no checkpoint.
+   */
+  onPlanReady?: OnPlanReady;
+  /**
+   * Re-plans of the remaining graph after a blocker (P2-T5). Default 0 (off):
+   * each costs a lead call. Completed tasks are never re-run.
+   */
+  maxReplans?: number;
+  /**
+   * Push and open a PR when the quality gate passes (P2-T7). Opt-in; refused
+   * with a named reason under plan/approve modes or when `gh` is unusable.
+   */
+  autoPr?: boolean;
+  /** Test seam for auto-PR (fake `gh`). */
+  autoPrDeps?: AutoPrDeps;
 }
 
 /** Generate a sortable, human-readable run id: run-YYYYMMDD-HHMMSS-xxxx. */
@@ -264,6 +298,31 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
 
   validatePlan(plan, capabilitiesByAgent);
 
+  let planCheckpoint: PlanCheckpointRecord | undefined;
+  if (opts.onPlanReady) {
+    try {
+      const checked = await applyPlanCheckpoint({
+        plan,
+        runId,
+        onPlanReady: opts.onPlanReady,
+        validate: (candidate) => validatePlan(candidate, capabilitiesByAgent),
+      });
+      plan = checked.plan;
+      planCheckpoint = checked.record;
+      logger?.info({ planCheckpoint }, "plan checkpoint passed");
+    } catch (err) {
+      if (err instanceof PlanCheckpointError) {
+        await recordInterruptedTeamSummary({
+          ledgerPath: ledgerPathFor(repoPath),
+          runId,
+          status: "cancelled",
+          ...(opts.comparisonId ? { comparisonId: opts.comparisonId } : {}),
+        });
+      }
+      throw err;
+    }
+  }
+
   // This is the only meaningful kill-switch point: planning has finished, its
   // provider-reported coordination cost is durable, and no task worktree or
   // worker run exists yet. Once assign/runPlan starts we never re-evaluate or
@@ -360,9 +419,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     }
   }
 
-  const results = await runPlan({
-    plan,
-    assign,
+  const planOptions = {
     registry,
     workspace,
     runDir,
@@ -377,7 +434,94 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     resolveArtifact: opts.resolveArtifact,
     markMessageHandled: opts.markMessageHandled,
     hooks: opts.hooks,
+  };
+  const firstPass = await runPlan({ plan, assign, ...planOptions });
+
+  // P2-T5: re-plan the remaining graph around blockers (default off).
+  const replanned = await runReplanLoop({
+    plan,
+    assign,
+    results: firstPass,
+    maxReplans: opts.maxReplans ?? 0,
+    originalPrompt: prompt,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.stopRequested ? { stopRequested: opts.stopRequested } : {}),
+    requestPlan: async (request, iteration, validate) => {
+      const started = Date.now();
+      try {
+        const { plan: added } = await createPlan(lead, {
+          prompt: request,
+          cwd: repoPath,
+          runId: `${runId}-replan${iteration}`,
+          runDir,
+          ...(opts.model ? { model: opts.model } : {}),
+          ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
+          ...(opts.taskTimeoutMs ? { timeoutMs: opts.taskTimeoutMs } : {}),
+          ...(opts.signal ? { signal: opts.signal } : {}),
+          validate,
+          onEvent: onLeadEvent,
+        });
+        await recordPlanningLedger({
+          ledgerPath: ledgerPathFor(repoPath),
+          runId,
+          leadId,
+          status: "completed",
+          durationMs: Date.now() - started,
+          ...(opts.model ? { requestedModel: opts.model } : {}),
+        });
+        return added;
+      } catch (err) {
+        await recordPlanningLedger({
+          ledgerPath: ledgerPathFor(repoPath),
+          runId,
+          leadId,
+          status: err instanceof LeadPlanError ? err.status : "failed",
+          durationMs: Date.now() - started,
+          ...(opts.model ? { requestedModel: opts.model } : {}),
+        });
+        throw err;
+      }
+    },
+    validateCombined: (candidate) => validatePlan(candidate, capabilitiesByAgent),
+    assignNew: (added) => assignAgents(added, leadId, workerIds, {
+      capabilitiesByAgent,
+      ...(capacityByAgent ? { capacityByAgent } : {}),
+      ...(opts.capacityPolicy ? { capacityPolicy: opts.capacityPolicy } : {}),
+      ...(opts.modelByAgent ? { modelByAgent: opts.modelByAgent } : {}),
+    }),
+    execute: (addedPlan, addedAssign, prior) =>
+      runPlan({ ...planOptions, plan: addedPlan, assign: addedAssign, priorResults: prior }),
+    onReplan: (record) => {
+      logger?.info({ record }, "re-planned around blockers");
+      opts.hooks?.onReplan?.(record);
+    },
   });
+
+  // P2-T3: bounded fix iterations. With maxFixIterations 0 (library default)
+  // this returns the first pass unchanged.
+  const fixed = await runTeamFixLoop({
+    plan: replanned.plan,
+    assign: replanned.assign,
+    results: replanned.results,
+    superseded: replanned.superseded,
+    bounds: {
+      maxIterations: Math.max(0, Math.trunc(opts.maxFixIterations ?? 0)),
+      ...(opts.maxFixCostUsd !== undefined ? { maxCostUsd: opts.maxFixCostUsd } : {}),
+      controlMode,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      ...(opts.stopRequested ? { stopRequested: opts.stopRequested } : {}),
+    },
+    execute: (iterationPlan, iterationAssign, prior) =>
+      runPlan({ ...planOptions, plan: iterationPlan, assign: iterationAssign, priorResults: prior }),
+    onIteration: (iteration, reasons, tasks) => {
+      logger?.info({ iteration, reasons, tasks: tasks.map((t) => t.id) }, "fix iteration");
+      opts.hooks?.onFixIteration?.(iteration, reasons, tasks);
+    },
+  });
+  const results = fixed.results;
+  for (const [taskId, agentId] of fixed.assign) {
+    if (!reasonByTask.has(taskId)) reasonByTask.set(taskId, `fix loop (${agentId}: same agent as the work it continues)`);
+  }
 
   const leadIdentity = observedIdentity(observedLeadModels, observedLeadReasoningLevels);
   const report = buildReport({
@@ -392,12 +536,57 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     runDir,
     controlMode,
     baseBranch,
-    plan,
-    assign,
+    plan: fixed.plan,
+    assign: fixed.assign,
     results,
     reasonByTask,
     ...(opts.autoModeReason ? { autoModeReason: opts.autoModeReason } : {}),
   });
+  // "disabled" (maxFixIterations 0) keeps the report byte-for-byte as before P2.
+  if (fixed.report.status !== "not-needed" && fixed.report.status !== "disabled") {
+    // Superseded checks stay visible in report.tasks; the gate is the one the
+    // fix loop computed with them excluded (and identical to buildReport's
+    // when nothing was superseded).
+    report.qualityGate = fixed.gate;
+    report.fixLoop = fixed.report;
+    // A superseded check's failure was re-run by its fix chain; count it
+    // separately so `failed` means "failed and still standing".
+    const superseded = new Set(fixed.report.superseded);
+    const supersededFailures = results.filter(
+      (r) => superseded.has(r.taskId) && r.status === "failed",
+    ).length;
+    if (supersededFailures > 0) {
+      report.summary.failed -= supersededFailures;
+      report.summary.superseded = supersededFailures;
+    }
+  }
+
+  if (planCheckpoint) report.planCheckpoint = planCheckpoint;
+  if (replanned.report.status !== "not-needed" && replanned.report.status !== "disabled") {
+    report.replan = replanned.report;
+    if (fixed.report.status === "not-needed" || fixed.report.status === "disabled") {
+      // The fix loop did not attach its gate; the replaced tasks still must not count.
+      report.qualityGate = fixed.gate;
+      const replacedFailures = results.filter(
+        (r) => replanned.superseded.has(r.taskId) && r.status !== "completed",
+      ).length;
+      if (replacedFailures > 0) {
+        report.summary.failed = results.filter(
+          (r) => !replanned.superseded.has(r.taskId) && r.status === "failed",
+        ).length;
+        report.summary.superseded = replacedFailures;
+      }
+    }
+  }
+  report.definitionOfDone = evaluateDefinitionOfDone({
+    plan: report.plan,
+    results,
+    superseded: new Set(fixed.report.superseded),
+  });
+  if (opts.autoPr && !opts.signal?.aborted) {
+    report.autoPr = await openTeamAutoPr(report, opts.autoPrDeps);
+    logger?.info({ autoPr: report.autoPr }, "auto-PR");
+  }
 
   await fs.writeFile(
     path.join(runDir, "report.json"),

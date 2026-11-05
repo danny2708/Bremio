@@ -70,7 +70,60 @@ export {
   LEAD_SYSTEM_PROMPT,
 } from "./plan-schema";
 
-export { collectRun, type CollectedRun } from "./stream";
+export { collectRun, withErrorCode, type CollectedRun } from "./stream";
+
+export {
+  DEFAULT_MAX_FIX_ITERATIONS,
+  evaluateGateWithFixes,
+  fixLoopPolicyBlock,
+  fixLoopStopReason,
+  planFixIteration,
+  runTeamFixLoop,
+  type FixIterationRecord,
+  type FixLoopReport,
+  type FixLoopStatus,
+} from "./fix-loop";
+
+export {
+  autoPrPolicyBlock,
+  openSingleAutoPr,
+  openTeamAutoPr,
+  type AutoPrResult,
+} from "./auto-pr";
+
+export {
+  analyzeBlockers,
+  runReplanLoop,
+  validateReplan,
+  type ReplanRecord,
+  type ReplanReport,
+} from "./replan";
+
+export {
+  evaluateDefinitionOfDone,
+  evaluateSingleDefinitionOfDone,
+  type DefinitionOfDone,
+  type DoneCriterion,
+  type DoneVerification,
+} from "./definition-of-done";
+
+export {
+  applyPlanCheckpoint,
+  planDigest,
+  PlanCheckpointError,
+  type OnPlanReady,
+  type PlanCheckpointDecision,
+  type PlanCheckpointRecord,
+} from "./plan-checkpoint";
+
+export {
+  runSingleVerifyLoop,
+  runVerification,
+  verificationPolicyBlock,
+  type SingleFixAttempt,
+  type SingleFixLoopReport,
+  type VerificationRun,
+} from "./single-fix-loop";
 
 export {
   evaluateQualityGate,

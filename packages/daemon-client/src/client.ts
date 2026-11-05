@@ -104,6 +104,16 @@ export interface StartRunRequest {
   mcpServers?: string[];
   /** Playbook names to inject (docs/17 P3-T3). */
   skills?: string[];
+  /** Team fix iterations after a failed gate (P2-T3); daemon default applies when omitted. */
+  maxFixIterations?: number;
+  /** Single: verification command Bremio runs after the agent (P2-T4). */
+  verifyCommand?: string;
+  /** Team: pause after planning for approve / reject / edit (P2-T2). */
+  reviewPlan?: boolean;
+  /** Team: re-plans around blockers (P2-T5); default 0. */
+  maxReplans?: number;
+  /** Push and open a PR when green (P2-T7). */
+  autoPr?: boolean;
 }
 
 async function readEndpointFile(file: string): Promise<DaemonEndpoint | undefined> {

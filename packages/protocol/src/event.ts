@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentErrorCodeSchema } from "./error-code";
 import { ReasoningLevelSchema, TaskStatusSchema } from "./result";
 import { RuntimeGuardDecisionSchema } from "./guard";
 
@@ -100,6 +101,12 @@ export const RunOutcomeSchema = z.object({
   /** Provider session id, for resume (Phase 2+). */
   sessionId: z.string().optional(),
   error: z.string().optional(),
+  /**
+   * Classified failure (P2-T1). Additive and optional: adapters may set it,
+   * and the orchestrator's collector fills it from `classifyAgentError` when
+   * a non-completed outcome arrives without one.
+   */
+  errorCode: AgentErrorCodeSchema.optional(),
 });
 export type RunOutcome = z.infer<typeof RunOutcomeSchema>;
 

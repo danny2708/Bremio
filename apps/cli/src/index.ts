@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { answerDaemonCheckpoint, promptPlanDecision, terminalIo } from "./plan-checkpoint";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import path from "node:path";
@@ -19,6 +20,7 @@ import {
   resolveEscalationApproval,
   type RunBremioHooks,
   type SingleRunHooks,
+  DEFAULT_MAX_FIX_ITERATIONS,
 } from "@bremio/orchestrator";
 import { executionToCollaboration, validateCombination, type WorkspaceStrategy } from "@bremio/policy";
 import { ExecutionModeSchema, type ReasoningLevel, type TaskStatus } from "@bremio/protocol";
@@ -106,6 +108,11 @@ ${c.bold("run-info")} show run artifacts and blackboard context
   --reasoning <level>     Single-agent or Team-lead reasoning level.
   --timeout <seconds>     Hard timeout for the Single run or each Team task.
   --concurrency <n>       Team tasks to run at once (default: 2, dependency-safe).
+  --max-fix-iterations <n> Bounded fix attempts after a failed gate/--verify (default: 2, 0 = off).
+  --verify <command>      Single: Bremio runs this after the agent and hands failures back to it.
+  --review-plan           Team: approve, reject or edit the lead's plan before any work starts.
+  --max-replans <n>       Team: re-plan remaining work around a blocker (default: 0, max 3).
+  --auto-pr               Push and open a GitHub PR (via gh) when the run is green.
   --capacity-routing      Opt in to conservative Team capacity routing.
   --db <path>             Override the AQT database used for capacity routing.
   --comparison <id>       Link this run to a controlled Single/Team experiment.
@@ -193,6 +200,11 @@ function parseCli() {
       reasoning: { type: "string" },
       timeout: { type: "string" },
       concurrency: { type: "string" },
+      "max-fix-iterations": { type: "string" },
+      verify: { type: "string" },
+      "review-plan": { type: "boolean", default: false },
+      "max-replans": { type: "string" },
+      "auto-pr": { type: "boolean", default: false },
       run: { type: "string" },
       base: { type: "string" },
       strategy: { type: "string" },
@@ -516,6 +528,13 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
     ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
     ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
     ...(values.concurrency !== undefined ? { maxConcurrency: Number(values.concurrency) } : {}),
+    ...(values["max-fix-iterations"] !== undefined
+      ? { maxFixIterations: Number(values["max-fix-iterations"]) }
+      : {}),
+    ...(values.verify ? { verifyCommand: values.verify.trim() } : {}),
+    ...(values["review-plan"] ? { reviewPlan: true } : {}),
+    ...(values["max-replans"] !== undefined ? { maxReplans: Number(values["max-replans"]) } : {}),
+    ...(values["auto-pr"] ? { autoPr: true } : {}),
     ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
     ...(values["workspace-strategy"]
       ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -546,6 +565,10 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
     if (!json) console.log(c.dim(`run started via daemon (id: ${runId})`));
 
     await client.streamEvents(runId, (event) => {
+      if (values["review-plan"]) {
+        void answerDaemonCheckpoint(client, event, terminalIo()).catch((err) =>
+          console.error(c.red(`plan checkpoint answer failed: ${(err as Error).message}`)));
+      }
       if (json) {
         collectedEvents.push(event);
         return;
@@ -659,6 +682,26 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   if (concurrency !== undefined && (mode === "single" || isAuto)) {
     errors.push("--concurrency is only valid in Team mode");
   }
+  const maxFixIterations = parseMaxFixIterations(values["max-fix-iterations"], errors);
+  if (values.verify !== undefined && values.verify.trim().length === 0) {
+    errors.push("--verify needs a command, e.g. --verify \"pnpm test\"");
+  }
+  if (values.verify !== undefined && mode === "team") {
+    errors.push("--verify is only valid in Single mode; Team runs verify through their test tasks");
+  }
+  const maxReplans = values["max-replans"] === undefined ? undefined : Number(values["max-replans"]);
+  if (maxReplans !== undefined && (!Number.isInteger(maxReplans) || maxReplans < 0 || maxReplans > 3)) {
+    errors.push("--max-replans must be a whole number from 0 to 3");
+  }
+  if (maxReplans !== undefined && mode === "single") {
+    errors.push("--max-replans is only valid in Team mode");
+  }
+  if (values["review-plan"] && mode === "single") {
+    errors.push("--review-plan is only valid in Team mode");
+  }
+  if (maxFixIterations !== undefined && mode === "single" && values.verify === undefined) {
+    errors.push("--max-fix-iterations in Single mode requires --verify <command>");
+  }
   const reasoningLevels = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh"]);
   if (values.reasoning && !reasoningLevels.has(values.reasoning as ReasoningLevel)) {
     errors.push("--reasoning must be 'low', 'medium', 'high', or 'xhigh'");
@@ -766,6 +809,11 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
       ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
       ...(values.concurrency !== undefined ? { maxConcurrency: Number(values.concurrency) } : {}),
+      ...(maxFixIterations !== undefined ? { maxFixIterations } : {}),
+      ...(values.verify ? { verifyCommand: values.verify.trim() } : {}),
+      ...(values["review-plan"] ? { reviewPlan: true } : {}),
+      ...(maxReplans !== undefined ? { maxReplans } : {}),
+      ...(values["auto-pr"] ? { autoPr: true } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(values["workspace-strategy"]
         ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -904,6 +952,13 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
           : {}),
         ...(timeoutSeconds !== undefined ? { timeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
         ...(escComparisonId ? { comparisonId: escComparisonId } : {}),
+        ...(values["auto-pr"] ? { autoPr: true } : {}),
+        ...(values.verify
+          ? {
+              verifyCommand: values.verify.trim(),
+              maxFixIterations: maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
+            }
+          : {}),
       });
 
       tagStandalone(report, values.standalone);
@@ -1005,6 +1060,12 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         : {}),
       ...(timeoutSeconds !== undefined ? { taskTimeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
       ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
+      maxFixIterations: maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
+      ...(values["review-plan"]
+        ? { onPlanReady: (plan) => promptPlanDecision(plan, terminalIo()) }
+        : {}),
+      ...(maxReplans !== undefined ? { maxReplans } : {}),
+      ...(values["auto-pr"] ? { autoPr: true } : {}),
       ...(capacitySnapshots ? { capacitySnapshots } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(isAuto && autoReason ? { autoModeReason: autoReason } : {}),
@@ -1383,3 +1444,14 @@ main().catch((err) => {
   console.error(c.red(`fatal: ${(err as Error).message}`));
   process.exit(1);
 });
+
+/** `--max-fix-iterations`: a whole number 0–10, or undefined when absent. */
+function parseMaxFixIterations(raw: string | undefined, errors: string[]): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 10) {
+    errors.push("--max-fix-iterations must be a whole number from 0 to 10");
+    return undefined;
+  }
+  return value;
+}

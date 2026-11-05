@@ -33,9 +33,21 @@ export interface RunReport {
     failed: number;
     cancelled: number;
     filesChanged: number;
+    /** Failed checks a fix iteration re-ran (P2-T3); excluded from `failed`. */
+    superseded?: number;
   };
   /** Why this flow mode (single/team) was chosen, if automatic. */
   autoModeReason?: string;
+  /** Bounded fix iterations after a failed gate (P2-T3); absent when not needed. */
+  fixLoop?: import("./fix-loop").FixLoopReport;
+  /** Present when the plan passed an opt-in checkpoint (P2-T2). */
+  planCheckpoint?: import("./plan-checkpoint").PlanCheckpointRecord;
+  /** Acceptance criteria → evidence | unknown (P2-T6). Informational; the gate decides. */
+  definitionOfDone?: import("./definition-of-done").DefinitionOfDone;
+  /** Re-plans around blockers (P2-T5); absent when none were needed or allowed. */
+  replan?: import("./replan").ReplanReport;
+  /** Opt-in auto-PR outcome (P2-T7). */
+  autoPr?: import("./auto-pr").AutoPrResult;
 }
 
 export type BremioRunReport = RunReport | import("./single-run").SingleRunReport;

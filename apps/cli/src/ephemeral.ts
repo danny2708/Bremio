@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { answerDaemonCheckpoint, terminalIo } from "./plan-checkpoint";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -26,6 +27,11 @@ export interface EphemeralRunParams {
   reasoningLevel?: string;
   timeoutMs?: number;
   maxConcurrency?: number;
+  maxFixIterations?: number;
+  verifyCommand?: string;
+  reviewPlan?: boolean;
+  maxReplans?: number;
+  autoPr?: boolean;
   comparisonId?: string;
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
   /** MCP server ids to attach (docs/17 P3-T1). */
@@ -112,6 +118,10 @@ export async function runViaEphemeralDaemon(
       if (!json) console.log(c.dim(`ephemeral daemon started run (id: ${runId})`));
 
       await client.streamEvents(runId, (event) => {
+        if (params.reviewPlan) {
+          void answerDaemonCheckpoint(client, event, terminalIo()).catch((err) =>
+            console.error(c.red(`plan checkpoint answer failed: ${(err as Error).message}`)));
+        }
         if (json) {
           collectedEvents.push(event);
           return;

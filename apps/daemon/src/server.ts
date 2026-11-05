@@ -47,6 +47,21 @@ const StartRunSchema = z.object({
   mcpServers: z.array(z.string().min(1).max(64)).max(16).optional(),
   /** Playbook names from .bremio/skills/ (docs/17 P3-T3). */
   skills: z.array(z.string().min(1).max(64)).max(16).optional(),
+  /** Team fix iterations after a failed gate (P2-T3); 0 disables. */
+  maxFixIterations: z.number().int().min(0).max(10).optional(),
+  /** Single: verification command Bremio runs itself (P2-T4). */
+  verifyCommand: z.string().trim().min(1).max(2000).optional(),
+  /** Team: pause after planning for approve / reject / edit (P2-T2). */
+  reviewPlan: z.boolean().optional(),
+  /** Team: re-plans around blockers (P2-T5); 0 disables. */
+  maxReplans: z.number().int().min(0).max(3).optional(),
+  /** Push and open a PR when green (P2-T7). */
+  autoPr: z.boolean().optional(),
+});
+
+const EditPlanCheckpointSchema = z.object({
+  plan: z.unknown(),
+  decidedBy: z.string().min(1),
 });
 
 const MergeSchema = z.object({
@@ -908,6 +923,20 @@ async function handle(
     registry.resolvePendingApproval(id, parsed.data.decision);
 
     return sendJson(res, 200, { request: result });
+  }
+
+  // P2-T2: answer a pending plan checkpoint with an edited plan.
+  const approvalEditPlan = /^\/approval\/requests\/([^/]+)\/edit-plan$/.exec(route);
+  if (method === "POST" && approvalEditPlan) {
+    const id = decodeURIComponent(approvalEditPlan[1] ?? "");
+    const parsed = EditPlanCheckpointSchema.safeParse(await readJsonBody(req));
+    if (!parsed.success) {
+      return sendJson(res, 400, { error: "invalid plan edit", detail: parsed.error.issues });
+    }
+    if (!registry.editPlanCheckpoint(id, parsed.data.plan, parsed.data.decidedBy)) {
+      return sendJson(res, 409, { error: `request ${id} is not a pending plan checkpoint` });
+    }
+    return sendJson(res, 200, { ok: true });
   }
 
   const approvalCancel = /^\/approval\/requests\/([^/]+)\/cancel$/.exec(route);

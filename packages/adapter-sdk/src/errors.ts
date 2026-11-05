@@ -9,16 +9,12 @@
  * a bounded, conservative decision and to show the user a specific reason.
  */
 
-export type AgentErrorCode =
-  | "rate_limited"
-  | "authentication_failed"
-  | "quota_exhausted"
-  | "provider_unavailable"
-  | "timeout"
-  | "cancelled"
-  | "session_not_found"
-  | "execution_failed"
-  | "unknown";
+/**
+ * The code vocabulary is owned by `@bremio/protocol` so it can travel on a
+ * `RunOutcome` (P2-T1); classification stays here.
+ */
+export type { AgentErrorCode } from "@bremio/protocol";
+import type { AgentErrorCode } from "@bremio/protocol";
 
 export interface AgentError {
   code: AgentErrorCode;

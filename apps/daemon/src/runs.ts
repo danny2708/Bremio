@@ -9,6 +9,9 @@ import {
   loadRoutingConfig,
   getDefaultRoutingConfig,
   type BremioRunReport,
+  DEFAULT_MAX_FIX_ITERATIONS,
+  PlanCheckpointError,
+  type PlanCheckpointDecision,
 } from "@bremio/orchestrator";
 import type { ReasoningLevel, AgentEvent } from "@bremio/protocol";
 import { createHash } from "node:crypto";
@@ -79,6 +82,7 @@ export interface RunEvent {
     | "task-event"
     | "task-complete"
     | "review-requested"
+    | "plan-checkpoint"
     | "finished"
     | "failed"
     | "interrupted";
@@ -124,6 +128,20 @@ export interface StartRunInput {
   mcpServers?: string[];
   /** Playbook names from `.bremio/skills/` to inject into every prompt (P3-T3). */
   skills?: string[];
+  /** Fix iterations after a failed gate / verification (P2-T3/T4); default DEFAULT_MAX_FIX_ITERATIONS. */
+  maxFixIterations?: number;
+  /** Single: command Bremio runs after the agent's turn to verify it (P2-T4). */
+  verifyCommand?: string;
+  /**
+   * Team: pause after planning for an approve / reject / edit decision
+   * (P2-T2). Uses the approval lifecycle, so it fails closed when no client
+   * is subscribed to the run.
+   */
+  reviewPlan?: boolean;
+  /** Team: re-plans of the remaining graph after a blocker (P2-T5); default 0. */
+  maxReplans?: number;
+  /** Push and open a PR via `gh` when the run is green (P2-T7). */
+  autoPr?: boolean;
 }
 
 /**
@@ -229,6 +247,11 @@ export class RunRegistry {
   readonly #terminated = new Set<string>();
   /** Reviews awaiting user approval after an isolated-worktree run completed. */
   readonly #pendingReviews = new Map<string, PendingReview>();
+  /** Plan checkpoints awaiting a decision (P2-T2), keyed by approval request id. */
+  readonly #pendingPlanCheckpoints = new Map<
+    string,
+    { runId: string; resolve: (decision: PlanCheckpointDecision) => void }
+  >();
   /**
    * The arguments a queued prompt was submitted with, until it runs.
    *
@@ -1166,11 +1189,96 @@ export class RunRegistry {
    * Returns true if a pending review was resolved.
    */
   resolvePendingApproval(requestId: string, decision: "approved" | "rejected"): boolean {
+    const checkpoint = this.#pendingPlanCheckpoints.get(requestId);
+    if (checkpoint) {
+      this.#pendingPlanCheckpoints.delete(requestId);
+      const decidedBy = this.store.getApprovalRequest?.(requestId)?.decidedBy;
+      checkpoint.resolve(
+        decision === "approved"
+          ? { decision: "approve", ...(decidedBy ? { decidedBy } : {}) }
+          : { decision: "reject", reason: "rejected by reviewer", ...(decidedBy ? { decidedBy } : {}) },
+      );
+      return true;
+    }
     const pending = this.#pendingReviews.get(requestId);
     if (!pending) return false;
     pending.resolve(decision);
     this.#pendingReviews.delete(requestId);
     return true;
+  }
+
+  /**
+   * Answer a pending plan checkpoint with an edited plan (P2-T2). The
+   * approval request is recorded as approved-with-edit; the orchestrator
+   * re-validates the plan and fails the run if it is invalid.
+   */
+  editPlanCheckpoint(requestId: string, plan: unknown, decidedBy: string): boolean {
+    const checkpoint = this.#pendingPlanCheckpoints.get(requestId);
+    if (!checkpoint) return false;
+    const decided = this.decideApprovalRequest({
+      id: requestId,
+      decision: "approved",
+      decidedBy,
+      reason: "approved with an edited plan",
+    });
+    if (!decided) return false;
+    this.#pendingPlanCheckpoints.delete(requestId);
+    checkpoint.resolve({ decision: "edit", plan, decidedBy });
+    return true;
+  }
+
+  async #planCheckpoint(
+    runId: string,
+    plan: import("@bremio/protocol").Plan,
+    digest: string,
+    signal: AbortSignal,
+  ): Promise<PlanCheckpointDecision> {
+    const sessionId = this.store.getRun(runId)?.sessionId ?? runId;
+    const { request, autoDenied } = this.createApprovalRequest({
+      sessionId,
+      runId,
+      actionClass: "write",
+      actionTarget: `plan:${runId}`,
+      actionDescription: `plan checkpoint: ${plan.tasks.length} task(s) — ${plan.summary}`,
+      actionDigest: digest,
+      risk: "medium",
+    });
+    if (autoDenied) {
+      this.#emit(runId, {
+        kind: "plan-checkpoint",
+        message: "plan checkpoint requested but no client was connected; failing closed",
+        data: { requestId: request.id, digest, autoDenied: true },
+      });
+      return { decision: "reject", reason: "no client was connected to review the plan", decidedBy: "system" };
+    }
+    this.store.updateRun(runId, { status: "pending_approval" });
+    this.#emit(runId, {
+      kind: "plan-checkpoint",
+      message: `plan checkpoint: approve, reject or edit ${plan.tasks.length} task(s)`,
+      data: { requestId: request.id, digest, plan },
+    });
+    const decision = await new Promise<PlanCheckpointDecision>((resolve) => {
+      const onAbort = () => {
+        this.#pendingPlanCheckpoints.delete(request.id);
+        resolve({ decision: "reject", reason: "run cancelled during plan checkpoint", decidedBy: "system" });
+      };
+      if (signal.aborted) return onAbort();
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.#pendingPlanCheckpoints.set(request.id, {
+        runId,
+        resolve: (d) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(d);
+        },
+      });
+    });
+    if (!signal.aborted) this.store.updateRun(runId, { status: "running" });
+    this.#emit(runId, {
+      kind: "plan-checkpoint",
+      message: `plan checkpoint: ${decision.decision}${decision.decision === "reject" ? ` (${decision.reason})` : ""}`,
+      data: { requestId: request.id, decision: decision.decision },
+    });
+    return decision;
   }
 
   async #execute(
@@ -1308,6 +1416,13 @@ export class RunRegistry {
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
             ...(turnIndex !== undefined ? { turnIndex } : {}),
             ...(priorTurns !== undefined ? { priorTurns } : {}),
+            ...(input.autoPr ? { autoPr: true } : {}),
+            ...(input.verifyCommand
+              ? {
+                  verifyCommand: input.verifyCommand,
+                  maxFixIterations: input.maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
+                }
+              : {}),
             hooks: {
               onStart: (id) =>
                 this.#emit(runId, { kind: "status", message: `${id} started`, agentId: id }),
@@ -1333,6 +1448,15 @@ export class RunRegistry {
             ...(input.controlMode ? { controlMode: input.controlMode } : {}),
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
             ...(turnIndex !== undefined ? { turnIndex } : {}),
+            maxFixIterations: input.maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
+            ...(input.maxReplans !== undefined ? { maxReplans: input.maxReplans } : {}),
+            ...(input.autoPr ? { autoPr: true } : {}),
+            ...(input.reviewPlan
+              ? {
+                  onPlanReady: (plan, ctx) =>
+                    this.#planCheckpoint(runId, plan, ctx.digest, controller.signal),
+                }
+              : {}),
             fetchUnresolvedMessages: async (targetId) => 
               this.store.getUnresolvedMessages(runId).filter(m => m.targetId === targetId),
             resolveArtifact: async (taskId, artifactPath) => {
@@ -1365,6 +1489,18 @@ export class RunRegistry {
                   kind: "status",
                   message: reason,
                   agentId,
+                }),
+              onReplan: (record) =>
+                this.#emit(runId, {
+                  kind: "status",
+                  message: `re-plan ${record.iteration}: replaced ${record.replaced.join(", ")} with ${record.added.join(", ")}`,
+                  data: { replan: record },
+                }),
+              onFixIteration: (iteration, reasons, tasks) =>
+                this.#emit(runId, {
+                  kind: "status",
+                  message: `fix iteration ${iteration}: ${reasons.join("; ")}`,
+                  data: { fixIteration: iteration, reasons, taskIds: tasks.map((t) => t.id) },
                 }),
               onTaskStart: (task, agentId) =>
                 this.#emit(runId, {
@@ -1501,6 +1637,14 @@ export class RunRegistry {
     } catch (err) {
       if (controller.signal.aborted) {
         await this.#settleCancellation(runId, { kind: "failed" });
+      } else if (err instanceof PlanCheckpointError) {
+        // A decision, not a provider failure: name it as such.
+        this.#emitTerminal(
+          runId,
+          { kind: "failed", message: err.message, data: { code: err.code } },
+          "failed",
+          { failureCode: err.code, failureMessage: err.message },
+        );
       } else {
         // Classify once here so the UI can say "rate limited" or "not signed
         // in" instead of showing the same generic failure for every cause.

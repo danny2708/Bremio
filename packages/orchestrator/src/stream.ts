@@ -6,7 +6,7 @@ import type {
   UsageSummary,
 } from "@bremio/protocol";
 import type { TaskLog } from "@bremio/workspace";
-import type { AgentToolVocabulary } from "@bremio/adapter-sdk";
+import { classifyAgentError, type AgentToolVocabulary } from "@bremio/adapter-sdk";
 
 export interface CollectedRun {
   outcome: RunOutcome;
@@ -138,7 +138,9 @@ export async function collectRun(
   }
 
   return {
-    outcome: outcome ?? { status: "failed", error: "run ended without a completed event" },
+    outcome: withErrorCode(
+      outcome ?? { status: "failed", error: "run ended without a completed event" },
+    ),
     assistantText: textParts.join("\n").trim(),
     commands,
     tests,
@@ -158,4 +160,15 @@ export async function collectRun(
       ? { actualReasoningLevel: [...reasoningLevels][0] }
       : {}),
   };
+}
+
+/**
+ * Every non-completed outcome leaves the collector with a code (P2-T1).
+ * An adapter's own classification wins; otherwise the shared classifier maps
+ * the message once, here, so no caller ever matches provider strings.
+ */
+export function withErrorCode(outcome: RunOutcome): RunOutcome {
+  if (outcome.status === "completed" || outcome.errorCode) return outcome;
+  if (outcome.status === "cancelled") return { ...outcome, errorCode: "cancelled" };
+  return { ...outcome, errorCode: classifyAgentError(outcome.error ?? "").code };
 }

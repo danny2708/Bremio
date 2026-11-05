@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentAdapter } from "@bremio/adapter-sdk";
-import type { AgentEvent, Attribution, ChangeType, Plan, Task, TaskResult, TurnFileChange, TaskMessage, MicrotaskProposal } from "@bremio/protocol";
+import type { AgentEvent, Attribution, ChangeType, Plan, Task, TaskFailureCode, TaskResult, TurnFileChange, TaskMessage, MicrotaskProposal } from "@bremio/protocol";
 import { TaskLog, type WorktreeManager } from "@bremio/workspace";
 
 const execFileAsync = promisify(execFile);
@@ -57,6 +57,13 @@ export interface RunPlanOptions {
   resolveArtifact?: (taskId: string, artifactPath: string) => Promise<{ path: string, content: string } | undefined>;
   /** Mark a message as handled in the daemon */
   markMessageHandled?: (messageId: string) => Promise<void>;
+  /**
+   * Results of tasks that already ran in an earlier pass of the same run
+   * (P2 fix/re-plan iterations). They count as settled dependencies and
+   * provide branches to inherit from; they are never re-run and are not part
+   * of the returned results.
+   */
+  priorResults?: readonly TaskResult[];
 }
 
 export interface ValidationContext {
@@ -163,6 +170,9 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
   const gitLock = new Mutex();
 
   const results = new Map<string, TaskResult>();
+  for (const prior of opts.priorResults ?? []) {
+    if (!planTaskIds.has(prior.taskId)) results.set(prior.taskId, prior);
+  }
   const pending = new Map(ordered.map((task) => [task.id, task] as const));
   /** Resolves with the finished task's id, so the race can evict it directly. */
   const running = new Map<string, Promise<string>>();
@@ -267,12 +277,12 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
       if (blocked.length > 0) {
         await settle(
           task,
-          failedResult(task, agentId, `blocked by unsuccessful dependencies: ${blocked.join(", ")}`),
+          failedResult(task, agentId, `blocked by unsuccessful dependencies: ${blocked.join(", ")}`, "blocked_by_dependency"),
         );
         continue;
       }
       if (!adapter) {
-        await settle(task, failedResult(task, agentId, `no adapter registered for "${agentId}"`));
+        await settle(task, failedResult(task, agentId, `no adapter registered for "${agentId}"`, "no_adapter"));
         continue;
       }
 
@@ -294,6 +304,7 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
               task,
               agentId,
               `task setup or execution failed: ${(err as Error).message}`,
+              "setup_failed",
             );
           }
           try {
@@ -321,6 +332,7 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
                 task,
                 agentId,
                 `blocked by unsuccessful dependencies: ${blocked.join(", ")}`,
+                "blocked_by_dependency",
               ),
         );
       }
@@ -415,6 +427,7 @@ async function runOneTask(
         await log.close();
         const error = `missing expected artifact: ${name}`;
         return {
+          errorCode: "missing_artifact",
           taskId: task.id,
           agentId,
           status: "failed",
@@ -454,6 +467,7 @@ async function runOneTask(
           // Unresolved artifact request escalates to a blocker
           const error = `unresolved artifact request from ${msg.sourceTaskId}: ${msg.payload}`;
           return {
+            errorCode: "missing_artifact",
             taskId: task.id,
             agentId,
             status: "failed",
@@ -505,6 +519,7 @@ async function runOneTask(
 
   let status = run.outcome.status;
   let error = run.outcome.error;
+  let errorCode: TaskFailureCode | undefined = run.outcome.errorCode;
   let findings = [] as TaskResult["findings"];
   const tests = task.kind === "test" ? run.tests : [];
   let summary =
@@ -515,6 +530,7 @@ async function runOneTask(
   if (timedOut) {
     status = "cancelled";
     error = `task timed out after ${opts.taskTimeoutMs}ms`;
+    errorCode = "timeout";
   }
 
   if (task.kind === "test" && status === "completed") {
@@ -522,9 +538,11 @@ async function runOneTask(
     if (!finalTest) {
       status = "failed";
       error = "test task completed without shell test evidence";
+      errorCode = "verification_missing";
     } else if (finalTest.exitCode !== 0) {
       status = "failed";
       error = `final test command exited ${finalTest.exitCode}: ${finalTest.command}`;
+      errorCode = "verification_failed";
     }
   }
 
@@ -536,6 +554,7 @@ async function runOneTask(
     } else {
       status = "failed";
       error = `review output invalid: ${review.error}`;
+      errorCode = "review_invalid";
     }
   }
 
@@ -592,11 +611,13 @@ async function runOneTask(
       : {}),
     ...(run.usage ? { usage: run.usage } : {}),
     ...(error ? { error } : {}),
+    ...(status !== "completed" ? { errorCode: errorCode ?? "unknown" } : {}),
   };
 }
 
 function cancelledResult(task: Task, agentId: string, error: string): TaskResult {
   return {
+    errorCode: "cancelled",
     taskId: task.id,
     agentId,
     status: "cancelled",
@@ -612,8 +633,14 @@ function cancelledResult(task: Task, agentId: string, error: string): TaskResult
   };
 }
 
-function failedResult(task: Task, agentId: string, error: string): TaskResult {
+function failedResult(
+  task: Task,
+  agentId: string,
+  error: string,
+  errorCode: TaskFailureCode = "unknown",
+): TaskResult {
   return {
+    errorCode,
     taskId: task.id,
     agentId,
     status: "failed",

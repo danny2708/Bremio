@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { TaskIdSchema } from "./task";
 import { TaskMessageSchema } from "./message";
+import { TaskFailureCodeSchema } from "./error-code";
 
 /** A finding raised while running or reviewing a task. */
 export const FindingSchema = z.object({
@@ -103,5 +104,7 @@ export const TaskResultSchema = z.object({
   actualReasoningLevel: ReasoningLevelSchema.optional(),
   usage: UsageSummarySchema.optional(),
   error: z.string().optional(),
+  /** Classified reason the task did not complete (P2-T1); absent when completed. */
+  errorCode: TaskFailureCodeSchema.optional(),
 });
 export type TaskResult = z.infer<typeof TaskResultSchema>;
