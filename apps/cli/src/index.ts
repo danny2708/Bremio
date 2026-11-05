@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { pino } from "pino";
+import { resolveWebSearchBackend } from "@bremio/adapter-sdk";
 import {
   LeadPlanError,
   PlanValidationError,
@@ -1340,6 +1341,12 @@ async function doctor(): Promise<void> {
  * more than a run delivers. MCP is derived from the adapters' own declared
  * runtime capabilities rather than a hardcoded provider list.
  */
+/** The configured web search backend, or why there is none (P3-T4). */
+function webSearchBackendLabel(): string {
+  const resolved = resolveWebSearchBackend();
+  return "backend" in resolved ? `"${resolved.backend.id}"` : `unconfigured (${resolved.reason})`;
+}
+
 function toolDeliveryLines(mcpCarriers: string[]): string[] {
   return [
     mcpCarriers.length > 0
@@ -1347,7 +1354,7 @@ function toolDeliveryLines(mcpCarriers: string[]): string[] {
       : "mcp servers:  not delivered — no adapter can attach MCP servers",
     "hooks:        .bremio/hooks.json commands at run:pre-plan/pre-task/post-task/pre-apply/pre-merge; non-zero exit vetoes",
     "skills:       playbooks opt-in per run (--skill <name>, .bremio/skills/) prepended to every prompt, ≤4000 est. tokens",
-    "web search:   not delivered — agents use their provider's native search, if any",
+    `web search:   backend ${webSearchBackendLabel()}; not offered to agents — they use their provider's native search, if any`,
   ];
 }
 

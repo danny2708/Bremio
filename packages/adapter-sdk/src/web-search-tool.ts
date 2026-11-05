@@ -11,34 +11,18 @@ export interface WebSearchToolOptions {
 }
 
 export interface WebSearchResult {
+  /**
+   * - `ok`: the backend answered (possibly with zero results).
+   * - `timed-out`: the timeout elapsed first.
+   * - `unconfigured`: no backend is configured; nothing left the machine.
+   */
+  status: "ok" | "timed-out" | "unconfigured";
   results: WebSearchResultItem[];
   duration: number;
   timedOut: boolean;
-}
-
-interface DuckDuckGoRelatedTopic {
-  Text: string;
-  FirstURL: string;
-  Result?: string;
-}
-
-interface DuckDuckGoTopicCategory {
-  Name: string;
-  Topics: DuckDuckGoRelatedTopic[];
-}
-
-type DuckDuckGoTopic = DuckDuckGoRelatedTopic | DuckDuckGoTopicCategory;
-
-interface DuckDuckGoResponse {
-  AbstractText?: string;
-  AbstractSource?: string;
-  AbstractURL?: string;
-  Heading?: string;
-  Answer?: string;
-  AnswerType?: string;
-  Results?: DuckDuckGoRelatedTopic[];
-  RelatedTopics?: DuckDuckGoTopic[];
-  Type?: string;
+  /** Which backend answered, or why none could. */
+  backend?: string;
+  reason?: string;
 }
 
 /** The policy answer for one search, from the caller's `ControlMode` matrix. */
@@ -48,13 +32,142 @@ export interface WebSearchPermissionCheck {
 }
 
 /**
- * Queries a search endpoint over the network.
+ * A search provider (docs/17 P3-T4). Pluggable so Bremio is not tied to one
+ * vendor, and so "no backend" can be an honest state instead of a default
+ * that quietly returns something that is not search results.
+ */
+export interface WebSearchBackend {
+  /** Short id for events and errors, e.g. "brave" or "json". */
+  readonly id: string;
+  /** Where queries go; shown to the permission check. */
+  readonly endpoint: string;
+  search(
+    query: string,
+    options: { maxResults: number; signal: AbortSignal; fetchFn: typeof globalThis.fetch },
+  ): Promise<WebSearchResultItem[]>;
+}
+
+async function getJson(
+  fetchFn: typeof globalThis.fetch,
+  url: string,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const response = await fetchFn(url, { signal, headers: { Accept: "application/json", ...headers } });
+  if (!response.ok) {
+    throw new Error(`search request failed: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+const asString = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/**
+ * Generic JSON search API: `GET <endpoint>?q=<query>&count=<n>` answering
+ * `{ "results": [{ "title", "url", "snippet" }] }`. Fits a self-hosted
+ * search proxy (e.g. a SearXNG/Tavily shim) without a vendor-specific parser.
+ */
+export function jsonSearchBackend(opts: {
+  endpoint: string;
+  apiKey?: string;
+  /** Header that carries the key; default `Authorization: Bearer <key>`. */
+  apiKeyHeader?: string;
+}): WebSearchBackend {
+  return {
+    id: "json",
+    endpoint: opts.endpoint,
+    async search(query, { maxResults, signal, fetchFn }) {
+      const url = new URL(opts.endpoint);
+      url.searchParams.set("q", query);
+      url.searchParams.set("count", String(maxResults));
+      const headers: Record<string, string> = {};
+      if (opts.apiKey) {
+        if (opts.apiKeyHeader) headers[opts.apiKeyHeader] = opts.apiKey;
+        else headers.Authorization = `Bearer ${opts.apiKey}`;
+      }
+      const data = (await getJson(fetchFn, url.toString(), headers, signal)) as { results?: unknown };
+      if (!Array.isArray(data?.results)) {
+        throw new Error('search backend "json" returned no "results" array');
+      }
+      return data.results
+        .map((r) => r as Record<string, unknown>)
+        .map((r) => ({ title: asString(r.title), url: asString(r.url), snippet: asString(r.snippet) }))
+        .filter((r) => r.url)
+        .slice(0, maxResults);
+    },
+  };
+}
+
+/** Brave Search API (`X-Subscription-Token`; results under `web.results`). */
+export function braveSearchBackend(opts: { apiKey: string; endpoint?: string }): WebSearchBackend {
+  const endpoint = opts.endpoint ?? "https://api.search.brave.com/res/v1/web/search";
+  return {
+    id: "brave",
+    endpoint,
+    async search(query, { maxResults, signal, fetchFn }) {
+      const url = new URL(endpoint);
+      url.searchParams.set("q", query);
+      url.searchParams.set("count", String(maxResults));
+      const data = (await getJson(fetchFn, url.toString(), { "X-Subscription-Token": opts.apiKey }, signal)) as {
+        web?: { results?: unknown };
+      };
+      const results = Array.isArray(data?.web?.results) ? data.web.results : [];
+      return results
+        .map((r) => r as Record<string, unknown>)
+        .map((r) => ({ title: asString(r.title), url: asString(r.url), snippet: asString(r.description) }))
+        .filter((r) => r.url)
+        .slice(0, maxResults);
+    },
+  };
+}
+
+/**
+ * Pick a backend from the environment. Keys are read by *name*
+ * (`BREMIO_WEB_SEARCH_API_KEY` unless `BREMIO_WEB_SEARCH_API_KEY_ENV` names
+ * another variable) so Bremio never stores a search credential itself.
+ *
+ * Returns `{ reason }` when nothing usable is configured — never a default
+ * backend the user did not choose.
+ */
+export function resolveWebSearchBackend(
+  env: Record<string, string | undefined> = process.env,
+): { backend: WebSearchBackend } | { reason: string } {
+  const kind = env.BREMIO_WEB_SEARCH_BACKEND?.trim();
+  if (!kind) {
+    return { reason: "no web search backend configured (set BREMIO_WEB_SEARCH_BACKEND to brave or json)" };
+  }
+  const keyVar = env.BREMIO_WEB_SEARCH_API_KEY_ENV?.trim() || "BREMIO_WEB_SEARCH_API_KEY";
+  const apiKey = env[keyVar]?.trim() || undefined;
+  const endpoint = env.BREMIO_WEB_SEARCH_ENDPOINT?.trim() || undefined;
+  if (kind === "brave") {
+    if (!apiKey) return { reason: `web search backend "brave" needs an API key in ${keyVar}` };
+    return { backend: braveSearchBackend({ apiKey, ...(endpoint ? { endpoint } : {}) }) };
+  }
+  if (kind === "json") {
+    if (!endpoint) return { reason: 'web search backend "json" needs BREMIO_WEB_SEARCH_ENDPOINT' };
+    const apiKeyHeader = env.BREMIO_WEB_SEARCH_API_KEY_HEADER?.trim() || undefined;
+    return {
+      backend: jsonSearchBackend({
+        endpoint,
+        ...(apiKey ? { apiKey } : {}),
+        ...(apiKeyHeader ? { apiKeyHeader } : {}),
+      }),
+    };
+  }
+  return { reason: `unknown web search backend "${kind}" (supported: brave, json)` };
+}
+
+/**
+ * Queries a search backend over the network.
  *
  * `checkPermission` is required and consulted before the request leaves the
- * machine. `ActionClass` has had a `network` cell since S2-T1, and the query
- * text — which can carry repository contents — goes to a third-party service,
- * so this is precisely the egress the matrix exists to gate. It was built
- * without consulting it.
+ * machine: the query text can carry repository contents to a third party,
+ * which is exactly the egress the `network` action class gates.
+ *
+ * Without a backend the tool answers `unconfigured` and sends nothing. It
+ * used to default to DuckDuckGo's Instant Answer API, which returns topic
+ * abstracts rather than search results — a default that looked like search
+ * and was not (docs/17 §2.1 axis H).
  */
 export class WebSearchTool {
   constructor(
@@ -63,21 +176,35 @@ export class WebSearchTool {
       query: string,
       endpoint: string,
     ) => WebSearchPermissionCheck,
+    private readonly backend?: WebSearchBackend,
     private readonly fetchFn: typeof globalThis.fetch = fetch,
-    private readonly endpoint = "https://api.duckduckgo.com/",
+    private readonly unconfiguredReason = "no web search backend configured",
   ) {}
 
-  async execute(
-    query: string,
-    options: WebSearchToolOptions = {},
-  ): Promise<WebSearchResult> {
+  /** Whether a backend is configured; `execute` answers `unconfigured` otherwise. */
+  get configured(): boolean {
+    return this.backend !== undefined;
+  }
+
+  async execute(query: string, options: WebSearchToolOptions = {}): Promise<WebSearchResult> {
     const started = Date.now();
     const { timeout, signal: externalSignal, maxResults = 5 } = options;
 
-    // Before the request, not after: a denied search must never leave.
-    const permission = this.checkPermission("network", query, this.endpoint);
+    // Before anything else: a denied search must never leave, and policy is
+    // the more useful answer than "unconfigured" when both apply.
+    const permission = this.checkPermission("network", query, this.backend?.endpoint ?? "(unconfigured)");
     if (!permission.allowed) {
       throw new Error(`web search denied: ${permission.reason}`);
+    }
+
+    if (!this.backend) {
+      return {
+        status: "unconfigured",
+        results: [],
+        duration: Date.now() - started,
+        timedOut: false,
+        reason: this.unconfiguredReason,
+      };
     }
 
     const abortController = new AbortController();
@@ -95,81 +222,31 @@ export class WebSearchTool {
     }
 
     try {
-      const params = new URLSearchParams({
-        q: query,
-        format: "json",
-        no_html: "1",
-        skip_disambig: "1",
-      });
-      const url = `${this.endpoint}?${params}`;
-      const response = await this.fetchFn(url, {
+      const results = await this.backend.search(query, {
+        maxResults,
         signal: combinedSignal,
-        headers: { Accept: "application/json" },
+        fetchFn: this.fetchFn,
       });
-      if (!response.ok) {
-        throw new Error(`search request failed: ${response.status} ${response.statusText}`);
-      }
-      const data = (await response.json()) as DuckDuckGoResponse;
-      const results = this.parseResponse(data, maxResults);
-      const duration = Date.now() - started;
-      return { results, duration, timedOut };
+      return {
+        status: "ok",
+        results,
+        duration: Date.now() - started,
+        timedOut,
+        backend: this.backend.id,
+      };
     } catch (err) {
       if (timedOut) {
-        const duration = Date.now() - started;
-        return { results: [], duration, timedOut: true };
+        return {
+          status: "timed-out",
+          results: [],
+          duration: Date.now() - started,
+          timedOut: true,
+          backend: this.backend.id,
+        };
       }
       throw err;
     } finally {
       clearTimeout(timeoutId);
     }
-  }
-
-  private parseResponse(
-    data: DuckDuckGoResponse,
-    maxResults: number,
-  ): WebSearchResultItem[] {
-    const items: WebSearchResultItem[] = [];
-
-    if (data.AbstractText && data.AbstractURL) {
-      items.push({
-        title: data.Heading || data.AbstractSource || "Summary",
-        url: data.AbstractURL,
-        snippet: data.AbstractText,
-      });
-    }
-
-    if (data.Results) {
-      for (const r of data.Results) {
-        if (items.length >= maxResults) break;
-        items.push(this.topicToItem(r));
-      }
-    }
-
-    if (data.RelatedTopics) {
-      for (const t of data.RelatedTopics) {
-        if (items.length >= maxResults) break;
-        if ("Topics" in t) {
-          for (const sub of t.Topics) {
-            if (items.length >= maxResults) break;
-            items.push(this.topicToItem(sub));
-          }
-        } else {
-          items.push(this.topicToItem(t));
-        }
-      }
-    }
-
-    return items.slice(0, maxResults);
-  }
-
-  private topicToItem(t: DuckDuckGoRelatedTopic): WebSearchResultItem {
-    const snippet = t.Result
-      ? t.Result.replace(/<[^>]+>/g, "").trim()
-      : t.Text;
-    return {
-      title: t.Text.split(" - ")[0] || t.Text,
-      url: t.FirstURL,
-      snippet,
-    };
   }
 }

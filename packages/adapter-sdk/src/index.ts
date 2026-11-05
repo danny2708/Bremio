@@ -55,6 +55,11 @@ export { CommandTool, type CommandToolOptions, type CommandResult } from "./comm
 
 export {
   WebSearchTool,
+  jsonSearchBackend,
+  braveSearchBackend,
+  resolveWebSearchBackend,
+  type WebSearchBackend,
+  type WebSearchPermissionCheck,
   type WebSearchResultItem,
   type WebSearchToolOptions,
   type WebSearchResult,
