@@ -122,6 +122,13 @@ async function pushAndOpen(
   deps: AutoPrDeps,
 ): Promise<AutoPrResult> {
   const ops = deps.ghRunner ? new GitOps(cwd, deps.ghRunner) : new GitOps(cwd);
+  // Refuse before pushing: a branch pushed for a PR that cannot be opened is
+  // a side effect on the remote with nothing to show for it.
+  try {
+    await ops.assertPullRequestPossible();
+  } catch (err) {
+    return { status: "failed", reason: (err as Error).message, branch };
+  }
   try {
     await ops.push({ branch, setUpstream: true });
   } catch (err) {

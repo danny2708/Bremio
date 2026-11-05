@@ -158,8 +158,8 @@ describe("P2-T7 auto-PR on green", () => {
     expect(execFileSync("git", ["--git-dir", bare, "branch"], { encoding: "utf8" }).trim()).toBe("");
   });
 
-  it("names the remedy when gh is not installed", async () => {
-    const { repo } = await repoWithRemote();
+  it("names the remedy when gh is not installed, before pushing anything", async () => {
+    const { repo, bare } = await repoWithRemote();
     const report = await runBremio({
       leadId: "claude",
       repoPath: repo,
@@ -170,6 +170,8 @@ describe("P2-T7 auto-PR on green", () => {
     }) as RunReport;
     expect(report.autoPr?.status).toBe("failed");
     expect(report.autoPr?.reason).toMatch(/GitHub CLI \(`gh`\) is not installed/);
+    // A PR that cannot be opened must not leave a pushed branch behind.
+    expect(execFileSync("git", ["--git-dir", bare, "branch"], { encoding: "utf8" }).trim()).toBe("");
   });
 
   it("Single: refuses direct-workspace changes and never runs without --auto-pr", async () => {

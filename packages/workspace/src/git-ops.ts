@@ -334,22 +334,11 @@ export class GitOps {
   }
 
   /**
-   * Open a pull request via GitHub CLI (`gh`).
-   *
-   * Classified as `network` (`docs/15` §2.4.1).
-   * Requires GitHub CLI installed, authenticated, and a GitHub remote.
+   * Check everything `createPullRequest` needs (GitHub remote, `gh` installed
+   * and authenticated) without changing anything, so a caller can refuse
+   * before it pushes a branch that would then have no PR.
    */
-  async createPullRequest(options: {
-    title: string;
-    body?: string;
-    draft?: boolean;
-    base?: string;
-    head?: string;
-  }): Promise<{ url: string }> {
-    if (!options.title.trim()) {
-      throw new GitOpsError("a pull request title is required");
-    }
-
+  async assertPullRequestPossible(): Promise<void> {
     const remotes = await this.remotes();
     const hasGitHubRemote = remotes.some((r) =>
       (r.refs.fetch && /github\.com/i.test(r.refs.fetch)) ||
@@ -375,6 +364,26 @@ export class GitOps {
         `GitHub CLI is not authenticated (${msg}) — run 'gh auth login' first`,
       );
     }
+  }
+
+  /**
+   * Open a pull request via GitHub CLI (`gh`).
+   *
+   * Classified as `network` (`docs/15` §2.4.1).
+   * Requires GitHub CLI installed, authenticated, and a GitHub remote.
+   */
+  async createPullRequest(options: {
+    title: string;
+    body?: string;
+    draft?: boolean;
+    base?: string;
+    head?: string;
+  }): Promise<{ url: string }> {
+    if (!options.title.trim()) {
+      throw new GitOpsError("a pull request title is required");
+    }
+
+    await this.assertPullRequestPossible();
 
     const args = ["pr", "create", "--title", options.title.trim()];
     if (options.body !== undefined) {
