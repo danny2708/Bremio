@@ -1,0 +1,19 @@
+{
+  "name": "@bremio/bench",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "bremio-bench: fixed task-success benchmark for Single and Team runs (docs/18).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@bremio/adapter-sdk": "workspace:*",
+    "@bremio/orchestrator": "workspace:*",
+    "@bremio/protocol": "workspace:*",
+    "@bremio/workspace": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}

@@ -12,6 +12,7 @@
     "@bremio/adapter-claude": "workspace:*",
     "@bremio/adapter-codex": "workspace:*",
     "@bremio/adapter-opencode": "workspace:*",
+    "@bremio/bench": "workspace:*",
     "@bremio/adapter-sdk": "workspace:*",
     "@bremio/orchestrator": "workspace:*",
     "@bremio/policy": "workspace:*",

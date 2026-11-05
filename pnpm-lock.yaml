@@ -63,6 +63,9 @@ importers:
       '@bremio/adapter-sdk':
         specifier: workspace:*
         version: link:../../packages/adapter-sdk
+      '@bremio/bench':
+        specifier: workspace:*
+        version: link:../../packages/bench
       '@bremio/daemon':
         specifier: workspace:*
         version: link:../daemon
@@ -213,6 +216,24 @@ importers:
       '@bremio/protocol':
         specifier: workspace:*
         version: link:../protocol
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
+
+  packages/bench:
+    dependencies:
+      '@bremio/adapter-sdk':
+        specifier: workspace:*
+        version: link:../adapter-sdk
+      '@bremio/orchestrator':
+        specifier: workspace:*
+        version: link:../orchestrator
+      '@bremio/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@bremio/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       zod:
         specifier: ^4.0.0
         version: 4.4.3

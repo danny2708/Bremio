@@ -17,6 +17,7 @@ export default defineConfig({
       "@bremio/adapter-local": path.resolve(__dirname, "packages/adapter-local/src/index.ts"),
       "@bremio/daemon-client": path.resolve(__dirname, "packages/daemon-client/src/index.ts"),
       "@bremio/memory": path.resolve(__dirname, "packages/memory/src/index.ts"),
+      "@bremio/bench": path.resolve(__dirname, "packages/bench/src/index.ts"),
     },
   },
   test: {
