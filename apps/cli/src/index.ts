@@ -91,6 +91,7 @@ ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --lead <agent>          Lead for Team mode (distributes sub-tasks).
   --worker <agent>        Available workers for Team mode (can be passed multiple times).
   --mcp <id>              Attach an MCP server from .bremio/mcp-servers.json (repeatable; autopilot only).
+  --skill <name>          Inject a playbook from .bremio/skills/<name>.md into every prompt (repeatable).
 
 ${c.bold("run-info")} show run artifacts and blackboard context
     Usage: bremio run-info <runId> <context|artifacts|threads>
@@ -159,6 +160,13 @@ function mcpServerIds(values: { mcp?: string | string[] }): string[] {
   return [...new Set((Array.isArray(raw) ? raw : [raw]).map((id) => id.trim()).filter(Boolean))];
 }
 
+/** `--skill <name>` (repeatable): playbooks from .bremio/skills/ to inject. */
+function skillNames(values: { skill?: string | string[] }): string[] {
+  const raw = values.skill;
+  if (!raw) return [];
+  return [...new Set((Array.isArray(raw) ? raw : [raw]).map((n) => n.trim()).filter(Boolean))];
+}
+
 function parseCli() {
   return parseArgs({
     allowPositionals: true,
@@ -168,6 +176,7 @@ function parseCli() {
       lead: { type: "string" },
       worker: { type: "string", multiple: true },
       mcp: { type: "string", multiple: true },
+      skill: { type: "string", multiple: true },
       repo: { type: "string" },
       prompt: { type: "string" },
       model: { type: "string" },
@@ -481,6 +490,7 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
     agentId: (mode === "single" ? values.agent : values.lead) as string,
     ...(workers.length > 0 ? { workerIds: workers } : {}),
     ...(mcpServerIds(values).length > 0 ? { mcpServers: mcpServerIds(values) } : {}),
+    ...(skillNames(values).length > 0 ? { skills: skillNames(values) } : {}),
     ...(values.model ? { model: values.model } : {}),
     ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
     ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
@@ -730,6 +740,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       agentId: (mode === "single" ? values.agent : values.lead) as string,
       ...(runWorkers.length > 0 ? { workerIds: runWorkers } : {}),
       ...(mcpServerIds(values).length > 0 ? { mcpServers: mcpServerIds(values) } : {}),
+      ...(skillNames(values).length > 0 ? { skills: skillNames(values) } : {}),
       ...(values.model ? { model: values.model } : {}),
       ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
       ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
@@ -751,7 +762,11 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   // docs/17 P3: the in-process path runs in the orchestrator's default
   // (autopilot) mode, so its MCP gate is that mode's policy.
   const prepared = await prepareRunExtensions(
-    { repoPath: path.resolve(values.repo as string), mcpServers: mcpServerIds(values) },
+    {
+      repoPath: path.resolve(values.repo as string),
+      mcpServers: mcpServerIds(values),
+      skills: skillNames(values),
+    },
     pluginManager.getRegistry(),
   );
   if (prepared.error) {
@@ -1331,7 +1346,7 @@ function toolDeliveryLines(mcpCarriers: string[]): string[] {
       ? `mcp servers:  opt-in per run (--mcp <id>, .bremio/mcp-servers.json) → ${mcpCarriers.join(", ")}`
       : "mcp servers:  not delivered — no adapter can attach MCP servers",
     "hooks:        .bremio/hooks.json commands at run:pre-plan/pre-task/post-task/pre-apply/pre-merge; non-zero exit vetoes",
-    "skills:       not delivered — skill content is not injected into prompts",
+    "skills:       playbooks opt-in per run (--skill <name>, .bremio/skills/) prepended to every prompt, ≤4000 est. tokens",
     "web search:   not delivered — agents use their provider's native search, if any",
   ];
 }

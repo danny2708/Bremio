@@ -10,6 +10,7 @@ import type { AgentEvent } from "@bremio/protocol";
 import type { AgentRegistry } from "../registry";
 import { mcpPolicyGate } from "./mcp-config";
 import { describeHookVeto } from "./hooks-config";
+import { formatPlaybooks, type PlaybookSelection } from "./playbooks";
 
 /**
  * Per-run additions Bremio makes to every adapter call (docs/17 P3).
@@ -33,6 +34,13 @@ export interface RunExtensions {
   hooks?: HookManager;
   /** Repository root, passed to hooks as context. */
   repoPath?: string;
+  /**
+   * Playbooks (P3-T3) prepended to every agent prompt of the run. Prepended
+   * to `prompt` rather than `systemPrompt` because codex and antigravity do
+   * not honour `systemPrompt`; one channel every adapter reads is the honest
+   * choice.
+   */
+  playbooks?: PlaybookSelection;
 }
 
 /** Notes raised before the adapter's own events, emitted as `log` events. */
@@ -40,6 +48,13 @@ type Note = { level: "info" | "warn"; message: string };
 
 async function preflightNotes(adapter: AgentAdapter, ext: RunExtensions): Promise<Note[]> {
   const notes: Note[] = [];
+  const playbooks = ext.playbooks?.playbooks ?? [];
+  if (playbooks.length > 0) {
+    notes.push({
+      level: "info",
+      message: `playbooks injected: ${playbooks.map((p) => p.name).join(", ")} (~${ext.playbooks!.tokens} tokens, ${ext.playbooks!.method})`,
+    });
+  }
   const servers = ext.mcpServers ?? [];
   if (servers.length > 0) {
     const caps = await adapter.getRuntimeCapabilities().catch(() => undefined);
@@ -64,8 +79,10 @@ async function preflightNotes(adapter: AgentAdapter, ext: RunExtensions): Promis
 }
 
 function extendRequest(req: AgentRunRequest, ext: RunExtensions): AgentRunRequest {
+  const injected = formatPlaybooks(ext.playbooks?.playbooks ?? []);
   return {
     ...req,
+    ...(injected ? { prompt: `${injected}\n\n${req.prompt}` } : {}),
     mcpToolGate: mcpPolicyGate(ext.controlMode),
     ...(ext.mcpServers && ext.mcpServers.length > 0 ? { mcpServers: ext.mcpServers } : {}),
   };

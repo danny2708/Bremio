@@ -122,6 +122,8 @@ export interface StartRunInput {
   controlMode?: import("@bremio/policy").ControlMode;
   /** MCP server ids from `.bremio/mcp-servers.json` to attach (docs/17 P3-T1). */
   mcpServers?: string[];
+  /** Playbook names from `.bremio/skills/` to inject into every prompt (P3-T3). */
+  skills?: string[];
 }
 
 /**

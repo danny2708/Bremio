@@ -3,6 +3,7 @@ import type { AgentRegistry } from "../registry";
 import { extendRegistry } from "./extend-adapter";
 import { assertMcpRequestUsable, loadMcpManifests, selectMcpServers } from "./mcp-config";
 import { loadHookManager } from "./hooks-config";
+import { selectPlaybooks } from "./playbooks";
 
 export interface RunExtensionInput {
   repoPath: string;
@@ -10,6 +11,10 @@ export interface RunExtensionInput {
   controlMode?: ControlMode;
   /** MCP server ids the run opted into (P3-T1). */
   mcpServers?: string[];
+  /** Playbook names from `.bremio/skills/` to inject (P3-T3). */
+  skills?: string[];
+  /** Token budget for the injected playbooks. */
+  playbookTokenBudget?: number;
 }
 
 export interface PreparedRunExtensions {
@@ -41,12 +46,14 @@ export async function prepareRunExtensions(
     // An unreadable hooks file fails the run (below): the user configured a
     // guard, and running without it would be the silent skip P3 forbids.
     const hooks = await loadHookManager(input.repoPath);
+    const playbooks = await selectPlaybooks(input.repoPath, input.skills, input.playbookTokenBudget);
     return {
       registry: extendRegistry(registry, {
         controlMode,
         mcpServers: servers,
         repoPath: input.repoPath,
         ...(hooks ? { hooks } : {}),
+        ...(playbooks.playbooks.length > 0 ? { playbooks } : {}),
       }),
     };
   } catch (err) {
