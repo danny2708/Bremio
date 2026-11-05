@@ -90,3 +90,51 @@ Read them only when a task names an earlier decision.
 
 **Verification**
 - Provider source code and CLI behaviors were reviewed.
+
+## Parity — Option C (docs/17 P0–P3)
+
+### P0…P3 — hygiene, bench, closed loop, real tools
+- **agent:** Claude (tech lead) + three parallel worktree forks (P1, P2, P3)
+- **time:** 2026-11-05T01:20 → 2026-11-05T14:30
+- **branch:** claude/dreamy-rubin-5tnzfg (forks merged from `worktree-agent-*`)
+- **task(s):** P0-T1…T6, P1-T1…T5, P2-T1…T7, P3-T1…T5, P3-FIX, P2-FIX
+- **status:** done
+
+**Did**
+- P0: typecheck green again (S13-T7 broke it; the panel's renderer copy also
+  lacked the new cases — drift test now covers them); CI on ubuntu+windows;
+  one version pinned by release smoke; this log archived; doctor states which
+  tools reach agents.
+- P1: `packages/bench` + 12 self-checked cases + `bremio bench run|report|check`
+  + `bench` ledger scope ignored by stats/calibration + dispatch-only workflow.
+- P2: `errorCode` on outcomes; bounded Team fix loop and Single `--verify` loop;
+  `--review-plan` checkpoint (CLI + daemon route); definition of done;
+  `--max-replans`; `--auto-pr`. `docs/19`.
+- P3: run-scoped adapter wrapper delivering opted-in MCP (Claude, Codex),
+  five veto hook points, playbooks under a token budget, pluggable web search,
+  `bremio mcp serve`. `docs/20`.
+- Review fixes by the tech lead: trust-on-digest for repo configs that spawn
+  host processes (`bremio trust`); auto-PR refuses before pushing when `gh`
+  or a GitHub remote is missing.
+
+**Decided**
+- Plan checkpoint without a terminal **rejects** (docs/14 ADR-4 fail-closed),
+  overriding the directive's "approve unless policy denies"; the doc wins.
+- An untrusted hooks file **denies** rather than being skipped: a skipped guard
+  reads as a passed one. Playbooks are prompt text and are not trust-gated.
+- `SPRINT-LOG.md` stays in place: `docs/10` and the prompt packs reference it.
+- Library default for `maxFixIterations` is 0 (reports unchanged); CLI and
+  daemon default to 2.
+
+**Blocked / handed off**
+- The P1 exit criterion (a real baseline number) and the docs/17 gate need a
+  provider-backed `bremio bench` run; no quota was spent in this session.
+- Follow-ups recorded on the board: P3-F1, P3-F2, P2-F1, P2-F2.
+
+**Verification**
+- Each fork: typecheck, test, build, release:smoke green in its worktree, with
+  red-checks per guard (listed in each merge's fork report).
+- Tech lead: trust guard red-checked (4/7 trust tests fail without it); auto-PR
+  push-order test red before the fix, green after.
+- Merged branch (`corepack pnpm release:check` equivalent): typecheck clean;
+  test 111 files, 1410 passed / 3 skipped; build OK; release smoke PASS.

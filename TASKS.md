@@ -317,9 +317,16 @@ Approved 2026-11-05. P4–P7 wait for the benchmark gate at the end of P3.
 | [x] | P0-T4 | Reconcile this board (S9-T7/S9-T8) | S | — |
 | [x] | P0-T5 | Archive `PROGRESS.md` Sprints 0–12 to `docs/archive/` | S | — |
 | [x] | P0-T6 | `bremio doctor` states plainly which tools reach agents | S | — |
-| [ ] | P1-T1…T5 | `bremio-bench`: case format, seed suite, runner, report, dispatch-only CI | L | P0 |
-| [ ] | P2-T1…T7 | Closed loop: error codes, plan checkpoint, fix loops, re-plan, definition of done, auto-PR | L | P0 |
-| [ ] | P3-T1…T5 | Real tools: MCP pass-through, lifecycle hooks, skills as playbooks, web search, Bremio MCP server | L | P0 |
+| [x] | P1-T1…T5 | `bremio-bench`: case format, 12 self-checked seed cases, runner, report, dispatch-only CI (`docs/18`). **Exit criterion open:** no real baseline number yet — needs one provider-backed run | L | P0 |
+| [x] | P2-T1…T7 | Closed loop: error codes, plan checkpoint, fix loops, re-plan, definition of done, auto-PR (`docs/19`). Panel UI for the checkpoint not built | L | P0 |
+| [x] | P3-T1…T5 | Real tools: MCP to Claude + Codex (OpenCode/agy stay `mcp:false`), hooks with veto, playbooks, pluggable web search, `bremio mcp serve` (`docs/20`) | L | P0 |
+| [x] | P3-FIX | Trust-gate `.bremio/hooks.json` and `mcp-servers.json` (`bremio trust`): a committed or agent-written file must not run on the host | M | P3 |
+| [x] | P2-FIX | Auto-PR checks `gh` + remote before pushing | S | P2 |
+| [ ] | GATE | Run `bremio bench` against real providers (Single claude, Single codex, Team claude→codex) before vs. with `--max-fix-iterations`; decide P4–P7 from the delta | M | P1, P2 |
+| [ ] | P3-F1 | Daemon `/git/push` and `/git/pr` routes trust the client and run no policy check (found during P2) | S | — |
+| [ ] | P3-F2 | Daemon `/blackboard` POST accepts its body without schema validation (found during P3) | S | — |
+| [ ] | P2-F1 | Standalone CLI escalation path (Single→Team) does not forward fix/replan/auto-PR options | S | — |
+| [ ] | P2-F2 | Plan-checkpoint panel UI (daemon route exists) | M | — |
 
 ---
 

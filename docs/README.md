@@ -32,6 +32,8 @@ results back into one place.
 | 16 | [16-munder-difflin-integration-plan.md](16-munder-difflin-integration-plan.md) | Proposed selective integration: runtime guard, reviewed memory, blackboard and bounded collaboration |
 | 17 | [17-parity-assessment-and-roadmap.md](17-parity-assessment-and-roadmap.md) | Completeness scorecard vs. Devin/Lovable, strategic options, phased parity roadmap |
 | 18 | [18-bench.md](18-bench.md) | bremio-bench: case format, adding cases, running, what the numbers mean, quota |
+| 19 | [19-closed-loop.md](19-closed-loop.md) | Closed loop: fix iterations, Single verify, plan checkpoint, re-plan, definition of done, auto-PR |
+| 20 | [20-tools-delivery.md](20-tools-delivery.md) | What reaches agents: MCP pass-through, config trust, hooks, playbooks, web search, `bremio mcp serve` |
 | 99 | [99-risks-and-open-questions.md](99-risks-and-open-questions.md) | **Read before coding.** ROI, load-bearing risks, items to verify |
 
 ## Status
