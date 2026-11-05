@@ -35,7 +35,7 @@ results back into one place.
 
 ## Status
 
-- Code status (2026-07-23): `1.0.0` ships the CLI and Ink TUI, a
+- Code status (2026-07-23, package now `1.3.0`): `1.0.0` shipped the CLI and Ink TUI, a
   durable loopback daemon, and a VS Code panel. Team execution is
   dependency-aware and parallel (default concurrency 2), while git worktree
   mutations stay serialized. Reports, cancellation states, diagnostics,

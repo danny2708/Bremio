@@ -7,6 +7,24 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8"));
+// Docs that tell users which tarball to install must match the package.
+// They drifted twice (README said 1.0.0 and installed 1.2.0 while the package
+// was 1.3.0), so the release gate pins them.
+for (const doc of ["README.md", path.join("docs", "07-operations.md")]) {
+  const text = await readFile(path.join(repoRoot, doc), "utf8");
+  for (const match of text.matchAll(/bremio-(\d+\.\d+\.\d+)\.tgz/g)) {
+    if (match[1] !== packageJson.version) {
+      throw new Error(`${doc} references bremio-${match[1]}.tgz; package is ${packageJson.version}`);
+    }
+  }
+}
+const extensionJson = JSON.parse(
+  await readFile(path.join(repoRoot, "apps", "vscode-extension", "package.json"), "utf8"),
+);
+if (extensionJson.version !== packageJson.version) {
+  throw new Error(`extension version ${extensionJson.version} != package ${packageJson.version}`);
+}
+
 const scratch = await mkdtemp(path.join(os.tmpdir(), "bremio-release-smoke-"));
 
 try {
@@ -61,6 +79,9 @@ try {
   const doctor = doctorResult.stdout;
   for (const adapter of ["claude", "codex", "antigravity", "opencode"]) {
     if (!doctor.includes(adapter)) throw new Error(`doctor omitted ${adapter}`);
+  }
+  if (!doctor.includes("tools delivered to agents")) {
+    throw new Error("doctor no longer states which tools reach agents");
   }
 
   console.log(`PASS clean packed install: bremio ${version}`);
