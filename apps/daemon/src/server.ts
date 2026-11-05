@@ -43,6 +43,8 @@ const StartRunSchema = z.object({
   sessionId: z.string().min(1).optional(),
   workspaceStrategy: z.enum(["direct-workspace", "isolated-worktree"]).optional(),
   controlMode: z.enum(["plan", "approve", "autopilot"]).optional(),
+  /** Team fix iterations after a failed gate (P2-T3); 0 disables. */
+  maxFixIterations: z.number().int().min(0).max(10).optional(),
 });
 
 const MergeSchema = z.object({

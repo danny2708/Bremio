@@ -57,6 +57,13 @@ export interface RunPlanOptions {
   resolveArtifact?: (taskId: string, artifactPath: string) => Promise<{ path: string, content: string } | undefined>;
   /** Mark a message as handled in the daemon */
   markMessageHandled?: (messageId: string) => Promise<void>;
+  /**
+   * Results of tasks that already ran in an earlier pass of the same run
+   * (P2 fix/re-plan iterations). They count as settled dependencies and
+   * provide branches to inherit from; they are never re-run and are not part
+   * of the returned results.
+   */
+  priorResults?: readonly TaskResult[];
 }
 
 export interface ValidationContext {
@@ -163,6 +170,9 @@ export async function runPlan(opts: RunPlanOptions): Promise<TaskResult[]> {
   const gitLock = new Mutex();
 
   const results = new Map<string, TaskResult>();
+  for (const prior of opts.priorResults ?? []) {
+    if (!planTaskIds.has(prior.taskId)) results.set(prior.taskId, prior);
+  }
   const pending = new Map(ordered.map((task) => [task.id, task] as const));
   /** Resolves with the finished task's id, so the race can evict it directly. */
   const running = new Map<string, Promise<string>>();

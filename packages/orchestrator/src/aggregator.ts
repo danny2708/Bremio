@@ -33,9 +33,13 @@ export interface RunReport {
     failed: number;
     cancelled: number;
     filesChanged: number;
+    /** Failed checks a fix iteration re-ran (P2-T3); excluded from `failed`. */
+    superseded?: number;
   };
   /** Why this flow mode (single/team) was chosen, if automatic. */
   autoModeReason?: string;
+  /** Bounded fix iterations after a failed gate (P2-T3); absent when not needed. */
+  fixLoop?: import("./fix-loop").FixLoopReport;
 }
 
 export type BremioRunReport = RunReport | import("./single-run").SingleRunReport;

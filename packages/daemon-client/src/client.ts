@@ -100,6 +100,8 @@ export interface StartRunRequest {
   sessionId?: string;
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
   controlMode?: string;
+  /** Team fix iterations after a failed gate (P2-T3); daemon default applies when omitted. */
+  maxFixIterations?: number;
 }
 
 async function readEndpointFile(file: string): Promise<DaemonEndpoint | undefined> {

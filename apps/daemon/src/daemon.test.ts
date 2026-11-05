@@ -137,6 +137,22 @@ describe("daemon HTTP surface", () => {
     expect(registry.list()).toHaveLength(0);
   });
 
+  it("rejects an unbounded or negative fix-iteration count (P2-T3)", async () => {
+    const registry = await freshRegistry();
+    const handle = await daemon(registry);
+    for (const maxFixIterations of [-1, 11, 1.5]) {
+      const response = await call(handle, "/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "team", repoPath: "/tmp/x", prompt: "p", agentId: "claude", maxFixIterations,
+        }),
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(registry.list()).toHaveLength(0);
+  });
+
   it("404s events for an unknown run", async () => {
     const handle = await daemon();
     expect((await call(handle, "/runs/does-not-exist/events")).status).toBe(404);

@@ -70,7 +70,19 @@ export {
   LEAD_SYSTEM_PROMPT,
 } from "./plan-schema";
 
-export { collectRun, type CollectedRun } from "./stream";
+export { collectRun, withErrorCode, type CollectedRun } from "./stream";
+
+export {
+  DEFAULT_MAX_FIX_ITERATIONS,
+  evaluateGateWithFixes,
+  fixLoopPolicyBlock,
+  fixLoopStopReason,
+  planFixIteration,
+  runTeamFixLoop,
+  type FixIterationRecord,
+  type FixLoopReport,
+  type FixLoopStatus,
+} from "./fix-loop";
 
 export {
   evaluateQualityGate,

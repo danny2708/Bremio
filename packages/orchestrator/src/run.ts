@@ -31,6 +31,7 @@ import {
   type RoutingConfig,
 } from "./routing-config";
 import { runPlan, type SchedulerHooks } from "./scheduler";
+import { runTeamFixLoop } from "./fix-loop";
 import type { SingleRunFallback } from "./single-run";
 import { validatePlan } from "./validator";
 
@@ -39,6 +40,8 @@ export interface RunBremioHooks extends SchedulerHooks {
   onLeadEvent?(event: AgentEvent): void;
   onPlan?(plan: Plan, assign: Map<string, string>): void;
   onFallback?(reason: string, agentId: string): void;
+  /** A fix iteration (P2-T3) is about to run these tasks for these gate reasons. */
+  onFixIteration?(iteration: number, reasons: readonly string[], tasks: readonly Task[]): void;
 }
 
 export interface RunBremioOptions {
@@ -92,6 +95,13 @@ export interface RunBremioOptions {
   providerSessionId?: string;
   /** If specified, overrides calibration-gated dynamic microtask expansion. */
   enableDynamicExpansion?: boolean;
+  /**
+   * Bounded fix iterations after a failed quality gate (P2-T3). The library
+   * default is 0 (off); the CLI and daemon pass DEFAULT_MAX_FIX_ITERATIONS.
+   */
+  maxFixIterations?: number;
+  /** Stop fix iterations once their provider-reported cost reaches this. */
+  maxFixCostUsd?: number;
 }
 
 /** Generate a sortable, human-readable run id: run-YYYYMMDD-HHMMSS-xxxx. */
@@ -360,9 +370,7 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     }
   }
 
-  const results = await runPlan({
-    plan,
-    assign,
+  const planOptions = {
     registry,
     workspace,
     runDir,
@@ -377,7 +385,33 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     resolveArtifact: opts.resolveArtifact,
     markMessageHandled: opts.markMessageHandled,
     hooks: opts.hooks,
+  };
+  const firstPass = await runPlan({ plan, assign, ...planOptions });
+
+  // P2-T3: bounded fix iterations. With maxFixIterations 0 (library default)
+  // this returns the first pass unchanged.
+  const fixed = await runTeamFixLoop({
+    plan,
+    assign,
+    results: firstPass,
+    bounds: {
+      maxIterations: Math.max(0, Math.trunc(opts.maxFixIterations ?? 0)),
+      ...(opts.maxFixCostUsd !== undefined ? { maxCostUsd: opts.maxFixCostUsd } : {}),
+      controlMode,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      ...(opts.stopRequested ? { stopRequested: opts.stopRequested } : {}),
+    },
+    execute: (iterationPlan, iterationAssign, prior) =>
+      runPlan({ ...planOptions, plan: iterationPlan, assign: iterationAssign, priorResults: prior }),
+    onIteration: (iteration, reasons, tasks) => {
+      logger?.info({ iteration, reasons, tasks: tasks.map((t) => t.id) }, "fix iteration");
+      opts.hooks?.onFixIteration?.(iteration, reasons, tasks);
+    },
   });
+  const results = fixed.results;
+  for (const [taskId, agentId] of fixed.assign) {
+    if (!reasonByTask.has(taskId)) reasonByTask.set(taskId, `fix loop (${agentId}: same agent as the work it continues)`);
+  }
 
   const leadIdentity = observedIdentity(observedLeadModels, observedLeadReasoningLevels);
   const report = buildReport({
@@ -392,12 +426,30 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     runDir,
     controlMode,
     baseBranch,
-    plan,
-    assign,
+    plan: fixed.plan,
+    assign: fixed.assign,
     results,
     reasonByTask,
     ...(opts.autoModeReason ? { autoModeReason: opts.autoModeReason } : {}),
   });
+  // "disabled" (maxFixIterations 0) keeps the report byte-for-byte as before P2.
+  if (fixed.report.status !== "not-needed" && fixed.report.status !== "disabled") {
+    // Superseded checks stay visible in report.tasks; the gate is the one the
+    // fix loop computed with them excluded (and identical to buildReport's
+    // when nothing was superseded).
+    report.qualityGate = fixed.gate;
+    report.fixLoop = fixed.report;
+    // A superseded check's failure was re-run by its fix chain; count it
+    // separately so `failed` means "failed and still standing".
+    const superseded = new Set(fixed.report.superseded);
+    const supersededFailures = results.filter(
+      (r) => superseded.has(r.taskId) && r.status === "failed",
+    ).length;
+    if (supersededFailures > 0) {
+      report.summary.failed -= supersededFailures;
+      report.summary.superseded = supersededFailures;
+    }
+  }
 
   await fs.writeFile(
     path.join(runDir, "report.json"),

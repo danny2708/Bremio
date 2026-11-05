@@ -9,6 +9,7 @@ import {
   loadRoutingConfig,
   getDefaultRoutingConfig,
   type BremioRunReport,
+  DEFAULT_MAX_FIX_ITERATIONS,
 } from "@bremio/orchestrator";
 import type { ReasoningLevel, AgentEvent } from "@bremio/protocol";
 import { createHash } from "node:crypto";
@@ -119,6 +120,8 @@ export interface StartRunInput {
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
   /** Control mode for execution: plan | approve | autopilot. */
   controlMode?: import("@bremio/policy").ControlMode;
+  /** Team fix iterations after a failed gate (P2-T3); default DEFAULT_MAX_FIX_ITERATIONS. */
+  maxFixIterations?: number;
 }
 
 /**
@@ -1322,6 +1325,7 @@ export class RunRegistry {
             ...(input.controlMode ? { controlMode: input.controlMode } : {}),
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
             ...(turnIndex !== undefined ? { turnIndex } : {}),
+            maxFixIterations: input.maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
             fetchUnresolvedMessages: async (targetId) => 
               this.store.getUnresolvedMessages(runId).filter(m => m.targetId === targetId),
             resolveArtifact: async (taskId, artifactPath) => {
@@ -1354,6 +1358,12 @@ export class RunRegistry {
                   kind: "status",
                   message: reason,
                   agentId,
+                }),
+              onFixIteration: (iteration, reasons, tasks) =>
+                this.#emit(runId, {
+                  kind: "status",
+                  message: `fix iteration ${iteration}: ${reasons.join("; ")}`,
+                  data: { fixIteration: iteration, reasons, taskIds: tasks.map((t) => t.id) },
                 }),
               onTaskStart: (task, agentId) =>
                 this.#emit(runId, {

@@ -17,6 +17,7 @@ import {
   resolveEscalationApproval,
   type RunBremioHooks,
   type SingleRunHooks,
+  DEFAULT_MAX_FIX_ITERATIONS,
 } from "@bremio/orchestrator";
 import { executionToCollaboration, validateCombination, type WorkspaceStrategy } from "@bremio/policy";
 import { ExecutionModeSchema, type ReasoningLevel, type TaskStatus } from "@bremio/protocol";
@@ -97,6 +98,7 @@ ${c.bold("run-info")} show run artifacts and blackboard context
   --reasoning <level>     Single-agent or Team-lead reasoning level.
   --timeout <seconds>     Hard timeout for the Single run or each Team task.
   --concurrency <n>       Team tasks to run at once (default: 2, dependency-safe).
+  --max-fix-iterations <n> Team: bounded fix chains after a failed gate (default: 2, 0 = off).
   --capacity-routing      Opt in to conservative Team capacity routing.
   --db <path>             Override the AQT database used for capacity routing.
   --comparison <id>       Link this run to a controlled Single/Team experiment.
@@ -164,6 +166,7 @@ function parseCli() {
       reasoning: { type: "string" },
       timeout: { type: "string" },
       concurrency: { type: "string" },
+      "max-fix-iterations": { type: "string" },
       run: { type: "string" },
       base: { type: "string" },
       strategy: { type: "string" },
@@ -467,6 +470,9 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
     ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
     ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
     ...(values.concurrency !== undefined ? { maxConcurrency: Number(values.concurrency) } : {}),
+    ...(values["max-fix-iterations"] !== undefined
+      ? { maxFixIterations: Number(values["max-fix-iterations"]) }
+      : {}),
     ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
     ...(values["workspace-strategy"]
       ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -610,6 +616,10 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   if (concurrency !== undefined && (mode === "single" || isAuto)) {
     errors.push("--concurrency is only valid in Team mode");
   }
+  const maxFixIterations = parseMaxFixIterations(values["max-fix-iterations"], errors);
+  if (maxFixIterations !== undefined && mode === "single") {
+    errors.push("--max-fix-iterations is only valid in Team mode");
+  }
   const reasoningLevels = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh"]);
   if (values.reasoning && !reasoningLevels.has(values.reasoning as ReasoningLevel)) {
     errors.push("--reasoning must be 'low', 'medium', 'high', or 'xhigh'");
@@ -715,6 +725,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
       ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
       ...(values.concurrency !== undefined ? { maxConcurrency: Number(values.concurrency) } : {}),
+      ...(maxFixIterations !== undefined ? { maxFixIterations } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(values["workspace-strategy"]
         ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -939,6 +950,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         : {}),
       ...(timeoutSeconds !== undefined ? { taskTimeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
       ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
+      maxFixIterations: maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
       ...(capacitySnapshots ? { capacitySnapshots } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(isAuto && autoReason ? { autoModeReason: autoReason } : {}),
@@ -1305,3 +1317,14 @@ main().catch((err) => {
   console.error(c.red(`fatal: ${(err as Error).message}`));
   process.exit(1);
 });
+
+/** `--max-fix-iterations`: a whole number 0–10, or undefined when absent. */
+function parseMaxFixIterations(raw: string | undefined, errors: string[]): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 10) {
+    errors.push("--max-fix-iterations must be a whole number from 0 to 10");
+    return undefined;
+  }
+  return value;
+}
