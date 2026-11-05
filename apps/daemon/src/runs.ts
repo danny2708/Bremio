@@ -24,6 +24,7 @@ import {
 } from "@bremio/adapter-sdk";
 import { FsMemoryStore, MemoryInjector } from "@bremio/memory";
 import { RunToolset } from "./run-toolset";
+import { describeHookVeto, evaluateRepositoryHook, prepareRunExtensions } from "@bremio/orchestrator";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
@@ -119,6 +120,10 @@ export interface StartRunInput {
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
   /** Control mode for execution: plan | approve | autopilot. */
   controlMode?: import("@bremio/policy").ControlMode;
+  /** MCP server ids from `.bremio/mcp-servers.json` to attach (docs/17 P3-T1). */
+  mcpServers?: string[];
+  /** Playbook names from `.bremio/skills/` to inject into every prompt (P3-T3). */
+  skills?: string[];
 }
 
 /**
@@ -1175,12 +1180,17 @@ export class RunRegistry {
   ): Promise<void> {
     const routingConfig = await loadRoutingConfig().catch(() => getDefaultRoutingConfig());
     if (this.#storeIsGone()) return;
-    const registry = createRegistry(this.executableAdapters());
+    // docs/17 P3: every adapter call carries the run's MCP gate and opted-in servers.
+    const { registry, error: extensionError } = await prepareRunExtensions(
+      { ...input, runId },
+      createRegistry(this.executableAdapters()),
+    );
 
-    // Construct Sprint 8 tools wired to real policy evaluation and the S3
-    // approval lifecycle. The tools are per-run and policy-bound, but no
-    // adapter currently consumes them — they remain inert at their call sites
-    // until a later task wires them into an adapter or orchestrator path.
+    // Sprint 8 tools wired to real policy evaluation. MCP no longer goes
+    // through this object: servers and the per-call gate reach adapters via
+    // `prepareRunExtensions` above (docs/17 P3-T1). The command and web-search
+    // tools built here are still not offered to any agent; P3-T5 is where an
+    // agent-callable surface for them would come from.
     const toolset = new RunToolset({
       controlMode: input.controlMode ?? "autopilot",
     });
@@ -1280,6 +1290,7 @@ export class RunRegistry {
     }
 
     try {
+      if (extensionError) throw extensionError;
       const report: BremioRunReport = input.mode === "single"
         ? await runSingleAgent({
             primaryAgentId: input.agentId,
@@ -1413,6 +1424,12 @@ export class RunRegistry {
           const mm = new MergeManager(input.repoPath);
           const baseBranch = await mm.currentBranch();
           const verifyDiff = await mm.getDiff(report.worktree!.branch, baseBranch);
+          // docs/17 P3-T2: a pre-apply hook gets the last word before the
+          // approved worktree reaches the user's tree.
+          const applyHook = await evaluateRepositoryHook(input.repoPath, "run:pre-apply", {
+            runId,
+            branch: report.worktree!.branch,
+          });
           if (computeDigest(verifyDiff.patch) !== actionDigest) {
             await mm.cleanup(report.worktree.path, report.worktree.branch).catch(() => {});
             this.#emitTerminal(
@@ -1420,6 +1437,14 @@ export class RunRegistry {
               { kind: "failed", message: "worktree content changed after approval", data: report },
               "failed",
               { failureCode: "review_drifted", failureMessage: "The worktree content changed after approval." },
+            );
+          } else if (!applyHook.allowed) {
+            const detail = `${describeHookVeto("run:pre-apply", applyHook)}; the reviewed changes are kept on ${report.worktree.branch}`;
+            this.#emitTerminal(
+              runId,
+              { kind: "failed", message: detail, data: report },
+              "failed",
+              { failureCode: "hook_vetoed", failureMessage: detail },
             );
           } else {
             try {

@@ -28,6 +28,10 @@ export interface EphemeralRunParams {
   maxConcurrency?: number;
   comparisonId?: string;
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
+  /** MCP server ids to attach (docs/17 P3-T1). */
+  mcpServers?: string[];
+  /** Playbook names to inject (docs/17 P3-T3). */
+  skills?: string[];
   /**
    * Override the temporary directory root.  Only used in tests to avoid
    * polluting the real os.tmpdir() with daemon artifacts.

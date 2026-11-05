@@ -1,3 +1,4 @@
+import { describeHookVeto, evaluateRepositoryHook } from "@bremio/orchestrator";
 import { existsSync } from "node:fs";
 import {
   CherryPickConflictError,
@@ -61,6 +62,15 @@ export async function mergeRun(request: MergeRequest): Promise<MergeOutcome> {
       tasks: [],
       error: `quality gate is ${status}; refusing to merge${reasons.length ? `: ${reasons.join("; ")}` : ""}`,
     };
+  }
+
+  // docs/17 P3-T2: after the quality gate, before touching any branch.
+  const hook = await evaluateRepositoryHook(request.repoPath, "run:pre-merge", {
+    runId: report.runId,
+    ...(request.taskId ? { taskId: request.taskId } : {}),
+  });
+  if (!hook.allowed) {
+    return { ok: false, merged: 0, tasks: [], error: describeHookVeto("run:pre-merge", hook) };
   }
 
   const manager = new MergeManager(request.repoPath);

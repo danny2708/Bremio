@@ -5,8 +5,9 @@ import {
   McpPermissionGuard,
   HookManager,
   SkillManager,
+  resolveWebSearchBackend,
 } from "@bremio/adapter-sdk";
-import type { ProcessSupervisor } from "@bremio/adapter-sdk";
+import type { ProcessSupervisor, WebSearchBackend } from "@bremio/adapter-sdk";
 
 export interface RunToolsetOptions {
   controlMode: ControlMode;
@@ -28,10 +29,10 @@ export interface RunToolsetOptions {
  * retrying the action. The tool itself is purely a gate and does not manage
  * approval state.
  *
- * All Sprint 8 tools are constructed here with real policy bindings, but no
- * adapter currently calls them — they remain inert at the production call
- * sites until Sprint 9+ work adds consumers. The infrastructure (per-run
- * construction, real evaluate(), approval gating) is in place and tested.
+ * MCP, hooks and playbooks now reach agents through the per-run registry
+ * wrapper (`prepareRunExtensions`, docs/17 P3-T1…T3), not through this class.
+ * The command and web-search tools built here are policy-bound but still not
+ * offered to any agent; an agent-callable surface for them is P3-T5.
  */
 export class RunToolset {
   readonly hooks: HookManager;
@@ -60,7 +61,15 @@ export class RunToolset {
     });
   }
 
-  createWebSearchTool(): WebSearchTool {
+  /**
+   * Web search against the configured backend (P3-T4). Without one — the
+   * default — the tool answers `unconfigured` and sends nothing.
+   */
+  createWebSearchTool(
+    resolved: { backend: WebSearchBackend } | { reason: string } = resolveWebSearchBackend(),
+  ): WebSearchTool {
+    const backend = "backend" in resolved ? resolved.backend : undefined;
+    const unconfigured = "reason" in resolved ? resolved.reason : undefined;
     return new WebSearchTool((_actionClass, _query, _endpoint) => {
       const evalResult = evaluate(this.#controlMode, "network");
       if (!evalResult.allowed) {
@@ -73,7 +82,7 @@ export class RunToolset {
         };
       }
       return { allowed: true, reason: "allowed by policy" };
-    });
+    }, backend, undefined, unconfigured);
   }
 
   createMcpPermissionGuard(): McpPermissionGuard {

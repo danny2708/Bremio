@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { McpDiscovery, type McpServerManifest } from "@bremio/adapter-sdk";
 import { c } from "./ui";
+import { serveBremioMcp } from "./bremio-mcp";
 
 function printUsage(): void {
   console.log(`Usage: bremio mcp <subcommand> [options]
@@ -8,6 +9,8 @@ function printUsage(): void {
 Subcommands:
   discover  --manifest <file>   Connect to MCP servers and list their tools
   list                           Alias for discover (uses .bremio/mcp-servers.json)
+  serve                          Run Bremio's own MCP server on stdio (attached by
+                                 \`bremio run --mcp bremio\`; not usually run by hand)
 
 Options:
   --manifest <file>   Path to a JSON file containing an array of McpServerManifest
@@ -91,6 +94,7 @@ async function discoverCommand(options: {
 export async function mcpCommandFromCli(
   values: Record<string, unknown>,
   positionals: string[],
+  version = "0.0.0",
 ): Promise<number> {
   const subCommand = positionals[1];
 
@@ -100,6 +104,10 @@ export async function mcpCommandFromCli(
   }
 
   const json = values.json === true;
+
+  if (subCommand === "serve") {
+    return serveBremioMcp(version);
+  }
 
   if (subCommand === "discover" || subCommand === "list") {
     return discoverCommand({

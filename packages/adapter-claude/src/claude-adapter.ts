@@ -1,7 +1,14 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { processSupervisor } from "@bremio/adapter-sdk";
+import {
+  attachableMcpServers,
+  checkMcpToolCall,
+  describeMcpDenial,
+  mcpCheckPermitsNow,
+  processSupervisor,
+} from "@bremio/adapter-sdk";
 import type {
   CanUseTool,
+  McpServerConfig,
   Options,
   PermissionMode,
   SDKMessage,
@@ -14,6 +21,7 @@ import type {
   AgentRunRequest,
   AgentToolVocabulary,
   AdapterRuntimeCapabilities,
+  McpServerManifest,
   ModelDescriptor,
 } from "@bremio/adapter-sdk";
 import type { AgentEvent, RunOutcome } from "@bremio/protocol";
@@ -74,7 +82,10 @@ export class ClaudeAdapter implements AgentAdapter {
       structuredToolEvents: true,
       contextMetrics: "estimated",
       manualCompact: false,
-      mcp: false,
+      // P3-T1: manifest servers reach `query({ options.mcpServers })`, and
+      // every `mcp__*` call is gated per action in `canUseTool`.
+      mcp: true,
+      mcpTransports: ["stdio", "sse", "streamable-http"],
       webSearch: false,
       cancellation: true,
     };
@@ -127,9 +138,35 @@ export class ClaudeAdapter implements AgentAdapter {
     const settingSources: SettingSource[] = hermetic ? [] : ["project"];
     const permissionMode: PermissionMode = "default";
 
+    // Events raised inside SDK callbacks, drained between streamed messages.
+    const pending: AgentEvent[] = [];
+    const { servers: mcpServers, skipped: skippedMcp } = toClaudeMcpServers(attachableMcpServers(req));
+    for (const reason of skippedMcp) {
+      pending.push({ type: "log", runId: req.runId, ts: now(), level: "warn", message: reason });
+    }
+    if (Object.keys(mcpServers).length > 0) {
+      pending.push({
+        type: "log",
+        runId: req.runId,
+        ts: now(),
+        level: "info",
+        message: `mcp servers attached: ${Object.keys(mcpServers).join(", ")}`,
+      });
+    }
+
     const canUseTool: CanUseTool = async (toolName) => {
       if (req.permission === "read-only" && WRITE_TOOLS.has(toolName)) {
         return { behavior: "deny", message: "This task is read-only; file edits are not allowed." };
+      }
+      // Every MCP call, Bremio-attached or from the user's own Claude config,
+      // is an `mcp-tool` action under the run's control mode (docs/15 §2).
+      if (toolName.startsWith("mcp__")) {
+        const check = checkMcpToolCall(req, toolName);
+        if (!mcpCheckPermitsNow(check)) {
+          const message = describeMcpDenial(toolName, check);
+          pending.push({ type: "log", runId: req.runId, ts: now(), level: "warn", message });
+          return { behavior: "deny", message };
+        }
       }
       return { behavior: "allow" };
     };
@@ -148,6 +185,7 @@ export class ClaudeAdapter implements AgentAdapter {
       ...(model ? { model } : {}),
       ...(req.reasoningLevel ? { effort: req.reasoningLevel } : {}),
       ...(req.maxTurns ? { maxTurns: req.maxTurns } : {}),
+      ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
       ...(req.outputSchema
         ? { outputFormat: { type: "json_schema", schema: req.outputSchema } }
         : {}),
@@ -158,6 +196,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
     try {
       for await (const msg of query({ prompt: req.prompt, options })) {
+        while (pending.length > 0) yield pending.shift()!;
         if (msg.type === "result") {
           if (msg.subtype === "success") {
             yield {
@@ -202,6 +241,7 @@ export class ClaudeAdapter implements AgentAdapter {
       markSettled();
     }
 
+    while (pending.length > 0) yield pending.shift()!;
     const wasCancelled = this.cancelled.delete(req.runId);
     if (!outcome) {
       outcome = wasCancelled
@@ -234,6 +274,48 @@ export class ClaudeAdapter implements AgentAdapter {
       throw new Error(`could not stop the Claude run ${runId}: ${outcome.reason}`);
     }
   }
+}
+
+/**
+ * Translate Bremio MCP manifests into Agent SDK `mcpServers`. A stdio server
+ * with a `cwd` is skipped with a named reason: the SDK's stdio config has no
+ * working-directory field, and starting it elsewhere would be a different
+ * server than the one the user configured.
+ */
+export function toClaudeMcpServers(manifests: readonly McpServerManifest[]): {
+  servers: Record<string, McpServerConfig>;
+  skipped: string[];
+} {
+  const servers: Record<string, McpServerConfig> = {};
+  const skipped: string[] = [];
+  for (const m of manifests) {
+    const t = m.transport;
+    if (t.type === "stdio") {
+      if (t.cwd) {
+        skipped.push(`mcp server "${m.id}" not attached: Claude cannot start a stdio server in a custom cwd`);
+        continue;
+      }
+      // Passthrough names resolve here, in-process: the SDK config is an
+      // object, never argv, so a resolved secret is not exposed.
+      const inherited: Record<string, string> = {};
+      for (const name of t.envPassthrough ?? []) {
+        const value = process.env[name];
+        if (value !== undefined) inherited[name] = value;
+      }
+      const env = { ...inherited, ...(t.env ?? {}) };
+      servers[m.id] = {
+        type: "stdio",
+        command: t.command,
+        args: [...t.args],
+        ...(Object.keys(env).length > 0 ? { env } : {}),
+      };
+    } else if (t.type === "sse") {
+      servers[m.id] = { type: "sse", url: t.url };
+    } else {
+      servers[m.id] = { type: "http", url: t.url };
+    }
+  }
+  return { servers, skipped };
 }
 
 /** Map a non-terminal SDKMessage to normalized AgentEvent(s). */

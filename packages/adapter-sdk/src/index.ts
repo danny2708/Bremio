@@ -55,6 +55,11 @@ export { CommandTool, type CommandToolOptions, type CommandResult } from "./comm
 
 export {
   WebSearchTool,
+  jsonSearchBackend,
+  braveSearchBackend,
+  resolveWebSearchBackend,
+  type WebSearchBackend,
+  type WebSearchPermissionCheck,
   type WebSearchResultItem,
   type WebSearchToolOptions,
   type WebSearchResult,
@@ -81,7 +86,16 @@ export {
   mapTools,
   mapResourceActionClass,
   McpPermissionGuard,
+  isValidMcpServerId,
+  attachableMcpServers,
+  checkMcpToolCall,
+  mcpCheckPermitsNow,
+  describeMcpDenial,
+  BREMIO_MCP_SERVER_ID,
+  createBremioMcpServer,
 } from "./mcp";
+export type { BremioMcpServerDeps, BremioNoteKind } from "./mcp";
+export type { McpPermissionCheck, McpTransportType } from "./mcp";
 
 export { PluginManager } from "./plugin";
 export type {
@@ -101,7 +115,7 @@ export type {
   SkillState,
 } from "./skill";
 
-export { HookManager } from "./hooks";
+export { HookManager, RUN_HOOK_POINTS } from "./hooks";
 export type {
   HookContext,
   HookEvaluationResult,

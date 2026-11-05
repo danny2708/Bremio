@@ -140,3 +140,6 @@ export {
   RuntimeGuardEvaluator,
   type GuardConfig,
 } from "./runtime-guard";
+
+// docs/17 P3: per-run tool extensions (MCP, hooks, playbooks).
+export * from "./extensions";

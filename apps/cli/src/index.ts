@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { pino } from "pino";
+import { resolveWebSearchBackend } from "@bremio/adapter-sdk";
 import {
   LeadPlanError,
   PlanValidationError,
@@ -13,6 +14,7 @@ import {
   resolveAutoMode,
   runBremio,
   runSingleAgent,
+  prepareRunExtensions,
   shouldEscalate,
   resolveEscalationApproval,
   type RunBremioHooks,
@@ -91,6 +93,9 @@ ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --agent <agent>         Agent for Single mode: claude, codex, antigravity, or opencode.
   --lead <agent>          Lead for Team mode (distributes sub-tasks).
   --worker <agent>        Available workers for Team mode (can be passed multiple times).
+  --mcp <id>              Attach an MCP server from .bremio/mcp-servers.json, or "bremio" for Bremio's own
+                          tools (web search, blackboard notes). Repeatable; autopilot only.
+  --skill <name>          Inject a playbook from .bremio/skills/<name>.md into every prompt (repeatable).
 
 ${c.bold("run-info")} show run artifacts and blackboard context
     Usage: bremio run-info <runId> <context|artifacts|threads>
@@ -154,6 +159,20 @@ ${c.bold("quota")}    backward-compatible alias for capacity
 
 ${BENCH_USAGE}`;
 
+/** `--mcp <id>` (repeatable): MCP servers from .bremio/mcp-servers.json to attach. */
+function mcpServerIds(values: { mcp?: string | string[] }): string[] {
+  const raw = values.mcp;
+  if (!raw) return [];
+  return [...new Set((Array.isArray(raw) ? raw : [raw]).map((id) => id.trim()).filter(Boolean))];
+}
+
+/** `--skill <name>` (repeatable): playbooks from .bremio/skills/ to inject. */
+function skillNames(values: { skill?: string | string[] }): string[] {
+  const raw = values.skill;
+  if (!raw) return [];
+  return [...new Set((Array.isArray(raw) ? raw : [raw]).map((n) => n.trim()).filter(Boolean))];
+}
+
 function parseCli() {
   return parseArgs({
     allowPositionals: true,
@@ -162,6 +181,8 @@ function parseCli() {
       agent: { type: "string" },
       lead: { type: "string" },
       worker: { type: "string", multiple: true },
+      mcp: { type: "string", multiple: true },
+      skill: { type: "string", multiple: true },
       repo: { type: "string" },
       prompt: { type: "string" },
       model: { type: "string" },
@@ -294,7 +315,7 @@ async function main(): Promise<void> {
       process.exitCode = await approvalCommandFromCli(values, positionals);
       return;
     case "mcp":
-      process.exitCode = await mcpCommandFromCli(values, positionals);
+      process.exitCode = await mcpCommandFromCli(values, positionals, VERSION);
       return;
     case "bench":
       process.exitCode = await benchCommandFromCli(values, positionals);
@@ -374,7 +395,14 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
 
   const json = values.json === true;
   const pluginManager = await createCLIPluginManager();
-  const registry = pluginManager.getRegistry();
+  // Compare runs in-process in autopilot: MCP calls are gated by that policy
+  // and the repository's lifecycle hooks apply (docs/17 P3).
+  const prepared = await prepareRunExtensions({ repoPath }, pluginManager.getRegistry());
+  if (prepared.error) {
+    console.error(c.red(`error: ${prepared.error.message}`));
+    return 2;
+  }
+  const registry = prepared.registry;
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
   const singleController = new AbortController();
   const teamController = new AbortController();
@@ -475,6 +503,8 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
     prompt,
     agentId: (mode === "single" ? values.agent : values.lead) as string,
     ...(workers.length > 0 ? { workerIds: workers } : {}),
+    ...(mcpServerIds(values).length > 0 ? { mcpServers: mcpServerIds(values) } : {}),
+    ...(skillNames(values).length > 0 ? { skills: skillNames(values) } : {}),
     ...(values.model ? { model: values.model } : {}),
     ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
     ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
@@ -723,6 +753,8 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       prompt,
       agentId: (mode === "single" ? values.agent : values.lead) as string,
       ...(runWorkers.length > 0 ? { workerIds: runWorkers } : {}),
+      ...(mcpServerIds(values).length > 0 ? { mcpServers: mcpServerIds(values) } : {}),
+      ...(skillNames(values).length > 0 ? { skills: skillNames(values) } : {}),
       ...(values.model ? { model: values.model } : {}),
       ...(values.reasoning ? { reasoningLevel: values.reasoning as string } : {}),
       ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
@@ -741,7 +773,22 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
 
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
   const pluginManager = await createCLIPluginManager();
-  const registry = pluginManager.getRegistry();
+  // docs/17 P3: the in-process path runs in the orchestrator's default
+  // (autopilot) mode, so its MCP gate is that mode's policy.
+  const prepared = await prepareRunExtensions(
+    {
+      repoPath: path.resolve(values.repo as string),
+      mcpServers: mcpServerIds(values),
+      skills: skillNames(values),
+    },
+    pluginManager.getRegistry(),
+  );
+  if (prepared.error) {
+    console.error(c.red(`error: ${prepared.error.message}`));
+    process.exitCode = 2;
+    return;
+  }
+  const registry = prepared.registry;
 
   // Capability gate for lead role — not a name check, so the next
   // capability-only provider won't hit the same bug S1-R4 fixed.
@@ -1276,7 +1323,10 @@ async function diagnosticsCommand(values: Values, subcommand?: string): Promise<
 async function doctor(): Promise<void> {
   console.log(c.bold("bremio doctor — adapter health\n"));
   const pm = await createCLIPluginManager();
+  const mcpCarriers: string[] = [];
   for (const [id, adapter] of pm.getRegistry()) {
+    const runtime = await adapter.getRuntimeCapabilities().catch(() => undefined);
+    if (runtime?.mcp) mcpCarriers.push(`${id} (${(runtime.mcpTransports ?? []).join("/")}; ${runtime.approval === "per-action" ? "per-call gate" : "run-level gate"})`);
     const health = await adapter.healthCheck();
     const caps = await adapter.getCapabilities();
     const glyph =
@@ -1295,21 +1345,30 @@ async function doctor(): Promise<void> {
   }
   console.log("");
   console.log(c.bold("tools delivered to agents"));
-  for (const line of toolDeliveryLines()) console.log(`  ${c.dim(line)}`);
+  for (const line of toolDeliveryLines(mcpCarriers)) console.log(`  ${c.dim(line)}`);
 }
 
 /**
- * What Bremio-side tooling actually reaches a running agent. Sprint 8 built
- * MCP/hooks/skills/web search behind policy, but no run consumes them yet
- * (docs/17 §2.1 axis H). Saying so here keeps `doctor` from implying more
- * than a run does; P3 replaces each line as the wiring lands.
+ * What Bremio-side tooling actually reaches a running agent (docs/17 §2.1
+ * axis H). Each line says what a run does today, so `doctor` never implies
+ * more than a run delivers. MCP is derived from the adapters' own declared
+ * runtime capabilities rather than a hardcoded provider list.
  */
-function toolDeliveryLines(): string[] {
+/** The configured web search backend, or why there is none (P3-T4). */
+function webSearchBackendLabel(): string {
+  const resolved = resolveWebSearchBackend();
+  return "backend" in resolved ? `"${resolved.backend.id}"` : `unconfigured (${resolved.reason})`;
+}
+
+function toolDeliveryLines(mcpCarriers: string[]): string[] {
   return [
-    "mcp servers:  not delivered — agents use only their own provider-configured MCP",
-    "hooks:        not delivered — lifecycle hooks are not invoked by runs",
-    "skills:       not delivered — skill content is not injected into prompts",
-    "web search:   not delivered — agents use their provider's native search, if any",
+    mcpCarriers.length > 0
+      ? `mcp servers:  opt-in per run (--mcp <id>, .bremio/mcp-servers.json) → ${mcpCarriers.join(", ")}`
+      : "mcp servers:  not delivered — no adapter can attach MCP servers",
+    "hooks:        .bremio/hooks.json commands at run:pre-plan/pre-task/post-task/pre-apply/pre-merge; non-zero exit vetoes",
+    "skills:       playbooks opt-in per run (--skill <name>, .bremio/skills/) prepended to every prompt, ≤4000 est. tokens",
+    `web search:   backend ${webSearchBackendLabel()}; offered to MCP-capable agents as bremio_web_search with --mcp bremio`,
+    "bremio mcp:   --mcp bremio attaches bremio_web_search and bremio_post_note (run blackboard; daemon runs only)",
   ];
 }
 

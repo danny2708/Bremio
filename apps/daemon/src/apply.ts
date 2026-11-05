@@ -1,3 +1,4 @@
+import { describeHookVeto, evaluateRepositoryHook } from "@bremio/orchestrator";
 import type { SingleRunReport, RunReport, RunReportTask } from "@bremio/orchestrator";
 import { ApplyConflictError, MergeManager } from "@bremio/workspace";
 import { loadReportByRunId } from "@bremio/orchestrator";
@@ -84,6 +85,13 @@ async function resolvePatch(
 
 /** Apply a stored run's diff to the working tree. */
 export async function applyRunPatch(request: ApplyPatchRequest): Promise<ApplyRevertResult> {
+  // docs/17 P3-T2: a configured pre-apply hook can veto before anything lands.
+  const hook = await evaluateRepositoryHook(request.repoPath, "run:pre-apply", {
+    runId: request.runId,
+    ...(request.taskId ? { taskId: request.taskId } : {}),
+    ...(request.filePath ? { filePath: request.filePath } : {}),
+  });
+  if (!hook.allowed) return { ok: false, error: describeHookVeto("run:pre-apply", hook) };
   try {
     const patch = await resolvePatch(
       request.repoPath,

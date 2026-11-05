@@ -80,6 +80,11 @@ export const AdapterRuntimeCapabilitiesSchema = z.object({
   manualCompact: z.boolean(),
   /** Whether the adapter supports MCP tools. */
   mcp: z.boolean(),
+  /**
+   * MCP transports this adapter can attach from a Bremio manifest (P3-T1).
+   * Omitted means none. Only meaningful when `mcp` is true.
+   */
+  mcpTransports: z.array(z.enum(["stdio", "sse", "streamable-http"])).optional(),
   /** Whether the adapter supports web search. */
   webSearch: z.boolean(),
   /** Whether the adapter supports cancellation of in-flight runs. */

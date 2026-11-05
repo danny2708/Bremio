@@ -1,3 +1,4 @@
+import { describeHookVeto, evaluateRepositoryHook } from "@bremio/orchestrator";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import {
@@ -109,6 +110,16 @@ export async function mergeCommand(opts: MergeCommandOptions): Promise<number> {
       console.error(c.red(`  - ${reason}`));
     }
     console.error(c.dim("  inspect the run report and rerun failed/missing test or review tasks."));
+    return 2;
+  }
+
+  // docs/17 P3-T2: after the quality gate, before touching any branch.
+  const hook = await evaluateRepositoryHook(opts.repoPath, "run:pre-merge", {
+    runId: report.runId,
+    ...(opts.taskId ? { taskId: opts.taskId } : {}),
+  });
+  if (!hook.allowed) {
+    console.error(c.red(`error: ${describeHookVeto("run:pre-merge", hook)}`));
     return 2;
   }
 
