@@ -40,6 +40,8 @@ export interface RunReport {
   autoModeReason?: string;
   /** Bounded fix iterations after a failed gate (P2-T3); absent when not needed. */
   fixLoop?: import("./fix-loop").FixLoopReport;
+  /** Present when the plan passed an opt-in checkpoint (P2-T2). */
+  planCheckpoint?: import("./plan-checkpoint").PlanCheckpointRecord;
 }
 
 export type BremioRunReport = RunReport | import("./single-run").SingleRunReport;

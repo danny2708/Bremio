@@ -85,6 +85,15 @@ export {
 } from "./fix-loop";
 
 export {
+  applyPlanCheckpoint,
+  planDigest,
+  PlanCheckpointError,
+  type OnPlanReady,
+  type PlanCheckpointDecision,
+  type PlanCheckpointRecord,
+} from "./plan-checkpoint";
+
+export {
   runSingleVerifyLoop,
   runVerification,
   verificationPolicyBlock,

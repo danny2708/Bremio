@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { answerDaemonCheckpoint, promptPlanDecision, terminalIo } from "./plan-checkpoint";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import path from "node:path";
@@ -100,6 +101,7 @@ ${c.bold("run-info")} show run artifacts and blackboard context
   --concurrency <n>       Team tasks to run at once (default: 2, dependency-safe).
   --max-fix-iterations <n> Bounded fix attempts after a failed gate/--verify (default: 2, 0 = off).
   --verify <command>      Single: Bremio runs this after the agent and hands failures back to it.
+  --review-plan           Team: approve, reject or edit the lead's plan before any work starts.
   --capacity-routing      Opt in to conservative Team capacity routing.
   --db <path>             Override the AQT database used for capacity routing.
   --comparison <id>       Link this run to a controlled Single/Team experiment.
@@ -169,6 +171,7 @@ function parseCli() {
       concurrency: { type: "string" },
       "max-fix-iterations": { type: "string" },
       verify: { type: "string" },
+      "review-plan": { type: "boolean", default: false },
       run: { type: "string" },
       base: { type: "string" },
       strategy: { type: "string" },
@@ -476,6 +479,7 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
       ? { maxFixIterations: Number(values["max-fix-iterations"]) }
       : {}),
     ...(values.verify ? { verifyCommand: values.verify.trim() } : {}),
+    ...(values["review-plan"] ? { reviewPlan: true } : {}),
     ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
     ...(values["workspace-strategy"]
       ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -506,6 +510,10 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
     if (!json) console.log(c.dim(`run started via daemon (id: ${runId})`));
 
     await client.streamEvents(runId, (event) => {
+      if (values["review-plan"]) {
+        void answerDaemonCheckpoint(client, event, terminalIo()).catch((err) =>
+          console.error(c.red(`plan checkpoint answer failed: ${(err as Error).message}`)));
+      }
       if (json) {
         collectedEvents.push(event);
         return;
@@ -626,6 +634,9 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   if (values.verify !== undefined && mode === "team") {
     errors.push("--verify is only valid in Single mode; Team runs verify through their test tasks");
   }
+  if (values["review-plan"] && mode === "single") {
+    errors.push("--review-plan is only valid in Team mode");
+  }
   if (maxFixIterations !== undefined && mode === "single" && values.verify === undefined) {
     errors.push("--max-fix-iterations in Single mode requires --verify <command>");
   }
@@ -736,6 +747,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(values.concurrency !== undefined ? { maxConcurrency: Number(values.concurrency) } : {}),
       ...(maxFixIterations !== undefined ? { maxFixIterations } : {}),
       ...(values.verify ? { verifyCommand: values.verify.trim() } : {}),
+      ...(values["review-plan"] ? { reviewPlan: true } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(values["workspace-strategy"]
         ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -967,6 +979,9 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(timeoutSeconds !== undefined ? { taskTimeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
       ...(concurrency !== undefined ? { maxConcurrency: concurrency } : {}),
       maxFixIterations: maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
+      ...(values["review-plan"]
+        ? { onPlanReady: (plan) => promptPlanDecision(plan, terminalIo()) }
+        : {}),
       ...(capacitySnapshots ? { capacitySnapshots } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(isAuto && autoReason ? { autoModeReason: autoReason } : {}),

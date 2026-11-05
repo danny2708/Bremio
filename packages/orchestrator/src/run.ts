@@ -32,6 +32,7 @@ import {
 } from "./routing-config";
 import { runPlan, type SchedulerHooks } from "./scheduler";
 import { runTeamFixLoop } from "./fix-loop";
+import { applyPlanCheckpoint, PlanCheckpointError, type OnPlanReady, type PlanCheckpointRecord } from "./plan-checkpoint";
 import type { SingleRunFallback } from "./single-run";
 import { validatePlan } from "./validator";
 
@@ -102,6 +103,12 @@ export interface RunBremioOptions {
   maxFixIterations?: number;
   /** Stop fix iterations once their provider-reported cost reaches this. */
   maxFixCostUsd?: number;
+  /**
+   * Plan checkpoint (P2-T2): called once with the validated plan before any
+   * worktree or worker run exists. Approve / reject / edit; an edit is
+   * re-validated like a lead's plan. Omit for no checkpoint.
+   */
+  onPlanReady?: OnPlanReady;
 }
 
 /** Generate a sortable, human-readable run id: run-YYYYMMDD-HHMMSS-xxxx. */
@@ -273,6 +280,31 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
   logger?.info({ tasks: plan.tasks.length, attempts }, "lead produced a plan");
 
   validatePlan(plan, capabilitiesByAgent);
+
+  let planCheckpoint: PlanCheckpointRecord | undefined;
+  if (opts.onPlanReady) {
+    try {
+      const checked = await applyPlanCheckpoint({
+        plan,
+        runId,
+        onPlanReady: opts.onPlanReady,
+        validate: (candidate) => validatePlan(candidate, capabilitiesByAgent),
+      });
+      plan = checked.plan;
+      planCheckpoint = checked.record;
+      logger?.info({ planCheckpoint }, "plan checkpoint passed");
+    } catch (err) {
+      if (err instanceof PlanCheckpointError) {
+        await recordInterruptedTeamSummary({
+          ledgerPath: ledgerPathFor(repoPath),
+          runId,
+          status: "cancelled",
+          ...(opts.comparisonId ? { comparisonId: opts.comparisonId } : {}),
+        });
+      }
+      throw err;
+    }
+  }
 
   // This is the only meaningful kill-switch point: planning has finished, its
   // provider-reported coordination cost is durable, and no task worktree or
@@ -450,6 +482,8 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
       report.summary.superseded = supersededFailures;
     }
   }
+
+  if (planCheckpoint) report.planCheckpoint = planCheckpoint;
 
   await fs.writeFile(
     path.join(runDir, "report.json"),

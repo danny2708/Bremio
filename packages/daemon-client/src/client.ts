@@ -104,6 +104,8 @@ export interface StartRunRequest {
   maxFixIterations?: number;
   /** Single: verification command Bremio runs after the agent (P2-T4). */
   verifyCommand?: string;
+  /** Team: pause after planning for approve / reject / edit (P2-T2). */
+  reviewPlan?: boolean;
 }
 
 async function readEndpointFile(file: string): Promise<DaemonEndpoint | undefined> {
