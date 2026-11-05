@@ -12,6 +12,7 @@ import type { AgentRegistry } from "./registry";
 import { createRunId } from "./run";
 import { collectRun, withErrorCode, type CollectedRun } from "./stream";
 import { runSingleVerifyLoop, type SingleFixLoopReport, type VerificationRun } from "./single-fix-loop";
+import { evaluateSingleDefinitionOfDone, type DefinitionOfDone } from "./definition-of-done";
 
 const execFileAsync = promisify(execFile);
 
@@ -125,6 +126,8 @@ export interface SingleRunReport {
   fallback?: SingleRunFallback;
   /** Bremio-run verification and bounded fix turns (P2-T4); present with verifyCommand. */
   fixLoop?: SingleFixLoopReport;
+  /** The declared verification → evidence | unknown (P2-T6). */
+  definitionOfDone?: DefinitionOfDone;
 }
 
 interface WorkspaceState {
@@ -447,6 +450,14 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     ...(opts.turnIndex !== undefined ? { turnIndex: opts.turnIndex } : {}),
     ...(mechanismDecision ? { mechanismDecision } : {}),
     ...(fixLoop ? { fixLoop } : {}),
+    definitionOfDone: evaluateSingleDefinitionOfDone({
+      ...(opts.verifyCommand ? { verifyCommand: opts.verifyCommand } : {}),
+      ...(lastVerification
+        ? { bremioVerification: { command: lastVerification.command, exitCode: lastVerification.exitCode } }
+        : {}),
+      agentTests: result.tests,
+      runStatus: result.status,
+    }),
   };
 
   await fs.writeFile(

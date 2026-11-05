@@ -32,6 +32,7 @@ import {
 } from "./routing-config";
 import { runPlan, type SchedulerHooks } from "./scheduler";
 import { runTeamFixLoop } from "./fix-loop";
+import { evaluateDefinitionOfDone } from "./definition-of-done";
 import { applyPlanCheckpoint, PlanCheckpointError, type OnPlanReady, type PlanCheckpointRecord } from "./plan-checkpoint";
 import type { SingleRunFallback } from "./single-run";
 import { validatePlan } from "./validator";
@@ -484,6 +485,11 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
   }
 
   if (planCheckpoint) report.planCheckpoint = planCheckpoint;
+  report.definitionOfDone = evaluateDefinitionOfDone({
+    plan: report.plan,
+    results,
+    superseded: new Set(fixed.report.superseded),
+  });
 
   await fs.writeFile(
     path.join(runDir, "report.json"),

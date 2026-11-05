@@ -42,6 +42,8 @@ export interface RunReport {
   fixLoop?: import("./fix-loop").FixLoopReport;
   /** Present when the plan passed an opt-in checkpoint (P2-T2). */
   planCheckpoint?: import("./plan-checkpoint").PlanCheckpointRecord;
+  /** Acceptance criteria → evidence | unknown (P2-T6). Informational; the gate decides. */
+  definitionOfDone?: import("./definition-of-done").DefinitionOfDone;
 }
 
 export type BremioRunReport = RunReport | import("./single-run").SingleRunReport;

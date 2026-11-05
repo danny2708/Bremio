@@ -85,6 +85,14 @@ export {
 } from "./fix-loop";
 
 export {
+  evaluateDefinitionOfDone,
+  evaluateSingleDefinitionOfDone,
+  type DefinitionOfDone,
+  type DoneCriterion,
+  type DoneVerification,
+} from "./definition-of-done";
+
+export {
   applyPlanCheckpoint,
   planDigest,
   PlanCheckpointError,

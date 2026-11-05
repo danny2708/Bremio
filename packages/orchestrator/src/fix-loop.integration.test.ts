@@ -140,6 +140,10 @@ describe("P2-T3 Team fix loop (mock adapters, real git)", () => {
     expect(report.fixLoop?.iterations[0]?.reasonsBefore.join("\n")).toMatch(/TEST/);
     expect(report.summary.failed).toBe(0);
     expect(report.summary.superseded).toBe(1);
+    // P2-T6: the lead's criterion is evidenced by the fix chain's checks
+    expect(report.definitionOfDone?.status).toBe("met");
+    expect(report.definitionOfDone?.criteria.find((c) => c.taskId === "IMPL")?.evidence)
+      .toEqual(expect.arrayContaining(["FIX-1-TEST: `check-value` exit 0"]));
 
     // the original failure stays visible; nothing completed was re-run
     const byId = new Map(report.tasks.map((t) => [t.task.id, t] as const));
