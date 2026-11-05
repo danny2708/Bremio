@@ -120,8 +120,10 @@ export interface StartRunInput {
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
   /** Control mode for execution: plan | approve | autopilot. */
   controlMode?: import("@bremio/policy").ControlMode;
-  /** Team fix iterations after a failed gate (P2-T3); default DEFAULT_MAX_FIX_ITERATIONS. */
+  /** Fix iterations after a failed gate / verification (P2-T3/T4); default DEFAULT_MAX_FIX_ITERATIONS. */
   maxFixIterations?: number;
+  /** Single: command Bremio runs after the agent's turn to verify it (P2-T4). */
+  verifyCommand?: string;
 }
 
 /**
@@ -1300,6 +1302,12 @@ export class RunRegistry {
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
             ...(turnIndex !== undefined ? { turnIndex } : {}),
             ...(priorTurns !== undefined ? { priorTurns } : {}),
+            ...(input.verifyCommand
+              ? {
+                  verifyCommand: input.verifyCommand,
+                  maxFixIterations: input.maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
+                }
+              : {}),
             hooks: {
               onStart: (id) =>
                 this.#emit(runId, { kind: "status", message: `${id} started`, agentId: id }),

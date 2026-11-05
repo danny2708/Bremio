@@ -85,6 +85,15 @@ export {
 } from "./fix-loop";
 
 export {
+  runSingleVerifyLoop,
+  runVerification,
+  verificationPolicyBlock,
+  type SingleFixAttempt,
+  type SingleFixLoopReport,
+  type VerificationRun,
+} from "./single-fix-loop";
+
+export {
   evaluateQualityGate,
   parseReviewOutput,
   reviewOutputJsonSchema,

@@ -27,6 +27,7 @@ export interface EphemeralRunParams {
   timeoutMs?: number;
   maxConcurrency?: number;
   maxFixIterations?: number;
+  verifyCommand?: string;
   comparisonId?: string;
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
   /**

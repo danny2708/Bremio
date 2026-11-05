@@ -11,6 +11,7 @@ import { appendLedgerEntry, ledgerPathFor } from "./ledger";
 import type { AgentRegistry } from "./registry";
 import { createRunId } from "./run";
 import { collectRun, withErrorCode, type CollectedRun } from "./stream";
+import { runSingleVerifyLoop, type SingleFixLoopReport, type VerificationRun } from "./single-fix-loop";
 
 const execFileAsync = promisify(execFile);
 
@@ -46,6 +47,15 @@ export interface RunSingleAgentOptions {
     measuredInputTokens?: number;
   }>;
   providerSessionId?: string;
+  /**
+   * Command Bremio runs itself after the agent's turn (P2-T4). When it fails,
+   * the failure is handed back to the agent for up to `maxFixIterations`
+   * bounded fix turns, and its final exit code decides verification.
+   */
+  verifyCommand?: string;
+  /** Library default 0; the CLI and daemon default to DEFAULT_MAX_FIX_ITERATIONS. */
+  maxFixIterations?: number;
+  maxFixCostUsd?: number;
 }
 
 export interface SingleAgentResult {
@@ -113,6 +123,8 @@ export interface SingleRunReport {
   mechanismDecision?: TurnMechanismDecision;
   /** Present only when Team stopped before task execution and delegated here. */
   fallback?: SingleRunFallback;
+  /** Bremio-run verification and bounded fix turns (P2-T4); present with verifyCommand. */
+  fixLoop?: SingleFixLoopReport;
 }
 
 interface WorkspaceState {
@@ -270,6 +282,37 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     await log.close();
   }
 
+  let fixLoop: SingleFixLoopReport | undefined;
+  let lastVerification: VerificationRun | undefined;
+  if (opts.verifyCommand && !timedOut) {
+    const loop = await runSingleVerifyLoop({
+      adapter,
+      resumable: capabilities.resumableSessions,
+      initial: collected,
+      originalPrompt: opts.prompt,
+      verifyCommand: opts.verifyCommand,
+      maxIterations: opts.maxFixIterations ?? 0,
+      ...(opts.maxFixCostUsd !== undefined ? { maxCostUsd: opts.maxFixCostUsd } : {}),
+      controlMode,
+      cwd: targetCwd,
+      runId,
+      runDir,
+      request: {
+        ...(opts.model ? { model: opts.model } : {}),
+        ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
+        ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
+      },
+      ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      ...(opts.stopRequested ? { stopRequested: opts.stopRequested } : {}),
+      ...(toolVocabulary ? { toolVocabulary } : {}),
+      ...(opts.hooks?.onEvent ? { onEvent: opts.hooks.onEvent } : {}),
+    });
+    collected = loop.collected;
+    fixLoop = loop.report;
+    lastVerification = loop.lastVerification;
+  }
+
   let filesChanged: string[];
   let committedFiles: string[] = [];
   let after = before;
@@ -377,7 +420,16 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     ...(status !== "completed" ? { errorCode: errorCode ?? "unknown" } : {}),
     ...(runtimeCaps ? { runtimeCapabilities: runtimeCaps } : {}),
   };
-  const verification = verifySingleResult(result);
+  // A Bremio-run verification command is authoritative over the agent's own
+  // command evidence: Bremio saw its exit code directly.
+  const verification: SingleRunVerification = lastVerification && result.status === "completed"
+    ? lastVerification.exitCode === 0
+      ? { status: "passed", reasons: [] }
+      : {
+          status: "failed",
+          reasons: [`verification command exited ${lastVerification.exitCode}: ${lastVerification.command}`],
+        }
+    : verifySingleResult(result);
   const report: SingleRunReport = {
     mode: "single",
     runId,
@@ -394,6 +446,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     workspace: { dirtyBefore: before.dirtyFiles, dirtyAfter: after.dirtyFiles },
     ...(opts.turnIndex !== undefined ? { turnIndex: opts.turnIndex } : {}),
     ...(mechanismDecision ? { mechanismDecision } : {}),
+    ...(fixLoop ? { fixLoop } : {}),
   };
 
   await fs.writeFile(

@@ -98,7 +98,8 @@ ${c.bold("run-info")} show run artifacts and blackboard context
   --reasoning <level>     Single-agent or Team-lead reasoning level.
   --timeout <seconds>     Hard timeout for the Single run or each Team task.
   --concurrency <n>       Team tasks to run at once (default: 2, dependency-safe).
-  --max-fix-iterations <n> Team: bounded fix chains after a failed gate (default: 2, 0 = off).
+  --max-fix-iterations <n> Bounded fix attempts after a failed gate/--verify (default: 2, 0 = off).
+  --verify <command>      Single: Bremio runs this after the agent and hands failures back to it.
   --capacity-routing      Opt in to conservative Team capacity routing.
   --db <path>             Override the AQT database used for capacity routing.
   --comparison <id>       Link this run to a controlled Single/Team experiment.
@@ -167,6 +168,7 @@ function parseCli() {
       timeout: { type: "string" },
       concurrency: { type: "string" },
       "max-fix-iterations": { type: "string" },
+      verify: { type: "string" },
       run: { type: "string" },
       base: { type: "string" },
       strategy: { type: "string" },
@@ -473,6 +475,7 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
     ...(values["max-fix-iterations"] !== undefined
       ? { maxFixIterations: Number(values["max-fix-iterations"]) }
       : {}),
+    ...(values.verify ? { verifyCommand: values.verify.trim() } : {}),
     ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
     ...(values["workspace-strategy"]
       ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -617,8 +620,14 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
     errors.push("--concurrency is only valid in Team mode");
   }
   const maxFixIterations = parseMaxFixIterations(values["max-fix-iterations"], errors);
-  if (maxFixIterations !== undefined && mode === "single") {
-    errors.push("--max-fix-iterations is only valid in Team mode");
+  if (values.verify !== undefined && values.verify.trim().length === 0) {
+    errors.push("--verify needs a command, e.g. --verify \"pnpm test\"");
+  }
+  if (values.verify !== undefined && mode === "team") {
+    errors.push("--verify is only valid in Single mode; Team runs verify through their test tasks");
+  }
+  if (maxFixIterations !== undefined && mode === "single" && values.verify === undefined) {
+    errors.push("--max-fix-iterations in Single mode requires --verify <command>");
   }
   const reasoningLevels = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh"]);
   if (values.reasoning && !reasoningLevels.has(values.reasoning as ReasoningLevel)) {
@@ -726,6 +735,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(values.timeout !== undefined ? { timeoutMs: Math.round(Number(values.timeout) * 1000) } : {}),
       ...(values.concurrency !== undefined ? { maxConcurrency: Number(values.concurrency) } : {}),
       ...(maxFixIterations !== undefined ? { maxFixIterations } : {}),
+      ...(values.verify ? { verifyCommand: values.verify.trim() } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(values["workspace-strategy"]
         ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -849,6 +859,12 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
           : {}),
         ...(timeoutSeconds !== undefined ? { timeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
         ...(escComparisonId ? { comparisonId: escComparisonId } : {}),
+        ...(values.verify
+          ? {
+              verifyCommand: values.verify.trim(),
+              maxFixIterations: maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
+            }
+          : {}),
       });
 
       tagStandalone(report, values.standalone);

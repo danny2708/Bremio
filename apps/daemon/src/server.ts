@@ -45,6 +45,8 @@ const StartRunSchema = z.object({
   controlMode: z.enum(["plan", "approve", "autopilot"]).optional(),
   /** Team fix iterations after a failed gate (P2-T3); 0 disables. */
   maxFixIterations: z.number().int().min(0).max(10).optional(),
+  /** Single: verification command Bremio runs itself (P2-T4). */
+  verifyCommand: z.string().trim().min(1).max(2000).optional(),
 });
 
 const MergeSchema = z.object({
