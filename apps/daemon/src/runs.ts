@@ -24,7 +24,7 @@ import {
 } from "@bremio/adapter-sdk";
 import { FsMemoryStore, MemoryInjector } from "@bremio/memory";
 import { RunToolset } from "./run-toolset";
-import { prepareRunExtensions } from "@bremio/orchestrator";
+import { describeHookVeto, evaluateRepositoryHook, prepareRunExtensions } from "@bremio/orchestrator";
 import { AntigravityAdapter } from "@bremio/adapter-antigravity";
 import { ClaudeAdapter } from "@bremio/adapter-claude";
 import { CodexAdapter } from "@bremio/adapter-codex";
@@ -1422,6 +1422,12 @@ export class RunRegistry {
           const mm = new MergeManager(input.repoPath);
           const baseBranch = await mm.currentBranch();
           const verifyDiff = await mm.getDiff(report.worktree!.branch, baseBranch);
+          // docs/17 P3-T2: a pre-apply hook gets the last word before the
+          // approved worktree reaches the user's tree.
+          const applyHook = await evaluateRepositoryHook(input.repoPath, "run:pre-apply", {
+            runId,
+            branch: report.worktree!.branch,
+          });
           if (computeDigest(verifyDiff.patch) !== actionDigest) {
             await mm.cleanup(report.worktree.path, report.worktree.branch).catch(() => {});
             this.#emitTerminal(
@@ -1429,6 +1435,14 @@ export class RunRegistry {
               { kind: "failed", message: "worktree content changed after approval", data: report },
               "failed",
               { failureCode: "review_drifted", failureMessage: "The worktree content changed after approval." },
+            );
+          } else if (!applyHook.allowed) {
+            const detail = `${describeHookVeto("run:pre-apply", applyHook)}; the reviewed changes are kept on ${report.worktree.branch}`;
+            this.#emitTerminal(
+              runId,
+              { kind: "failed", message: detail, data: report },
+              "failed",
+              { failureCode: "hook_vetoed", failureMessage: detail },
             );
           } else {
             try {

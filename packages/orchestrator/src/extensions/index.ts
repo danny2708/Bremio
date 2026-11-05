@@ -18,3 +18,13 @@ export {
   type RunExtensionInput,
   type PreparedRunExtensions,
 } from "./prepare";
+
+export {
+  HOOKS_FILE,
+  parseHookDefinitions,
+  commandHookHandler,
+  loadHookManager,
+  evaluateRepositoryHook,
+  describeHookVeto,
+  type HookDefinition,
+} from "./hooks-config";

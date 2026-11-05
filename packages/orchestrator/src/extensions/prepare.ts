@@ -2,6 +2,7 @@ import type { ControlMode } from "@bremio/policy";
 import type { AgentRegistry } from "../registry";
 import { extendRegistry } from "./extend-adapter";
 import { assertMcpRequestUsable, loadMcpManifests, selectMcpServers } from "./mcp-config";
+import { loadHookManager } from "./hooks-config";
 
 export interface RunExtensionInput {
   repoPath: string;
@@ -37,7 +38,17 @@ export async function prepareRunExtensions(
       ? selectMcpServers(await loadMcpManifests(input.repoPath), input.mcpServers)
       : [];
     assertMcpRequestUsable(controlMode, servers);
-    return { registry: extendRegistry(registry, { controlMode, mcpServers: servers }) };
+    // An unreadable hooks file fails the run (below): the user configured a
+    // guard, and running without it would be the silent skip P3 forbids.
+    const hooks = await loadHookManager(input.repoPath);
+    return {
+      registry: extendRegistry(registry, {
+        controlMode,
+        mcpServers: servers,
+        repoPath: input.repoPath,
+        ...(hooks ? { hooks } : {}),
+      }),
+    };
   } catch (err) {
     // The gate still applies: a failed preparation must not leave a registry
     // that allows MCP calls the run's mode forbids.

@@ -14,7 +14,6 @@ import {
   runBremio,
   runSingleAgent,
   prepareRunExtensions,
-  extendRegistry,
   shouldEscalate,
   resolveEscalationApproval,
   type RunBremioHooks,
@@ -373,8 +372,14 @@ async function compareCommandFromCli(values: Values, positionals: string[]): Pro
 
   const json = values.json === true;
   const pluginManager = await createCLIPluginManager();
-  // Compare runs in-process in autopilot; MCP calls are gated by that policy.
-  const registry = extendRegistry(pluginManager.getRegistry(), { controlMode: "autopilot" });
+  // Compare runs in-process in autopilot: MCP calls are gated by that policy
+  // and the repository's lifecycle hooks apply (docs/17 P3).
+  const prepared = await prepareRunExtensions({ repoPath }, pluginManager.getRegistry());
+  if (prepared.error) {
+    console.error(c.red(`error: ${prepared.error.message}`));
+    return 2;
+  }
+  const registry = prepared.registry;
   const logger = pino({ level: values.verbose ? "info" : "silent" }, process.stderr);
   const singleController = new AbortController();
   const teamController = new AbortController();
@@ -1325,7 +1330,7 @@ function toolDeliveryLines(mcpCarriers: string[]): string[] {
     mcpCarriers.length > 0
       ? `mcp servers:  opt-in per run (--mcp <id>, .bremio/mcp-servers.json) → ${mcpCarriers.join(", ")}`
       : "mcp servers:  not delivered — no adapter can attach MCP servers",
-    "hooks:        not delivered — lifecycle hooks are not invoked by runs",
+    "hooks:        .bremio/hooks.json commands at run:pre-plan/pre-task/post-task/pre-apply/pre-merge; non-zero exit vetoes",
     "skills:       not delivered — skill content is not injected into prompts",
     "web search:   not delivered — agents use their provider's native search, if any",
   ];

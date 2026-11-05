@@ -136,3 +136,24 @@ describe("daemon runs carry docs/17 P3 extensions", () => {
     expect(adapter.requests).toHaveLength(0);
   });
 });
+
+describe("daemon apply honours pre-apply hooks (P3-T2)", () => {
+  it("refuses to apply when a pre-apply hook vetoes, before reading the run", async () => {
+    const { applyRunPatch } = await import("./apply");
+    const { repo } = await harness();
+    await fs.mkdir(path.join(repo, ".bremio"), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, ".bremio", "hooks.json"),
+      JSON.stringify([
+        {
+          id: "freeze",
+          point: "run:pre-apply",
+          command: process.execPath,
+          args: ["-e", "console.error('code freeze');process.exit(3)"],
+        },
+      ]),
+    );
+    const result = await applyRunPatch({ repoPath: repo, runId: "run-that-does-not-exist" });
+    expect(result).toEqual({ ok: false, error: 'run:pre-apply hook "freeze" vetoed: code freeze' });
+  });
+});

@@ -107,7 +107,7 @@ export type {
   SkillState,
 } from "./skill";
 
-export { HookManager } from "./hooks";
+export { HookManager, RUN_HOOK_POINTS } from "./hooks";
 export type {
   HookContext,
   HookEvaluationResult,
