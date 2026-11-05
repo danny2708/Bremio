@@ -4,6 +4,8 @@ Single source of truth for **what is left to do and who owns it**. One line per
 task. Tick a box only when the task's acceptance criteria are met *and* its
 commit has landed on its branch.
 
+- Current plan: [`docs/17`](docs/17-parity-assessment-and-roadmap.md) Option C
+  (P0–P3). Its task tables are the acceptance criteria for the `P*` rows below.
 - Design authority: [`docs/14`](docs/14-architecture-review-and-plan.md) (plan)
   and [`docs/15`](docs/15-architecture-lock.md) (locked semantics). The
   [Munder integration plan](docs/16-munder-difflin-integration-plan.md) is
@@ -194,8 +196,8 @@ policy-bound per S9-T5 and still has no consumer. Both are honest about it.
 | [x] | S9-T4 | Injection under a token budget | M | S9-T3 |
 | [x] | S9-T5 | **Wire Sprint 8's tools to a run, or say plainly that they are inert.** `CommandTool`, `WebSearchTool`, `McpPermissionGuard`, `SkillManager` and `HookManager` have no production caller — only `PluginManager` reached a run path. Each now *requires* a policy check to construct (S8-REVIEW), so whoever wires them must supply one; the remaining work is passing the real `evaluate(controlMode, actionClass)` and the S3 approval lifecycle rather than a permissive stub. | L | S8-T1…T8 | — |
 | [x] | S9-T6 | Add `release:check` to the per-task definition of done in `AGENT-WORKFLOW.md`. Sprint 8 shipped 8 tasks with a broken `pnpm build` because every block verified with `typecheck` + `vitest` only, and `tsc` resolves extensionless ESM subpaths that `esbuild` cannot. | S | — | ‖ everything |
-| [ ] | S9-T7 | **Give `packages/memory` a production consumer.** The proposed decision in `docs/16` is daemon SQLite as the durable authority, with existing proposal/provenance/token-budget rules retained. Implementation is split into S12-T2 (store/API) and S12-T3 (real prompt injection); tick this row only when both land. | L | S9-T1…T4, S12-T2, S12-T3 | — |
-| [ ] | S9-T8 | `SCOPE_CONFIG.session` declares `transient`/`ephemeral` with `storageDir: ""`, so a session-scoped entry handed to `FsMemoryStore` is written to the store root and is then invisible to `get`/`query`/`delete`, which only scan `project` and `user`. `createMemoryStore` routes session scope to `InMemoryStore`, so the path is unreachable today — but the class accepts the write. Refuse a transient scope in `FsMemoryStore` rather than persisting it where nothing can read it. | S | — | ‖ everything |
+| [x] | S9-T7 | **Give `packages/memory` a production consumer.** The proposed decision in `docs/16` is daemon SQLite as the durable authority, with existing proposal/provenance/token-budget rules retained. Implementation is split into S12-T2 (store/API) and S12-T3 (real prompt injection); tick this row only when both land. | L | S9-T1…T4, S12-T2, S12-T3 | — |
+| [x] | S9-T8 | `SCOPE_CONFIG.session` declares `transient`/`ephemeral` with `storageDir: ""`, so a session-scoped entry handed to `FsMemoryStore` is written to the store root and is then invisible to `get`/`query`/`delete`, which only scan `project` and `user`. `createMemoryStore` routes session scope to `InMemoryStore`, so the path is unreachable today — but the class accepts the write. Refuse a transient scope in `FsMemoryStore` rather than persisting it where nothing can read it. | S | — | ‖ everything |
 
 ---
 
@@ -300,6 +302,24 @@ at task boundaries; no provider-independent live chat is promised.
 orchestrator with idempotency and hop limits; no peer writes or unsupported
 live-steering claim exists; expansion is off by default and cannot be promoted
 by unknown/non-positive evidence; `corepack pnpm release:check` passes.
+
+---
+
+## Parity — Option C (docs/17 P0–P3)
+
+Approved 2026-11-05. P4–P7 wait for the benchmark gate at the end of P3.
+
+| | ID | Task | Size | Depends on |
+|---|---|---|---|---|
+| [x] | P0-T1 | Fix `event-view` typecheck; sync the panel's renderer copy | S | — |
+| [x] | P0-T2 | GitHub Actions: typecheck + test + build (ubuntu, windows) + release smoke | M | P0-T1 |
+| [x] | P0-T3 | One version everywhere; release smoke pins README/ops/extension | S | — |
+| [x] | P0-T4 | Reconcile this board (S9-T7/S9-T8) | S | — |
+| [x] | P0-T5 | Archive `PROGRESS.md` Sprints 0–12 to `docs/archive/` | S | — |
+| [x] | P0-T6 | `bremio doctor` states plainly which tools reach agents | S | — |
+| [ ] | P1-T1…T5 | `bremio-bench`: case format, seed suite, runner, report, dispatch-only CI | L | P0 |
+| [ ] | P2-T1…T7 | Closed loop: error codes, plan checkpoint, fix loops, re-plan, definition of done, auto-PR | L | P0 |
+| [ ] | P3-T1…T5 | Real tools: MCP pass-through, lifecycle hooks, skills as playbooks, web search, Bremio MCP server | L | P0 |
 
 ---
 
