@@ -34,6 +34,7 @@ import { runPlan, type SchedulerHooks } from "./scheduler";
 import { runTeamFixLoop } from "./fix-loop";
 import { evaluateDefinitionOfDone } from "./definition-of-done";
 import { runReplanLoop } from "./replan";
+import { openTeamAutoPr, type AutoPrDeps } from "./auto-pr";
 import { applyPlanCheckpoint, PlanCheckpointError, type OnPlanReady, type PlanCheckpointRecord } from "./plan-checkpoint";
 import type { SingleRunFallback } from "./single-run";
 import { validatePlan } from "./validator";
@@ -118,6 +119,13 @@ export interface RunBremioOptions {
    * each costs a lead call. Completed tasks are never re-run.
    */
   maxReplans?: number;
+  /**
+   * Push and open a PR when the quality gate passes (P2-T7). Opt-in; refused
+   * with a named reason under plan/approve modes or when `gh` is unusable.
+   */
+  autoPr?: boolean;
+  /** Test seam for auto-PR (fake `gh`). */
+  autoPrDeps?: AutoPrDeps;
 }
 
 /** Generate a sortable, human-readable run id: run-YYYYMMDD-HHMMSS-xxxx. */
@@ -575,6 +583,10 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
     results,
     superseded: new Set(fixed.report.superseded),
   });
+  if (opts.autoPr && !opts.signal?.aborted) {
+    report.autoPr = await openTeamAutoPr(report, opts.autoPrDeps);
+    logger?.info({ autoPr: report.autoPr }, "auto-PR");
+  }
 
   await fs.writeFile(
     path.join(runDir, "report.json"),

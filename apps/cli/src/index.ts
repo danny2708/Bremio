@@ -103,6 +103,7 @@ ${c.bold("run-info")} show run artifacts and blackboard context
   --verify <command>      Single: Bremio runs this after the agent and hands failures back to it.
   --review-plan           Team: approve, reject or edit the lead's plan before any work starts.
   --max-replans <n>       Team: re-plan remaining work around a blocker (default: 0, max 3).
+  --auto-pr               Push and open a GitHub PR (via gh) when the run is green.
   --capacity-routing      Opt in to conservative Team capacity routing.
   --db <path>             Override the AQT database used for capacity routing.
   --comparison <id>       Link this run to a controlled Single/Team experiment.
@@ -174,6 +175,7 @@ function parseCli() {
       verify: { type: "string" },
       "review-plan": { type: "boolean", default: false },
       "max-replans": { type: "string" },
+      "auto-pr": { type: "boolean", default: false },
       run: { type: "string" },
       base: { type: "string" },
       strategy: { type: "string" },
@@ -483,6 +485,7 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
     ...(values.verify ? { verifyCommand: values.verify.trim() } : {}),
     ...(values["review-plan"] ? { reviewPlan: true } : {}),
     ...(values["max-replans"] !== undefined ? { maxReplans: Number(values["max-replans"]) } : {}),
+    ...(values["auto-pr"] ? { autoPr: true } : {}),
     ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
     ...(values["workspace-strategy"]
       ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -759,6 +762,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(values.verify ? { verifyCommand: values.verify.trim() } : {}),
       ...(values["review-plan"] ? { reviewPlan: true } : {}),
       ...(maxReplans !== undefined ? { maxReplans } : {}),
+      ...(values["auto-pr"] ? { autoPr: true } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(values["workspace-strategy"]
         ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -882,6 +886,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
           : {}),
         ...(timeoutSeconds !== undefined ? { timeoutMs: Math.round(timeoutSeconds * 1000) } : {}),
         ...(escComparisonId ? { comparisonId: escComparisonId } : {}),
+        ...(values["auto-pr"] ? { autoPr: true } : {}),
         ...(values.verify
           ? {
               verifyCommand: values.verify.trim(),
@@ -994,6 +999,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
         ? { onPlanReady: (plan) => promptPlanDecision(plan, terminalIo()) }
         : {}),
       ...(maxReplans !== undefined ? { maxReplans } : {}),
+      ...(values["auto-pr"] ? { autoPr: true } : {}),
       ...(capacitySnapshots ? { capacitySnapshots } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(isAuto && autoReason ? { autoModeReason: autoReason } : {}),

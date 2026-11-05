@@ -135,6 +135,8 @@ export interface StartRunInput {
   reviewPlan?: boolean;
   /** Team: re-plans of the remaining graph after a blocker (P2-T5); default 0. */
   maxReplans?: number;
+  /** Push and open a PR via `gh` when the run is green (P2-T7). */
+  autoPr?: boolean;
 }
 
 /**
@@ -1403,6 +1405,7 @@ export class RunRegistry {
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
             ...(turnIndex !== undefined ? { turnIndex } : {}),
             ...(priorTurns !== undefined ? { priorTurns } : {}),
+            ...(input.autoPr ? { autoPr: true } : {}),
             ...(input.verifyCommand
               ? {
                   verifyCommand: input.verifyCommand,
@@ -1436,6 +1439,7 @@ export class RunRegistry {
             ...(turnIndex !== undefined ? { turnIndex } : {}),
             maxFixIterations: input.maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
             ...(input.maxReplans !== undefined ? { maxReplans: input.maxReplans } : {}),
+            ...(input.autoPr ? { autoPr: true } : {}),
             ...(input.reviewPlan
               ? {
                   onPlanReady: (plan, ctx) =>

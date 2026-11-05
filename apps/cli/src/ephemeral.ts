@@ -31,6 +31,7 @@ export interface EphemeralRunParams {
   verifyCommand?: string;
   reviewPlan?: boolean;
   maxReplans?: number;
+  autoPr?: boolean;
   comparisonId?: string;
   workspaceStrategy?: "direct-workspace" | "isolated-worktree";
   /**

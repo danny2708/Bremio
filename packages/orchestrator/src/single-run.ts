@@ -6,13 +6,14 @@ import { canBackControlMode, type ControlMode, type WorkspaceStrategy } from "@b
 import type { AdapterRuntimeCapabilities, AgentToolVocabulary } from "@bremio/adapter-sdk";
 import type { AgentEvent, Attribution, ChangeType, ReasoningLevel, TaskFailureCode, TaskStatus, TestRun, TurnFileChange, UsageSummary } from "@bremio/protocol";
 import { prepareTurnExecution, type TurnMechanismDecision } from "@bremio/harness";
-import { TaskLog, WorktreeManager, type TaskWorktree } from "@bremio/workspace";
+import { TaskLog, WorktreeManager, getCurrentBranch, type TaskWorktree } from "@bremio/workspace";
 import { appendLedgerEntry, ledgerPathFor } from "./ledger";
 import type { AgentRegistry } from "./registry";
 import { createRunId } from "./run";
 import { collectRun, withErrorCode, type CollectedRun } from "./stream";
 import { runSingleVerifyLoop, type SingleFixLoopReport, type VerificationRun } from "./single-fix-loop";
 import { evaluateSingleDefinitionOfDone, type DefinitionOfDone } from "./definition-of-done";
+import { openSingleAutoPr, type AutoPrDeps, type AutoPrResult } from "./auto-pr";
 
 const execFileAsync = promisify(execFile);
 
@@ -57,6 +58,9 @@ export interface RunSingleAgentOptions {
   /** Library default 0; the CLI and daemon default to DEFAULT_MAX_FIX_ITERATIONS. */
   maxFixIterations?: number;
   maxFixCostUsd?: number;
+  /** Push the isolated worktree branch and open a PR when verification passes (P2-T7). */
+  autoPr?: boolean;
+  autoPrDeps?: AutoPrDeps;
 }
 
 export interface SingleAgentResult {
@@ -128,6 +132,8 @@ export interface SingleRunReport {
   fixLoop?: SingleFixLoopReport;
   /** The declared verification → evidence | unknown (P2-T6). */
   definitionOfDone?: DefinitionOfDone;
+  /** Opt-in auto-PR outcome (P2-T7). */
+  autoPr?: AutoPrResult;
 }
 
 interface WorkspaceState {
@@ -171,6 +177,7 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
     }
   }
   const runId = createRunId();
+  const autoPrBase = opts.autoPr ? await getCurrentBranch(repoPath).catch(() => undefined) : undefined;
   const before = await captureWorkspaceState(repoPath);
   opts.hooks?.onWorkspaceReady?.(before.dirtyFiles);
 
@@ -459,6 +466,9 @@ export async function runSingleAgent(opts: RunSingleAgentOptions): Promise<Singl
       runStatus: result.status,
     }),
   };
+  if (opts.autoPr && !opts.signal?.aborted) {
+    report.autoPr = await openSingleAutoPr(report, autoPrBase, opts.autoPrDeps);
+  }
 
   await fs.writeFile(
     path.join(runDir, "report.json"),

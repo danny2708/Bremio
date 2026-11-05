@@ -46,6 +46,8 @@ export interface RunReport {
   definitionOfDone?: import("./definition-of-done").DefinitionOfDone;
   /** Re-plans around blockers (P2-T5); absent when none were needed or allowed. */
   replan?: import("./replan").ReplanReport;
+  /** Opt-in auto-PR outcome (P2-T7). */
+  autoPr?: import("./auto-pr").AutoPrResult;
 }
 
 export type BremioRunReport = RunReport | import("./single-run").SingleRunReport;

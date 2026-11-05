@@ -85,6 +85,13 @@ export {
 } from "./fix-loop";
 
 export {
+  autoPrPolicyBlock,
+  openSingleAutoPr,
+  openTeamAutoPr,
+  type AutoPrResult,
+} from "./auto-pr";
+
+export {
   analyzeBlockers,
   runReplanLoop,
   validateReplan,

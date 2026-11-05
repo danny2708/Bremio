@@ -51,6 +51,8 @@ const StartRunSchema = z.object({
   reviewPlan: z.boolean().optional(),
   /** Team: re-plans around blockers (P2-T5); 0 disables. */
   maxReplans: z.number().int().min(0).max(3).optional(),
+  /** Push and open a PR when green (P2-T7). */
+  autoPr: z.boolean().optional(),
 });
 
 const EditPlanCheckpointSchema = z.object({

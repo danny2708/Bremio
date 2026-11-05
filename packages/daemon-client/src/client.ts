@@ -108,6 +108,8 @@ export interface StartRunRequest {
   reviewPlan?: boolean;
   /** Team: re-plans around blockers (P2-T5); default 0. */
   maxReplans?: number;
+  /** Push and open a PR when green (P2-T7). */
+  autoPr?: boolean;
 }
 
 async function readEndpointFile(file: string): Promise<DaemonEndpoint | undefined> {
