@@ -53,6 +53,7 @@ import { statsCommand } from "./stats";
 import { memoryCommandFromCli } from "./memory";
 import { runInfoCommandFromCli } from "./run-info";
 import { BENCH_USAGE, benchCommandFromCli } from "./bench";
+import { TRUST_USAGE, trustCommandFromCli } from "./trust";
 import { canUseTui, startTui } from "./tui";
 import { createCLIPluginManager, KNOWN_ADAPTER_IDS } from "./tui/data";
 import { renderEvent } from "@bremio/event-view";
@@ -81,6 +82,7 @@ ${c.bold("Usage")}
   bremio quota [--db <path>] [--aging-after <minutes>] [--stale-after <minutes>] [--open-usage <agent>]
   bremio daemon [start|status|stop|restart]   manage the local daemon (HTTP + SSE, loopback)
   bremio mcp discover  --manifest <file>      list tools from MCP servers
+  bremio trust <.bremio/hooks.json|.bremio/mcp-servers.json>   trust a reviewed config file
   bremio bench <run|report|check> [...]   task-success benchmark (see "bench" below)
   bremio update                           how to update the CLI, daemon and extension
   bremio doctor [--json]                  adapter health; --json for a support bundle
@@ -157,7 +159,9 @@ ${c.bold("quota")}    backward-compatible alias for capacity
   --stale-after <minutes> Treat older snapshots as unknown (default: 30).
   --open-usage <agent>    Open the agent's native usage page (codex, claude).
 
-${BENCH_USAGE}`;
+${BENCH_USAGE}
+
+${TRUST_USAGE}`;
 
 /** `--mcp <id>` (repeatable): MCP servers from .bremio/mcp-servers.json to attach. */
 function mcpServerIds(values: { mcp?: string | string[] }): string[] {
@@ -316,6 +320,9 @@ async function main(): Promise<void> {
       return;
     case "mcp":
       process.exitCode = await mcpCommandFromCli(values, positionals, VERSION);
+      return;
+    case "trust":
+      process.exitCode = await trustCommandFromCli(values, positionals);
       return;
     case "bench":
       process.exitCode = await benchCommandFromCli(values, positionals);

@@ -10,13 +10,14 @@ import {
   type HookHandler,
   type HookPoint,
 } from "@bremio/adapter-sdk";
+import { assertTrustedConfig } from "./trust";
 
 /**
  * Lifecycle hooks a user configures for a repository (docs/17 P3-T2).
  *
- * Lives in `.bremio/`, which Bremio git-ignores, so it is the local user's
- * configuration — a cloned repository cannot ship hooks that run on someone
- * else's machine.
+ * Lives in `.bremio/`. Bremio git-ignores that directory, but a repository can
+ * still commit the file and an agent with workspace-write can create it, so
+ * it is honoured only when its exact bytes were trusted (`./trust.ts`).
  */
 export const HOOKS_FILE = path.join(".bremio", "hooks.json");
 
@@ -106,6 +107,8 @@ export async function loadHookManager(repoPath: string): Promise<HookManager | u
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw err;
   }
+  // Before parsing: an untrusted file must not influence anything.
+  await assertTrustedConfig(repoPath, HOOKS_FILE, text);
   const defs = parseHookDefinitions(JSON.parse(text));
   if (defs.length === 0) return undefined;
   const manager = new HookManager();

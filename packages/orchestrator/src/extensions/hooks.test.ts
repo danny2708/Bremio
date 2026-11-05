@@ -13,6 +13,14 @@ import {
   parseHookDefinitions,
 } from "./hooks-config";
 import { prepareRunExtensions } from "./prepare";
+import { trustConfig } from "./trust";
+
+// Never touch the real ~/.bremio trust store from tests.
+process.env.BREMIO_TRUST_FILE = path.join(
+  os.tmpdir(),
+  `bremio-trust-test-${process.pid}-${Math.random().toString(36).slice(2)}.json`,
+);
+
 
 const tmpDirs: string[] = [];
 afterEach(async () => {
@@ -27,6 +35,7 @@ async function tmpRepo(hooks?: unknown): Promise<string> {
       path.join(dir, ".bremio", "hooks.json"),
       typeof hooks === "string" ? hooks : JSON.stringify(hooks),
     );
+    await trustConfig(dir, path.join(".bremio", "hooks.json"));
   }
   return dir;
 }

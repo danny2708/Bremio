@@ -44,6 +44,26 @@ forbids MCP; approve mode needs a per-call approval no run can grant yet; both
 **fail the run before any agent is called** when `--mcp` is given. Unknown ids
 fail the run.
 
+## Trust (`bremio trust`)
+
+`.bremio/hooks.json` and `.bremio/mcp-servers.json` make Bremio spawn host
+processes outside any provider sandbox. Bremio git-ignores `.bremio/`, but a
+repository can still commit these files and an agent with workspace-write can
+create them, so both are honoured only when their exact bytes were trusted for
+this repository:
+
+```sh
+bremio trust .bremio/hooks.json --repo .
+```
+
+The command prints the file, then records its sha256 in
+`~/.bremio/trusted-config.json` (`BREMIO_TRUST_FILE` overrides; mode `0600`).
+Any change afterwards — a pull, an agent edit, your own edit — makes the run,
+apply or merge fail with a named reason until you trust it again. An
+untrusted hooks file denies rather than being skipped, because a skipped guard
+would read as a passed one. Playbooks (`.bremio/skills/`) are prompt text, not
+commands, and are not trust-gated.
+
 ## Hooks (`.bremio/hooks.json`, P3-T2)
 
 ```json

@@ -41,3 +41,11 @@ export {
   type Playbook,
   type PlaybookSelection,
 } from "./playbooks";
+
+export {
+  trustStorePath,
+  configDigest,
+  assertTrustedConfig,
+  trustConfig,
+  UntrustedConfigError,
+} from "./trust";

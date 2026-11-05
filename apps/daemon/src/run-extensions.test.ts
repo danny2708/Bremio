@@ -15,6 +15,14 @@ import type {
 import type { AgentEvent } from "@bremio/protocol";
 import { RunRegistry } from "./runs";
 import { RunStore } from "./storage";
+import { trustConfig } from "@bremio/orchestrator";
+
+// Never touch the real ~/.bremio trust store from tests.
+process.env.BREMIO_TRUST_FILE = path.join(
+  os.tmpdir(),
+  `bremio-trust-test-${process.pid}-${Math.random().toString(36).slice(2)}.json`,
+);
+
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -86,6 +94,7 @@ async function harness(manifest?: unknown) {
   if (manifest !== undefined) {
     await fs.mkdir(path.join(repo, ".bremio"), { recursive: true });
     await fs.writeFile(path.join(repo, ".bremio", "mcp-servers.json"), JSON.stringify(manifest));
+    await trustConfig(repo, path.join(".bremio", "mcp-servers.json"));
   }
   const store = await RunStore.open(path.join(dir, "bremio.db"));
   const adapter = new RecordingAdapter();
@@ -153,6 +162,7 @@ describe("daemon apply honours pre-apply hooks (P3-T2)", () => {
         },
       ]),
     );
+    await trustConfig(repo, path.join(".bremio", "hooks.json"));
     const result = await applyRunPatch({ repoPath: repo, runId: "run-that-does-not-exist" });
     expect(result).toEqual({ ok: false, error: 'run:pre-apply hook "freeze" vetoed: code freeze' });
   });

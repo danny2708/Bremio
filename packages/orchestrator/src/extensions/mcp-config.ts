@@ -8,6 +8,7 @@ import {
   type McpPermissionCheck,
   type McpServerManifest,
 } from "@bremio/adapter-sdk";
+import { assertTrustedConfig } from "./trust";
 
 /**
  * Where a project's MCP servers are declared. The same file `bremio mcp list`
@@ -67,6 +68,8 @@ export async function loadMcpManifests(repoPath: string): Promise<McpServerManif
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
   }
+  // Each manifest entry is a command Bremio may spawn; same trust rule as hooks.
+  await assertTrustedConfig(repoPath, MCP_MANIFEST_FILE, text);
   return parseMcpManifests(JSON.parse(text));
 }
 

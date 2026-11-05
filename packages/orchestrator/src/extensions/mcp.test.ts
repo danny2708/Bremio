@@ -10,6 +10,7 @@ import type {
 } from "@bremio/adapter-sdk";
 import type { AgentEvent } from "@bremio/protocol";
 import { createRegistry } from "../registry";
+import { trustConfig } from "./trust";
 import { extendRegistry } from "./extend-adapter";
 import {
   assertMcpRequestUsable,
@@ -20,6 +21,13 @@ import {
   selectMcpServers,
 } from "./mcp-config";
 import { prepareRunExtensions } from "./prepare";
+
+// Never touch the real ~/.bremio trust store from tests.
+process.env.BREMIO_TRUST_FILE = path.join(
+  os.tmpdir(),
+  `bremio-trust-test-${process.pid}-${Math.random().toString(36).slice(2)}.json`,
+);
+
 
 const DOCS: McpServerManifest = {
   id: "docs",
@@ -87,6 +95,7 @@ async function repoWithManifest(content: unknown): Promise<string> {
   tmpDirs.push(dir);
   await fs.mkdir(path.join(dir, ".bremio"));
   await fs.writeFile(path.join(dir, ".bremio", "mcp-servers.json"), JSON.stringify(content));
+  await trustConfig(dir, path.join(".bremio", "mcp-servers.json"));
   return dir;
 }
 
