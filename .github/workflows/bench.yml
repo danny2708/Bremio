@@ -1,0 +1,112 @@
+name: bench
+
+# bremio-bench spends real provider quota: one full agent run per case.
+# It therefore never runs on push or pull_request — only when dispatched by
+# hand or on the weekly schedule. See docs/18-bench.md.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "single or team"
+        required: true
+        default: single
+        type: choice
+        options: [single, team]
+      agent:
+        description: "Single: agent id (claude, codex)"
+        required: false
+        default: claude
+      lead:
+        description: "Team: lead id (claude, codex)"
+        required: false
+        default: claude
+      worker:
+        description: "Team: worker id (optional)"
+        required: false
+        default: ""
+      cases:
+        description: "Comma-separated case ids (empty = all)"
+        required: false
+        default: ""
+      timeout:
+        description: "Per-case timeout in seconds"
+        required: false
+        default: "900"
+  schedule:
+    # Mondays 03:17 UTC: a cheap weekly Single/claude baseline.
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      MODE: ${{ inputs.mode || 'single' }}
+      AGENT: ${{ inputs.agent || 'claude' }}
+      LEAD: ${{ inputs.lead || 'claude' }}
+      WORKER: ${{ inputs.worker || '' }}
+      CASES: ${{ inputs.cases || '' }}
+      TIMEOUT: ${{ inputs.timeout || '900' }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Configure git identity
+        run: |
+          git config --global user.name "bremio-bench"
+          git config --global user.email "bench@bremio.invalid"
+
+      - name: Require provider credentials for the selected agents
+        run: |
+          agents="$AGENT"
+          if [ "$MODE" = "team" ]; then agents="$LEAD $WORKER"; fi
+          for a in $agents; do
+            case "$a" in
+              claude) [ -n "$ANTHROPIC_API_KEY" ] || { echo "::error::ANTHROPIC_API_KEY secret is not set"; exit 1; } ;;
+              codex)  [ -n "$OPENAI_API_KEY" ]    || { echo "::error::OPENAI_API_KEY secret is not set"; exit 1; } ;;
+              *) echo "::error::agent '$a' has no CI credential path; run it locally"; exit 1 ;;
+            esac
+          done
+
+      - name: Install the Codex CLI when selected
+        if: contains(format('{0} {1} {2}', env.AGENT, env.LEAD, env.WORKER), 'codex')
+        run: |
+          npm install --global @openai/codex
+          printenv OPENAI_API_KEY | codex login --with-api-key
+
+      - name: Adapter health
+        run: corepack pnpm bremio doctor
+
+      - name: Self-check cases (no quota)
+        run: corepack pnpm bremio bench check ${CASES:+--cases "$CASES"}
+
+      - name: Run bench
+        run: |
+          args=(bench run --mode "$MODE" --timeout "$TIMEOUT" --keep)
+          if [ "$MODE" = "single" ]; then args+=(--agent "$AGENT"); else args+=(--lead "$LEAD"); fi
+          if [ "$MODE" = "team" ] && [ -n "$WORKER" ]; then args+=(--worker "$WORKER"); fi
+          if [ -n "$CASES" ]; then args+=(--cases "$CASES"); fi
+          corepack pnpm bremio "${args[@]}"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ github.run_id }}
+          path: .bremio/bench/
+          if-no-files-found: warn
