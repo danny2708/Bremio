@@ -295,11 +295,19 @@ export function toClaudeMcpServers(manifests: readonly McpServerManifest[]): {
         skipped.push(`mcp server "${m.id}" not attached: Claude cannot start a stdio server in a custom cwd`);
         continue;
       }
+      // Passthrough names resolve here, in-process: the SDK config is an
+      // object, never argv, so a resolved secret is not exposed.
+      const inherited: Record<string, string> = {};
+      for (const name of t.envPassthrough ?? []) {
+        const value = process.env[name];
+        if (value !== undefined) inherited[name] = value;
+      }
+      const env = { ...inherited, ...(t.env ?? {}) };
       servers[m.id] = {
         type: "stdio",
         command: t.command,
         args: [...t.args],
-        ...(t.env ? { env: { ...t.env } } : {}),
+        ...(Object.keys(env).length > 0 ? { env } : {}),
       };
     } else if (t.type === "sse") {
       servers[m.id] = { type: "sse", url: t.url };

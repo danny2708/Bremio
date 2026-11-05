@@ -91,7 +91,10 @@ export {
   checkMcpToolCall,
   mcpCheckPermitsNow,
   describeMcpDenial,
+  BREMIO_MCP_SERVER_ID,
+  createBremioMcpServer,
 } from "./mcp";
+export type { BremioMcpServerDeps, BremioNoteKind } from "./mcp";
 export type { McpPermissionCheck, McpTransportType } from "./mcp";
 
 export { PluginManager } from "./plugin";

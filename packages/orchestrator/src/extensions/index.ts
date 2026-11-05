@@ -11,6 +11,9 @@ export {
   selectMcpServers,
   mcpPolicyGate,
   assertMcpRequestUsable,
+  bremioMcpManifest,
+  defaultBremioServerLaunch,
+  type BremioServerLaunch,
 } from "./mcp-config";
 
 export {

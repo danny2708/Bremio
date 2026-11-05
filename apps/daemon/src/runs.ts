@@ -1182,7 +1182,7 @@ export class RunRegistry {
     if (this.#storeIsGone()) return;
     // docs/17 P3: every adapter call carries the run's MCP gate and opted-in servers.
     const { registry, error: extensionError } = await prepareRunExtensions(
-      input,
+      { ...input, runId },
       createRegistry(this.executableAdapters()),
     );
 

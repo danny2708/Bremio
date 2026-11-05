@@ -1,7 +1,14 @@
 import type { ControlMode } from "@bremio/policy";
 import type { AgentRegistry } from "../registry";
 import { extendRegistry } from "./extend-adapter";
-import { assertMcpRequestUsable, loadMcpManifests, selectMcpServers } from "./mcp-config";
+import { BREMIO_MCP_SERVER_ID } from "@bremio/adapter-sdk";
+import {
+  assertMcpRequestUsable,
+  bremioMcpManifest,
+  loadMcpManifests,
+  selectMcpServers,
+  type BremioServerLaunch,
+} from "./mcp-config";
 import { loadHookManager } from "./hooks-config";
 import { selectPlaybooks } from "./playbooks";
 
@@ -15,6 +22,10 @@ export interface RunExtensionInput {
   skills?: string[];
   /** Token budget for the injected playbooks. */
   playbookTokenBudget?: number;
+  /** The daemon's run id, so the built-in `bremio` server writes to this run. */
+  runId?: string;
+  /** Override how `bremio mcp serve` is started (tests). */
+  bremioServerLaunch?: BremioServerLaunch;
 }
 
 export interface PreparedRunExtensions {
@@ -39,8 +50,17 @@ export async function prepareRunExtensions(
 ): Promise<PreparedRunExtensions> {
   const controlMode = input.controlMode ?? "autopilot";
   try {
+    const builtins = input.mcpServers?.includes(BREMIO_MCP_SERVER_ID)
+      ? [
+          bremioMcpManifest({
+            controlMode,
+            ...(input.runId ? { runId: input.runId } : {}),
+            ...(input.bremioServerLaunch ? { launch: input.bremioServerLaunch } : {}),
+          }),
+        ]
+      : [];
     const servers = input.mcpServers?.length
-      ? selectMcpServers(await loadMcpManifests(input.repoPath), input.mcpServers)
+      ? selectMcpServers(await loadMcpManifests(input.repoPath), input.mcpServers, builtins)
       : [];
     assertMcpRequestUsable(controlMode, servers);
     // An unreadable hooks file fails the run (below): the user configured a

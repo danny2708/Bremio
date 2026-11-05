@@ -42,3 +42,10 @@ export {
   describeMcpDenial,
   type McpTransportType,
 } from "./run-attach";
+
+export {
+  BREMIO_MCP_SERVER_ID,
+  createBremioMcpServer,
+  type BremioMcpServerDeps,
+  type BremioNoteKind,
+} from "./bremio-server";

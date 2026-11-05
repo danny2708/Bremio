@@ -94,6 +94,15 @@ describe("codex MCP pass-through (P3-T1)", () => {
     expect(configOverrides(buildCodexExecArgs(request({ mcpServers: [evil], mcpToolGate: allow }), "o"))).toEqual([]);
   });
 
+  it("forwards passthrough variables by name with env_vars, keeping values out of argv", () => {
+    const entry = codexMcpServerToml({
+      id: "bremio",
+      name: "Bremio",
+      transport: { type: "stdio", command: "node", args: ["b.js"], envPassthrough: ["BRAVE_KEY"] },
+    });
+    expect(entry).toEqual({ toml: '{command="node",args=["b.js"],env_vars=["BRAVE_KEY"]}' });
+  });
+
   it("reports MCP support for the transports it can carry", async () => {
     const caps = await new CodexAdapter().getRuntimeCapabilities();
     expect(caps.mcp).toBe(true);

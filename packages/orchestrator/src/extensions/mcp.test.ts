@@ -13,6 +13,7 @@ import { createRegistry } from "../registry";
 import { extendRegistry } from "./extend-adapter";
 import {
   assertMcpRequestUsable,
+  bremioMcpManifest,
   loadMcpManifests,
   mcpPolicyGate,
   parseMcpManifests,
@@ -172,6 +173,49 @@ describe("prepareRunExtensions (P3-T1)", () => {
     expect(prepared.error).toBeUndefined();
     await drain(prepared.registry.get("a")!.startRun(req()));
     expect(seen[0]!.mcpServers).toEqual([DOCS]);
+  });
+
+  it("attaches the built-in bremio server with the run's mode and id, without a manifest entry", async () => {
+    const repo = await repoWithManifest([]);
+    const { adapter, seen } = fakeAdapter("a", { mcp: true, mcpTransports: ["stdio"] });
+    const prepared = await prepareRunExtensions(
+      {
+        repoPath: repo,
+        mcpServers: ["bremio"],
+        runId: "run-7",
+        bremioServerLaunch: { command: "/usr/bin/node", args: ["/opt/bremio.js", "mcp", "serve"] },
+      },
+      createRegistry([adapter]),
+    );
+    expect(prepared.error).toBeUndefined();
+    await drain(prepared.registry.get("a")!.startRun(req()));
+    expect(seen[0]!.mcpServers).toEqual([
+      expect.objectContaining({
+        id: "bremio",
+        transport: expect.objectContaining({
+          type: "stdio",
+          command: "/usr/bin/node",
+          args: ["/opt/bremio.js", "mcp", "serve"],
+          env: { BREMIO_CONTROL_MODE: "autopilot", BREMIO_RUN_ID: "run-7" },
+        }),
+      }),
+    ]);
+  });
+
+  it("passes web-search configuration to the bremio server by name, never by value", () => {
+    const manifest = bremioMcpManifest({
+      controlMode: "autopilot",
+      launch: { command: "node", args: [] },
+      env: { BREMIO_WEB_SEARCH_API_KEY_ENV: "MY_KEY", MY_KEY: "secret-value" },
+    });
+    const t = manifest.transport as unknown as { env: Record<string, string>; envPassthrough: string[] };
+    expect(t.envPassthrough).toContain("MY_KEY");
+    expect(t.envPassthrough).toContain("BREMIO_WEB_SEARCH_BACKEND");
+    expect(JSON.stringify(manifest)).not.toContain("secret-value");
+  });
+
+  it("does not let a manifest claim the reserved bremio id", () => {
+    expect(() => parseMcpManifests([{ ...DOCS, id: "bremio" }])).toThrow(/reserved/);
   });
 
   it("returns a named error, and still a gated registry, when the request is unusable", async () => {

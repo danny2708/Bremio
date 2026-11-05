@@ -129,6 +129,11 @@ export function codexMcpServerToml(m: McpServerManifest): { toml: string } | { s
       const env = Object.entries(t.env).map(([k, v]) => `${tomlString(k)}=${tomlString(v)}`);
       parts.push(`env={${env.join(",")}}`);
     }
+    // `env_vars` forwards variables by name from codex's own environment
+    // (codex-rs mcp_types.rs), so secrets stay out of argv.
+    if (t.envPassthrough && t.envPassthrough.length > 0) {
+      parts.push(`env_vars=[${t.envPassthrough.map(tomlString).join(",")}]`);
+    }
     return { toml: `{${parts.join(",")}}` };
   }
   if (t.type === "streamable-http") {

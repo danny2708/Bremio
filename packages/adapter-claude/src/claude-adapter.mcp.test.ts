@@ -132,6 +132,32 @@ describe("Claude MCP pass-through (P3-T1)", () => {
     expect(caps.mcpTransports).toEqual(["stdio", "sse", "streamable-http"]);
   });
 
+  it("resolves passthrough variables in-process, with explicit env winning", () => {
+    process.env.BREMIO_TEST_PASSTHROUGH = "inherited";
+    try {
+      const { servers } = toClaudeMcpServers([
+        {
+          ...DOCS,
+          transport: {
+            type: "stdio",
+            command: "x",
+            args: [],
+            env: { EXPLICIT: "1" },
+            envPassthrough: ["BREMIO_TEST_PASSTHROUGH", "BREMIO_TEST_UNSET_VAR"],
+          },
+        },
+      ]);
+      expect(servers.docs).toEqual({
+        type: "stdio",
+        command: "x",
+        args: [],
+        env: { BREMIO_TEST_PASSTHROUGH: "inherited", EXPLICIT: "1" },
+      });
+    } finally {
+      delete process.env.BREMIO_TEST_PASSTHROUGH;
+    }
+  });
+
   it("skips a stdio server with a custom cwd, naming the reason", () => {
     const { servers, skipped } = toClaudeMcpServers([
       { ...DOCS, transport: { type: "stdio", command: "x", args: [], cwd: "/elsewhere" } },

@@ -91,7 +91,8 @@ ${c.bold("run")}      run one agent directly or orchestrate an isolated team
   --agent <agent>         Agent for Single mode: claude, codex, antigravity, or opencode.
   --lead <agent>          Lead for Team mode (distributes sub-tasks).
   --worker <agent>        Available workers for Team mode (can be passed multiple times).
-  --mcp <id>              Attach an MCP server from .bremio/mcp-servers.json (repeatable; autopilot only).
+  --mcp <id>              Attach an MCP server from .bremio/mcp-servers.json, or "bremio" for Bremio's own
+                          tools (web search, blackboard notes). Repeatable; autopilot only.
   --skill <name>          Inject a playbook from .bremio/skills/<name>.md into every prompt (repeatable).
 
 ${c.bold("run-info")} show run artifacts and blackboard context
@@ -305,7 +306,7 @@ async function main(): Promise<void> {
       process.exitCode = await approvalCommandFromCli(values, positionals);
       return;
     case "mcp":
-      process.exitCode = await mcpCommandFromCli(values, positionals);
+      process.exitCode = await mcpCommandFromCli(values, positionals, VERSION);
       return;
     case "daemon":
       process.exitCode = await daemonCommandFromCli(positionals[1]);
@@ -1354,7 +1355,8 @@ function toolDeliveryLines(mcpCarriers: string[]): string[] {
       : "mcp servers:  not delivered — no adapter can attach MCP servers",
     "hooks:        .bremio/hooks.json commands at run:pre-plan/pre-task/post-task/pre-apply/pre-merge; non-zero exit vetoes",
     "skills:       playbooks opt-in per run (--skill <name>, .bremio/skills/) prepended to every prompt, ≤4000 est. tokens",
-    `web search:   backend ${webSearchBackendLabel()}; not offered to agents — they use their provider's native search, if any`,
+    `web search:   backend ${webSearchBackendLabel()}; offered to MCP-capable agents as bremio_web_search with --mcp bremio`,
+    "bremio mcp:   --mcp bremio attaches bremio_web_search and bremio_post_note (run blackboard; daemon runs only)",
   ];
 }
 
