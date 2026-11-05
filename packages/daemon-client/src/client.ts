@@ -106,6 +106,8 @@ export interface StartRunRequest {
   verifyCommand?: string;
   /** Team: pause after planning for approve / reject / edit (P2-T2). */
   reviewPlan?: boolean;
+  /** Team: re-plans around blockers (P2-T5); default 0. */
+  maxReplans?: number;
 }
 
 async function readEndpointFile(file: string): Promise<DaemonEndpoint | undefined> {

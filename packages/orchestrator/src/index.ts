@@ -85,6 +85,14 @@ export {
 } from "./fix-loop";
 
 export {
+  analyzeBlockers,
+  runReplanLoop,
+  validateReplan,
+  type ReplanRecord,
+  type ReplanReport,
+} from "./replan";
+
+export {
   evaluateDefinitionOfDone,
   evaluateSingleDefinitionOfDone,
   type DefinitionOfDone,

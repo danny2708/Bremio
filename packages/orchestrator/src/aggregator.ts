@@ -44,6 +44,8 @@ export interface RunReport {
   planCheckpoint?: import("./plan-checkpoint").PlanCheckpointRecord;
   /** Acceptance criteria → evidence | unknown (P2-T6). Informational; the gate decides. */
   definitionOfDone?: import("./definition-of-done").DefinitionOfDone;
+  /** Re-plans around blockers (P2-T5); absent when none were needed or allowed. */
+  replan?: import("./replan").ReplanReport;
 }
 
 export type BremioRunReport = RunReport | import("./single-run").SingleRunReport;

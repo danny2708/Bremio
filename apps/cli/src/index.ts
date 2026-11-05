@@ -102,6 +102,7 @@ ${c.bold("run-info")} show run artifacts and blackboard context
   --max-fix-iterations <n> Bounded fix attempts after a failed gate/--verify (default: 2, 0 = off).
   --verify <command>      Single: Bremio runs this after the agent and hands failures back to it.
   --review-plan           Team: approve, reject or edit the lead's plan before any work starts.
+  --max-replans <n>       Team: re-plan remaining work around a blocker (default: 0, max 3).
   --capacity-routing      Opt in to conservative Team capacity routing.
   --db <path>             Override the AQT database used for capacity routing.
   --comparison <id>       Link this run to a controlled Single/Team experiment.
@@ -172,6 +173,7 @@ function parseCli() {
       "max-fix-iterations": { type: "string" },
       verify: { type: "string" },
       "review-plan": { type: "boolean", default: false },
+      "max-replans": { type: "string" },
       run: { type: "string" },
       base: { type: "string" },
       strategy: { type: "string" },
@@ -480,6 +482,7 @@ async function runViaDaemon(values: Values, prompt: string, mode: "single" | "te
       : {}),
     ...(values.verify ? { verifyCommand: values.verify.trim() } : {}),
     ...(values["review-plan"] ? { reviewPlan: true } : {}),
+    ...(values["max-replans"] !== undefined ? { maxReplans: Number(values["max-replans"]) } : {}),
     ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
     ...(values["workspace-strategy"]
       ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -634,6 +637,13 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
   if (values.verify !== undefined && mode === "team") {
     errors.push("--verify is only valid in Single mode; Team runs verify through their test tasks");
   }
+  const maxReplans = values["max-replans"] === undefined ? undefined : Number(values["max-replans"]);
+  if (maxReplans !== undefined && (!Number.isInteger(maxReplans) || maxReplans < 0 || maxReplans > 3)) {
+    errors.push("--max-replans must be a whole number from 0 to 3");
+  }
+  if (maxReplans !== undefined && mode === "single") {
+    errors.push("--max-replans is only valid in Team mode");
+  }
   if (values["review-plan"] && mode === "single") {
     errors.push("--review-plan is only valid in Team mode");
   }
@@ -748,6 +758,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(maxFixIterations !== undefined ? { maxFixIterations } : {}),
       ...(values.verify ? { verifyCommand: values.verify.trim() } : {}),
       ...(values["review-plan"] ? { reviewPlan: true } : {}),
+      ...(maxReplans !== undefined ? { maxReplans } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(values["workspace-strategy"]
         ? { workspaceStrategy: values["workspace-strategy"] as "direct-workspace" | "isolated-worktree" }
@@ -982,6 +993,7 @@ async function runCommand(values: Values, positionals: string[]): Promise<void> 
       ...(values["review-plan"]
         ? { onPlanReady: (plan) => promptPlanDecision(plan, terminalIo()) }
         : {}),
+      ...(maxReplans !== undefined ? { maxReplans } : {}),
       ...(capacitySnapshots ? { capacitySnapshots } : {}),
       ...(values.comparison ? { comparisonId: values.comparison.trim() } : {}),
       ...(isAuto && autoReason ? { autoModeReason: autoReason } : {}),

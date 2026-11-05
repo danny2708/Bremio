@@ -33,6 +33,7 @@ import {
 import { runPlan, type SchedulerHooks } from "./scheduler";
 import { runTeamFixLoop } from "./fix-loop";
 import { evaluateDefinitionOfDone } from "./definition-of-done";
+import { runReplanLoop } from "./replan";
 import { applyPlanCheckpoint, PlanCheckpointError, type OnPlanReady, type PlanCheckpointRecord } from "./plan-checkpoint";
 import type { SingleRunFallback } from "./single-run";
 import { validatePlan } from "./validator";
@@ -42,6 +43,8 @@ export interface RunBremioHooks extends SchedulerHooks {
   onLeadEvent?(event: AgentEvent): void;
   onPlan?(plan: Plan, assign: Map<string, string>): void;
   onFallback?(reason: string, agentId: string): void;
+  /** A re-plan (P2-T5) replaced blocked work with these new tasks. */
+  onReplan?(record: import("./replan").ReplanRecord): void;
   /** A fix iteration (P2-T3) is about to run these tasks for these gate reasons. */
   onFixIteration?(iteration: number, reasons: readonly string[], tasks: readonly Task[]): void;
 }
@@ -110,6 +113,11 @@ export interface RunBremioOptions {
    * re-validated like a lead's plan. Omit for no checkpoint.
    */
   onPlanReady?: OnPlanReady;
+  /**
+   * Re-plans of the remaining graph after a blocker (P2-T5). Default 0 (off):
+   * each costs a lead call. Completed tasks are never re-run.
+   */
+  maxReplans?: number;
 }
 
 /** Generate a sortable, human-readable run id: run-YYYYMMDD-HHMMSS-xxxx. */
@@ -421,12 +429,73 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
   };
   const firstPass = await runPlan({ plan, assign, ...planOptions });
 
-  // P2-T3: bounded fix iterations. With maxFixIterations 0 (library default)
-  // this returns the first pass unchanged.
-  const fixed = await runTeamFixLoop({
+  // P2-T5: re-plan the remaining graph around blockers (default off).
+  const replanned = await runReplanLoop({
     plan,
     assign,
     results: firstPass,
+    maxReplans: opts.maxReplans ?? 0,
+    originalPrompt: prompt,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.stopRequested ? { stopRequested: opts.stopRequested } : {}),
+    requestPlan: async (request, iteration, validate) => {
+      const started = Date.now();
+      try {
+        const { plan: added } = await createPlan(lead, {
+          prompt: request,
+          cwd: repoPath,
+          runId: `${runId}-replan${iteration}`,
+          runDir,
+          ...(opts.model ? { model: opts.model } : {}),
+          ...(opts.reasoningLevel ? { reasoningLevel: opts.reasoningLevel } : {}),
+          ...(opts.taskTimeoutMs ? { timeoutMs: opts.taskTimeoutMs } : {}),
+          ...(opts.signal ? { signal: opts.signal } : {}),
+          validate,
+          onEvent: onLeadEvent,
+        });
+        await recordPlanningLedger({
+          ledgerPath: ledgerPathFor(repoPath),
+          runId,
+          leadId,
+          status: "completed",
+          durationMs: Date.now() - started,
+          ...(opts.model ? { requestedModel: opts.model } : {}),
+        });
+        return added;
+      } catch (err) {
+        await recordPlanningLedger({
+          ledgerPath: ledgerPathFor(repoPath),
+          runId,
+          leadId,
+          status: err instanceof LeadPlanError ? err.status : "failed",
+          durationMs: Date.now() - started,
+          ...(opts.model ? { requestedModel: opts.model } : {}),
+        });
+        throw err;
+      }
+    },
+    validateCombined: (candidate) => validatePlan(candidate, capabilitiesByAgent),
+    assignNew: (added) => assignAgents(added, leadId, workerIds, {
+      capabilitiesByAgent,
+      ...(capacityByAgent ? { capacityByAgent } : {}),
+      ...(opts.capacityPolicy ? { capacityPolicy: opts.capacityPolicy } : {}),
+      ...(opts.modelByAgent ? { modelByAgent: opts.modelByAgent } : {}),
+    }),
+    execute: (addedPlan, addedAssign, prior) =>
+      runPlan({ ...planOptions, plan: addedPlan, assign: addedAssign, priorResults: prior }),
+    onReplan: (record) => {
+      logger?.info({ record }, "re-planned around blockers");
+      opts.hooks?.onReplan?.(record);
+    },
+  });
+
+  // P2-T3: bounded fix iterations. With maxFixIterations 0 (library default)
+  // this returns the first pass unchanged.
+  const fixed = await runTeamFixLoop({
+    plan: replanned.plan,
+    assign: replanned.assign,
+    results: replanned.results,
+    superseded: replanned.superseded,
     bounds: {
       maxIterations: Math.max(0, Math.trunc(opts.maxFixIterations ?? 0)),
       ...(opts.maxFixCostUsd !== undefined ? { maxCostUsd: opts.maxFixCostUsd } : {}),
@@ -485,6 +554,22 @@ export async function runBremio(opts: RunBremioOptions): Promise<BremioRunReport
   }
 
   if (planCheckpoint) report.planCheckpoint = planCheckpoint;
+  if (replanned.report.status !== "not-needed" && replanned.report.status !== "disabled") {
+    report.replan = replanned.report;
+    if (fixed.report.status === "not-needed" || fixed.report.status === "disabled") {
+      // The fix loop did not attach its gate; the replaced tasks still must not count.
+      report.qualityGate = fixed.gate;
+      const replacedFailures = results.filter(
+        (r) => replanned.superseded.has(r.taskId) && r.status !== "completed",
+      ).length;
+      if (replacedFailures > 0) {
+        report.summary.failed = results.filter(
+          (r) => !replanned.superseded.has(r.taskId) && r.status === "failed",
+        ).length;
+        report.summary.superseded = replacedFailures;
+      }
+    }
+  }
   report.definitionOfDone = evaluateDefinitionOfDone({
     plan: report.plan,
     results,

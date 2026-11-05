@@ -383,6 +383,8 @@ export interface TeamFixLoopInput {
   assign: ReadonlyMap<string, string>;
   results: readonly TaskResult[];
   bounds: FixLoopBounds;
+  /** Tasks already replaced (e.g. by a re-plan); excluded from the gate. */
+  superseded?: ReadonlySet<string>;
   /** Executes one fix chain; `prior` are every result so far (never re-run). */
   execute(iterationPlan: Plan, assign: Map<string, string>, prior: readonly TaskResult[]): Promise<TaskResult[]>;
   onIteration?(iteration: number, reasons: readonly string[], tasks: readonly Task[]): void;
@@ -401,7 +403,7 @@ export async function runTeamFixLoop(input: TeamFixLoopInput): Promise<TeamFixLo
   let plan: Plan = { ...input.plan, tasks: [...input.plan.tasks] };
   const assign = new Map(input.assign);
   let results = [...input.results];
-  const superseded = new Set<string>();
+  const superseded = new Set<string>(input.superseded ?? []);
   const iterations: FixIterationRecord[] = [];
   let gate = evaluateGateWithFixes(plan, entriesOf(plan, assign, results), superseded);
 

@@ -49,6 +49,8 @@ const StartRunSchema = z.object({
   verifyCommand: z.string().trim().min(1).max(2000).optional(),
   /** Team: pause after planning for approve / reject / edit (P2-T2). */
   reviewPlan: z.boolean().optional(),
+  /** Team: re-plans around blockers (P2-T5); 0 disables. */
+  maxReplans: z.number().int().min(0).max(3).optional(),
 });
 
 const EditPlanCheckpointSchema = z.object({

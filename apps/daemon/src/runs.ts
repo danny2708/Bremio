@@ -133,6 +133,8 @@ export interface StartRunInput {
    * is subscribed to the run.
    */
   reviewPlan?: boolean;
+  /** Team: re-plans of the remaining graph after a blocker (P2-T5); default 0. */
+  maxReplans?: number;
 }
 
 /**
@@ -1433,6 +1435,7 @@ export class RunRegistry {
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
             ...(turnIndex !== undefined ? { turnIndex } : {}),
             maxFixIterations: input.maxFixIterations ?? DEFAULT_MAX_FIX_ITERATIONS,
+            ...(input.maxReplans !== undefined ? { maxReplans: input.maxReplans } : {}),
             ...(input.reviewPlan
               ? {
                   onPlanReady: (plan, ctx) =>
@@ -1471,6 +1474,12 @@ export class RunRegistry {
                   kind: "status",
                   message: reason,
                   agentId,
+                }),
+              onReplan: (record) =>
+                this.#emit(runId, {
+                  kind: "status",
+                  message: `re-plan ${record.iteration}: replaced ${record.replaced.join(", ")} with ${record.added.join(", ")}`,
+                  data: { replan: record },
                 }),
               onFixIteration: (iteration, reasons, tasks) =>
                 this.#emit(runId, {
